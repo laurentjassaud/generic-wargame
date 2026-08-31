@@ -16,11 +16,11 @@
 // coin Eindhoven (haut-gauche) jusqu'au coin Arnhem/Oosterbeek (bas-droit),
 // aucune dérive cumulative constatée.
 export const DEFAULT_CALIBRATION = {
-  x0: 101,
-  y0: 118,
-  colStep: 82,
+  x0: 100.5,
+  y0: 122,
+  colStep: 81,
   a: 55,
-  rowStep: 90,
+  rowStep: 93.25
 }
 
 /** Identifiant d'hex tel qu'imprimé sur la carte : "0101", "3907"…
