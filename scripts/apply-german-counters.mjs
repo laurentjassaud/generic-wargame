@@ -1,6 +1,6 @@
 // Reprend les 38 images de pions allemands (fournies par l'utilisateur, extraites
 // de la conversation) et les installe dans public/modules/arnhem/images/counters/german/,
-// puis (re)génère la section counters.german de public/modules/arnhem.json avec les
+// puis (re)génère la section counters.german de public/modules/arnhem/arnhem.json avec les
 // stats lues sur chaque image (ordre = ordre de collage = img-01..img-38).
 //
 // Règle de nom : code imprimé "A/B" (ex. "2/9SS") -> nom canonique "B-A" (inversé,
@@ -87,7 +87,7 @@ for (const u of [...UNITS, ...ARTY]) {
   })
 }
 
-const modPath = 'public/modules/arnhem.json'
+const modPath = 'public/modules/arnhem/arnhem.json'
 const mod = JSON.parse(readFileSync(modPath, 'utf8'))
 mod.counters = mod.counters || {}
 mod.counters.german = counters

@@ -28,3 +28,11 @@ export const DEFAULT_CALIBRATION = {
 export function hexId(col, row) {
   return String(col).padStart(2, '0') + String(row).padStart(2, '0')
 }
+
+/** Inverse de hexId() : "0604" -> { col: 5, row: 4 } — col ramené en 0-based
+ *  pour correspondre à la convention interne (hexes, Counter, lib/hex.js). */
+export function parseHexId(id) {
+  const col1 = parseInt(id.slice(0, 2), 10)
+  const row = parseInt(id.slice(2, 4), 10)
+  return { col: col1 - 1, row }
+}

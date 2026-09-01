@@ -8,12 +8,22 @@ import HexMap from './components/HexMap.vue'
 // reste générique.
 
 
-const MODULE_URL = '/modules/arnhem.json'
+const MODULE_URL = '/modules/arnhem/arnhem.json'
 const module = ref(null)
 
 onMounted(async () => {
   const res = await fetch(MODULE_URL)
   module.value = await res.json()
+  document.title = module.value.name
+  if (module.value.favicon) {
+    let link = document.querySelector('link[rel="icon"]')
+    if (!link) {
+      link = document.createElement('link')
+      link.rel = 'icon'
+      document.head.appendChild(link)
+    }
+    link.href = module.value.favicon
+  }
 })
 </script>
 

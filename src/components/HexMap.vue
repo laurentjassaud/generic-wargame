@@ -19,7 +19,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { reactive, ref, computed } from 'vue'
-import { hexId, DEFAULT_CALIBRATION } from '../lib/calibration.js'
+import { hexId, parseHexId, DEFAULT_CALIBRATION } from '../lib/calibration.js'
 import { neighborsOf } from '../lib/hex.js'
 import CalibrationPanel from './CalibrationPanel.vue'
 import Counter from './Counter.vue'
@@ -31,13 +31,13 @@ const props = defineProps({
 const map = computed(() => props.module.map)
 
 const calibration = reactive({ ...DEFAULT_CALIBRATION })
-const gridStyle = reactive({ stroke: '#d11a1a', width: 1.5, opacity: 0.6 })
+const gridStyle = reactive({ stroke: '#d11a1a', width: 1.5, opacity: 0 })
 const mapConfig = reactive({ cols: map.value.cols, rows: map.value.rows })
 
 const zoom = ref(0.55)
 const showGrid = ref(true)
-const showLabels = ref(true)
-const showCalib = ref(true)
+const showLabels = ref(false)
+const showCalib = ref(false)
 const selected = ref(null)
 
 /** Liste des hex de la grille avec leur polygone SVG déjà calculé. */
@@ -73,15 +73,13 @@ const PLACEHOLDER_COUNTER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
   + '</svg>'
 )
 
-/** Hex aléatoire de la grille — utilisé pour le placement initial des pions du module. */
-function randomHex() {
-  return { col: Math.floor(Math.random() * mapConfig.cols), row: 1 + Math.floor(Math.random() * mapConfig.rows) }
-}
-
-// Pions fournis par le module (cf. public/modules/arnhem.json -> counters.german),
-// placés au hasard sur la carte au chargement.
+// Pions fournis par le module (cf. public/modules/arnhem/arnhem.json -> counters.german) :
+// seuls ceux qui ont un `setup` (hex de départ, ex. "0604") sont placés sur la carte au
+// chargement — les autres restent hors carte (pas de placement au hasard).
 const counters = ref(
-  Object.values(props.module.counters || {}).flat().map((c) => ({ ...c, ...randomHex() }))
+  Object.values(props.module.counters || {}).flat()
+    .filter((c) => c.setup)
+    .map((c) => ({ ...c, ...parseHexId(c.setup) }))
 )
 const selectedCounterId = ref(null)
 const draggedCounterId = ref(null)
