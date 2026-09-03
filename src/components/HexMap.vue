@@ -18,15 +18,23 @@
 //    "image" — la mise à l'échelle est faite par le navigateur.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { reactive, ref, computed } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
 import { hexId, parseHexId, DEFAULT_CALIBRATION } from '../lib/calibration.js'
 import { neighborsOf } from '../lib/hex.js'
+import { hexExists, removedHexSet } from '../lib/mapShape.js'
 import CalibrationPanel from './CalibrationPanel.vue'
 import Counter from './Counter.vue'
+import SidePanel from './SidePanel.vue'
+import ReinforcementsPanel from './ReinforcementsPanel.vue'
 
 const props = defineProps({
   module: { type: Object, required: true }, // cf. src/modules/*.json — { boardGame, name, map: {...} }
+  // Positions déjà déplacées depuis le setup du module (partie multijoueur en
+  // cours) — { [counterId]: { col, row } }. Absent en solo/démo.
+  initialPositions: { type: Object, default: () => ({}) },
 })
+
+const emit = defineEmits(['move'])
 
 const map = computed(() => props.module.map)
 
@@ -40,6 +48,15 @@ const showLabels = ref(false)
 const showCalib = ref(false)
 const selected = ref(null)
 
+// Forme réelle de la grille (colonnes décalées amputées d'une ligne, hexs
+// ponctuels absents) — cf. lib/mapShape.js — recalculée seulement quand le
+// module ou le nombre de cols/rows édité via CalibrationPanel change.
+const mapShapeCfg = computed(() => ({
+  cols: mapConfig.cols, rows: mapConfig.rows, evenColMinus: map.value.evenColMinus,
+}))
+const removed = computed(() => removedHexSet(map.value))
+const hexOnMap = (c, r) => hexExists(c, r, mapShapeCfg.value, removed.value)
+
 /** Liste des hex de la grille avec leur polygone SVG déjà calculé. */
 const hexes = computed(() => {
   const { x0, y0, colStep, a, rowStep } = calibration
@@ -49,6 +66,7 @@ const hexes = computed(() => {
     const cx = x0 + c * colStep
     const yoff = c % 2 === 1 ? rowStep / 2 : 0
     for (let r = 1; r <= mapConfig.rows; r++) {
+      if (!hexOnMap(c, r)) continue
       const cy = y0 + (r - 1) * rowStep + yoff
       const pts = [
         [cx - a, cy], [cx - a / 2, cy - b], [cx + a / 2, cy - b],
@@ -62,38 +80,102 @@ const hexes = computed(() => {
 
 const isSel = (h) => selected.value && selected.value.col === h.c && selected.value.row === h.r
 
-// --- Pions (counters) : placement libre en drag & drop, déplacement d'un pas
-// une fois sélectionné (clic sur un hex adjacent, en vert). ---
-let nextCounterId = 1
-const PLACEHOLDER_COUNTER = 'data:image/svg+xml;utf8,' + encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
-  + '<rect x="2" y="2" width="60" height="60" rx="8" fill="#3a5a8a" stroke="#111" stroke-width="3"/>'
-  + '<circle cx="32" cy="24" r="11" fill="#e8c468"/>'
-  + '<rect x="14" y="38" width="36" height="18" rx="4" fill="#e8c468"/>'
-  + '</svg>'
-)
+// Tous les pions déclarés par le module, toutes factions confondues (cf.
+// public/modules/arnhem/arnhem.json -> counters.*) — sert à la fois au
+// placement initial ci-dessous et à la liste des renforts pas encore posés
+// (cf. `reinforcements`).
+const allCounters = computed(() => Object.values(props.module.counters || {}).flat())
 
-// Pions fournis par le module (cf. public/modules/arnhem/arnhem.json -> counters.german) :
-// seuls ceux qui ont un `setup` (hex de départ, ex. "0604") sont placés sur la carte au
-// chargement — les autres restent hors carte (pas de placement au hasard).
-const counters = ref(
-  Object.values(props.module.counters || {}).flat()
-    .filter((c) => c.setup)
-    .map((c) => ({ ...c, ...parseHexId(c.setup) }))
-)
-const selectedCounterId = ref(null)
-const draggedCounterId = ref(null)
-
-function addCounter() {
-  counters.value.push({ id: nextCounterId++, src: PLACEHOLDER_COUNTER, col: 0, row: 1 })
+/** `setup` d'un pion : soit un hex unique ("0604"), soit une plage bord de
+ *  carte "HHHH-HHHH" (ex. allemands, cf. arnhem.json — entrée "sur ou entre"
+ *  les deux hex, alignés sur une même ligne ou une même colonne). Renvoie un
+ *  hex cible (0-based col / 1-based row) tiré au hasard dans la plage. */
+function resolveEntryTarget(setup) {
+  if (!setup.includes('-')) return parseHexId(setup)
+  const [a, b] = setup.split('-').map(parseHexId)
+  const cells = []
+  if (a.row === b.row) {
+    const [lo, hi] = a.col <= b.col ? [a.col, b.col] : [b.col, a.col]
+    for (let c = lo; c <= hi; c++) cells.push({ col: c, row: a.row })
+  } else {
+    const [lo, hi] = a.row <= b.row ? [a.row, b.row] : [b.row, a.row]
+    for (let r = lo; r <= hi; r++) cells.push({ col: a.col, row: r })
+  }
+  const valid = cells.filter((h) => hexOnMap(h.col, h.row))
+  const pool = valid.length ? valid : [a]
+  return pool[Math.floor(Math.random() * pool.length)]
 }
+
+/** Jamais de stacking : un pion qui arrive prend son hex d'entrée s'il est
+ *  libre, sinon un des 6 hex adjacents libres tiré au hasard. `occupied` est
+ *  le Set (clés "col,row") des hex déjà réservés dans le lot de placement en
+ *  cours — mis à jour par l'appelant après chaque choix. Si les 7 emplacements
+ *  sont pleins (cas limite), on stack quand même plutôt que de perdre le pion. */
+function pickArrivalHex(col, row, occupied) {
+  const key = (c, r) => c + ',' + r
+  if (hexOnMap(col, row) && !occupied.has(key(col, row))) return { col, row }
+  const free = neighborsOf(col, row).filter((n) => hexOnMap(n.col, n.row) && !occupied.has(key(n.col, n.row)))
+  if (free.length) return free[Math.floor(Math.random() * free.length)]
+  return { col, row }
+}
+
+// Seuls les pions avec un `setup` (hex de départ, ex. "0604") ET arrivant au
+// tour 1 (ou sans `turn` — rétrocompatible avec les modules qui n'ont pas
+// encore ce champ, ex. les pions allemands) sont posés sur la carte au
+// chargement. Les renforts des tours suivants restent hors carte, glissables
+// depuis le panneau "Renfort alliés" (cf. `reinforcements`). Plusieurs
+// pions peuvent partager le même hex d'entrée déclaré (ex. les 3 bataillons
+// d'un même régiment) : pickArrivalHex les répartit pour éviter le stacking.
+const counters = ref((() => {
+  const occupied = new Set()
+  const placed = []
+  for (const c of allCounters.value.filter((c) => c.setup && (c.turn ?? 1) === 1)) {
+    const override = props.initialPositions[c.id]
+    const target = resolveEntryTarget(c.setup)
+    const pos = override ?? pickArrivalHex(target.col, target.row, occupied)
+    occupied.add(pos.col + ',' + pos.row)
+    placed.push({ ...c, ...pos })
+  }
+  return placed
+})())
+const selectedCounterId = ref(null)
+
+// --- Renforts : pions du module avec un hex d'entrée mais pas encore posés
+// (typiquement arrivée tour 2+) — cf. ReinforcementsPanel.vue. Glissés sur la
+// carte via le même mécanisme que le déplacement d'un pion existant
+// (onCounterDragStart / onMapDrop plus bas).
+const placedIds = computed(() => new Set(counters.value.map((c) => String(c.id))))
+const reinforcements = computed(() =>
+  allCounters.value.filter((c) => c.setup && !placedIds.value.has(String(c.id)))
+)
+
+// Un onglet de renforts par camp déclaré dans module.sides (ex. {"german":
+// ["german"], "allies": ["commonwealth","us","pol"]}) — chacun ne liste que
+// les renforts des factions de son camp. Repli sur un onglet unique si le
+// module n'a pas encore ce champ.
+const SIDE_LABELS = { german: 'Renfort allemands', allies: 'Renfort alliés' }
+const sidePanelTabs = computed(() => {
+  const sides = props.module.sides
+  if (!sides) return [{ key: 'reinforcements', label: 'Renforts' }]
+  return Object.keys(sides).map((side) => ({ key: side, label: SIDE_LABELS[side] ?? `Renfort ${side}` }))
+})
+function reinforcementsForTab(key) {
+  const sides = props.module.sides
+  if (!sides) return reinforcements.value
+  const factions = sides[key] ?? []
+  return reinforcements.value.filter((c) => factions.includes(c.faction))
+}
+const openTab = ref(null)
+const draggedCounterId = ref(null)
 
 /** Hex voisins (0-based col / 1-based row) du pion actuellement sélectionné,
  *  sous forme de clés "col,row" pour un lookup O(1) depuis isAdjacent(). */
 const adjacentSet = computed(() => {
   const c = counters.value.find((c) => c.id === selectedCounterId.value)
   if (!c) return new Set()
-  return new Set(neighborsOf(c.col, c.row).map((n) => n.col + ',' + n.row))
+  return new Set(
+    neighborsOf(c.col, c.row).filter((n) => hexOnMap(n.col, n.row)).map((n) => n.col + ',' + n.row)
+  )
 })
 const isAdjacent = (h) => adjacentSet.value.has(h.c + ',' + h.r)
 
@@ -107,7 +189,7 @@ function onCounterSelect(id) {
 const onHex = (h) => {
   if (selectedCounterId.value != null && isAdjacent(h)) {
     const c = counters.value.find((c) => c.id === selectedCounterId.value)
-    if (c) { c.col = h.c; c.row = h.r }
+    if (c) { c.col = h.c; c.row = h.r; emit('move', { counterId: c.id, col: c.col, row: c.row }) }
     return
   }
   selected.value = isSel(h) ? null : { col: h.c, row: h.r, coord: h.id }
@@ -133,7 +215,7 @@ function pixelToHex(x, y) {
     const yoff = c % 2 === 1 ? rowStep / 2 : 0
     const r0 = Math.round((y - y0 - yoff) / rowStep) + 1
     for (let r = r0 - 1; r <= r0 + 1; r++) {
-      if (r < 1 || r > mapConfig.rows) continue
+      if (!hexOnMap(c, r)) continue
       const cx = x0 + c * colStep
       const cy = y0 + (r - 1) * rowStep + yoff
       const d = Math.hypot(cx - x, cy - y)
@@ -152,10 +234,40 @@ function onMapDrop(ev) {
   const hex = pixelToHex(loc.x, loc.y)
   if (hex) {
     const c = counters.value.find((c) => c.id === draggedCounterId.value)
-    if (c) { c.col = hex.col; c.row = hex.row }
+    if (c) {
+      c.col = hex.col; c.row = hex.row
+      emit('move', { counterId: c.id, col: c.col, row: c.row })
+    } else {
+      // Pas encore sur la carte : c'est un renfort glissé depuis le panneau
+      // "Renfort alliés". Peu importe où il est lâché sur la carte —
+      // il arrive à son hex d'entrée déclaré (ou un hex adjacent libre s'il
+      // est déjà occupé, jamais de stacking), pas sous le curseur.
+      const reinforcement = allCounters.value.find((c) => String(c.id) === String(draggedCounterId.value))
+      if (reinforcement) {
+        const target = resolveEntryTarget(reinforcement.setup)
+        const occupied = new Set(counters.value.map((c) => c.col + ',' + c.row))
+        const pos = pickArrivalHex(target.col, target.row, occupied)
+        const placed = { ...reinforcement, ...pos }
+        counters.value.push(placed)
+        emit('move', { counterId: placed.id, col: placed.col, row: placed.row })
+      }
+    }
   }
   draggedCounterId.value = null
 }
+
+/** Applique un déplacement reçu d'un autre joueur (WebSocket) — ne réémet
+ *  pas `move` pour éviter une boucle avec le serveur. */
+function applyRemoteMove(counterId, col, row) {
+  const c = counters.value.find((c) => String(c.id) === String(counterId))
+  if (c) { c.col = col; c.row = row; return }
+  // Un autre joueur a posé un renfort pas encore présent localement (glissé
+  // depuis son propre panneau "Renfort alliés") : on l'ajoute.
+  const reinforcement = allCounters.value.find((c) => String(c.id) === String(counterId))
+  if (reinforcement) counters.value.push({ ...reinforcement, col, row })
+}
+
+defineExpose({ applyRemoteMove })
 
 function zoomIn() {
   zoom.value = Math.min(2, +(zoom.value + 0.05).toFixed(2))
@@ -174,6 +286,14 @@ function onMapWheel(e) {
 // --- Drag-to-scroll (pan) au clic droit maintenu ---
 const mapWrapRef = ref(null)
 const mapDrag = ref(null) // { startX, startY, scrollLeft, scrollTop }
+
+// Zoom initial : la carte doit occuper toute la largeur disponible au
+// chargement plutôt qu'un pourcentage arbitraire fixe — recalculé une seule
+// fois au montage (un zoom manuel ensuite n'est jamais réécrit).
+onMounted(() => {
+  const width = mapWrapRef.value?.clientWidth
+  if (width) zoom.value = +(width / map.value.imageWidth).toFixed(3)
+})
 
 function onMapDragStart(e) {
   const el = mapWrapRef.value
@@ -206,7 +326,6 @@ function onMapDragEnd() {
           <span>{{ Math.round(zoom * 100) }}%</span>
           <button @click="zoomIn">+</button>
         </div>
-        <button @click="addCounter">+ pion</button>
         <span v-if="selected" class="selected-hex">hex sélectionné : <b>{{ selected.coord }}</b></span>
       </div>
     </header>
@@ -242,6 +361,12 @@ function onMapDragEnd() {
 
     <CalibrationPanel v-if="showCalib" :calibration="calibration" :grid-style="gridStyle" :map-config="mapConfig"
       :default-calibration="DEFAULT_CALIBRATION" :image-width="map.imageWidth" :image-height="map.imageHeight" />
+
+    <SidePanel :tabs="sidePanelTabs" v-model:open-tab="openTab">
+      <template v-for="tab in sidePanelTabs" :key="tab.key" v-slot:[tab.key]>
+        <ReinforcementsPanel :reinforcements="reinforcementsForTab(tab.key)" @dragstart="onCounterDragStart" />
+      </template>
+    </SidePanel>
   </div>
 </template>
 
@@ -256,12 +381,15 @@ function onMapDragEnd() {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 12px;
+  padding: 16px 36px 0;
+  background: #8a7c76;
 }
 
 .toolbar h1 {
-  font-size: 1.1rem;
+  font-size: 3.2rem;
+  font-weight: 700;
   margin: 0;
+  color: #cac9ae;
 }
 
 .controls {
@@ -277,6 +405,7 @@ function onMapDragEnd() {
   align-items: center;
   gap: 6px;
   cursor: pointer;
+  color: var(--color-text);
 }
 
 .zoom-ctl {
@@ -296,10 +425,9 @@ function onMapDragEnd() {
 }
 
 .map-wrap {
-  overflow: auto;
-  border: 1px solid #ccc;
-  max-height: 80vh;
-  background: #222;
+  overflow: hidden;
+  height: calc( 100vh - 76px );
+  background: #8a7c76;
 }
 
 .map-wrap.dragging {

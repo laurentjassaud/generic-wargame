@@ -3,9 +3,14 @@
 // pour vérification visuelle de public/modules/arnhem/arnhem.json (module.terrain).
 import { readFileSync, writeFileSync } from 'node:fs'
 import { DEFAULT_CALIBRATION } from '../src/lib/calibration.js'
+import { hexExists, removedHexSet } from '../src/lib/mapShape.js'
 
 const mod = JSON.parse(readFileSync('public/modules/arnhem/arnhem.json', 'utf8'))
-const { imageWidth, imageHeight, cols, rows } = mod.map
+const { imageWidth, imageHeight, cols, rows, evenColMinus } = mod.map
+const removedSet = removedHexSet(mod.map)
+const mapShapeCfg = { cols, rows, evenColMinus }
+const hexOnMap = (c, r) => hexExists(c, r, mapShapeCfg, removedSet)
+const initialRemoved = [...removedSet].sort()
 const { x0, y0, colStep, a, rowStep } = DEFAULT_CALIBRATION
 const b = rowStep / 2
 const grid = mod.terrain.grid
@@ -14,21 +19,66 @@ const TYPES = mod.terrain.types
 const imgBuf = readFileSync('public/modules/arnhem/images/arnhem-map.jpg')
 const imgB64 = imgBuf.toString('base64')
 
+const AXIAL_DIRS = [
+  { dq: 1, dr: 0 }, { dq: 1, dr: -1 }, { dq: 0, dr: -1 },
+  { dq: -1, dr: 0 }, { dq: -1, dr: 1 }, { dq: 0, dr: 1 },
+]
+function offsetToCube(col, row) {
+  const q = col
+  const r = row - (col - (col & 1)) / 2
+  return { q, r }
+}
+function fromAxial(q, r) {
+  return { col: q, row: r + (q - (q & 1)) / 2 }
+}
+function neighborsOf(col, row) {
+  const { q, r } = offsetToCube(col, row)
+  return AXIAL_DIRS.map((d) => fromAxial(q + d.dq, r + d.dr))
+}
+
+const centerOf = (c, r) => {
+  const yoff = c % 2 === 1 ? rowStep / 2 : 0
+  return { x: x0 + c * colStep, y: y0 + (r - 1) * rowStep + yoff }
+}
+const idOf = (c, r) => String(c + 1).padStart(2, '0') + String(r).padStart(2, '0')
+
 const hexes = []
 for (let c = 0; c < cols; c++) {
-  const cx0 = x0 + c * colStep
-  const yoff = c % 2 === 1 ? rowStep / 2 : 0
   for (let r = 1; r <= rows; r++) {
-    const cy = y0 + (r - 1) * rowStep + yoff
-    const hexId = String(c + 1).padStart(2, '0') + String(r).padStart(2, '0')
+    if (!hexOnMap(c, r)) continue
+    const { x: cx0, y: cy } = centerOf(c, r)
     const pts = [
       [cx0 - a, cy], [cx0 - a / 2, cy - b], [cx0 + a / 2, cy - b],
       [cx0 + a, cy], [cx0 + a / 2, cy + b], [cx0 - a / 2, cy + b],
     ].map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')
+    const hexId = idOf(c, r)
     const terrain = grid[hexId] || 'mixed'
     hexes.push({ id: hexId, cx: cx0, cy, pts, terrain, mp: TYPES[terrain].mp })
   }
 }
+
+// Bordures hex-à-hex (routes) : chaque paire d'hex adjacents, une seule fois
+// (clé canonique = les deux id triés), avec le centre des deux hex pour
+// tracer la ligne cliquable.
+const edgeMap = new Map()
+for (let c = 0; c < cols; c++) {
+  for (let r = 1; r <= rows; r++) {
+    if (!hexOnMap(c, r)) continue
+    const aId = idOf(c, r)
+    const A = centerOf(c, r)
+    for (const n of neighborsOf(c, r)) {
+      if (!hexOnMap(n.col, n.row)) continue
+      const bId = idOf(n.col, n.row)
+      const key = aId < bId ? aId + '-' + bId : bId + '-' + aId
+      if (edgeMap.has(key)) continue
+      const B = centerOf(n.col, n.row)
+      edgeMap.set(key, { key, ax: A.x, ay: A.y, bx: B.x, by: B.y })
+    }
+  }
+}
+const edges = [...edgeMap.values()]
+const initialRoads = mod.terrain.roads || []
+const initialTrails = mod.terrain.trails || []
 
 const html = `<!doctype html>
 <title>Grille de Mouvement Arnhem</title>
@@ -48,6 +98,8 @@ const html = `<!doctype html>
   --town: #4a6b8a;
   --auto-dot: #8a8265;
   --manual-dot: #a8551f;
+  --road: #d13b1f;
+  --trail: #8a6d1f;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -65,6 +117,8 @@ const html = `<!doctype html>
     --town: #5f83a6;
     --auto-dot: #8a8265;
     --manual-dot: #e0925a;
+    --road: #e8532f;
+    --trail: #d1ab4a;
   }
 }
 :root[data-theme="dark"] {
@@ -82,6 +136,8 @@ const html = `<!doctype html>
   --town: #5f83a6;
   --auto-dot: #8a8265;
   --manual-dot: #e0925a;
+  --road: #e8532f;
+  --trail: #d1ab4a;
 }
 * { box-sizing: border-box; }
 body {
@@ -185,6 +241,7 @@ polygon.hex {
 .hex-rough  { fill: var(--rough); }
 .hex-city   { fill: var(--city); }
 .hex-town   { fill: var(--town); }
+polygon.hex:hover { cursor: pointer; }
 text.mp {
   font-family: 'IBM Plex Mono', monospace;
   font-weight: 700;
@@ -206,6 +263,94 @@ text.hexid {
   pointer-events: none;
   opacity: .85;
 }
+.edge .hit {
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+}
+.edge .road {
+  stroke: var(--road);
+  stroke-width: 7;
+  stroke-linecap: round;
+  opacity: 0;
+  pointer-events: none;
+}
+.edge.road-active .road { opacity: .95; }
+.edge .trail {
+  stroke: var(--trail);
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-dasharray: 4 7;
+  opacity: 0;
+  pointer-events: none;
+}
+.edge.trail-active .trail { opacity: .95; }
+svg.hide-roads .road { display: none; }
+svg.hide-trails .trail { display: none; }
+.mode-road .hit, .mode-trail .hit { cursor: pointer; }
+.mode-road .hit:hover, .mode-trail .hit:hover { stroke: rgba(255,255,255,.32); }
+.mode-remove polygon.hex:hover { fill: rgba(192,57,43,.45); }
+polygon.hex.marked-removed { fill: #c0392b; fill-opacity: .65; }
+text.remx {
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 700;
+  fill: #ffffff;
+  text-anchor: middle;
+  pointer-events: none;
+  opacity: 0;
+}
+text.remx.active { opacity: 1; }
+#terrainMenu {
+  position: fixed;
+  z-index: 20;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.72rem;
+}
+#terrainMenu[hidden] { display: none; }
+#terrainMenu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--ink);
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+}
+#terrainMenu button:hover { background: rgba(255,255,255,.1); }
+#terrainMenu .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid rgba(0,0,0,.25);
+  flex: none;
+}
+#saveBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#saveBar button.primary {
+  background: var(--accent);
+  color: var(--ground);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+#saveStatus {
+  color: var(--ink-dim);
+  min-width: 90px;
+}
+#saveStatus.dirty { color: var(--accent); }
+#saveStatus.err { color: #c0392b; }
 footer {
   padding: 6px 20px;
   border-top: 1px solid var(--panel-border);
@@ -229,8 +374,24 @@ footer .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block
     <label><input type="checkbox" id="toggleMp" checked> coût</label>
     <label><input type="checkbox" id="toggleId"> id hex</label>
     <label><input type="checkbox" id="toggleFill" checked> teinte</label>
+    <label><input type="checkbox" id="toggleRoads" checked> routes</label>
+    <label><input type="checkbox" id="toggleTrails" checked> sentiers</label>
     <button id="reset">recentrer</button>
     <span id="zoomLabel">100%</span>
+  </div>
+  <div id="saveBar">
+    <label><input type="checkbox" id="roadMode" checked> mode route (clic = tracer)</label>
+    <span id="roadCount">0 route(s)</span>
+    <button id="clearRoads">tout effacer</button>
+    <label><input type="checkbox" id="trailMode"> mode sentier (clic = tracer)</label>
+    <span id="trailCount">0 sentier(s)</span>
+    <button id="clearTrails">tout effacer</button>
+    <label><input type="checkbox" id="removeMode"> mode suppression hex (clic = marquer)</label>
+    <span id="removedCount">0 hex marqué(s)</span>
+    <button id="clearRemoved">tout effacer</button>
+    <button id="exportJson">export JSON</button>
+    <button id="save" class="primary">enregistrer</button>
+    <span id="saveStatus">à jour</span>
   </div>
 </header>
 
@@ -240,31 +401,49 @@ footer .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block
     <g id="hexLayer">
 ${hexes.map((h) => `      <polygon class="hex hex-${h.terrain}" points="${h.pts}" data-id="${h.id}" data-terrain="${h.terrain}" data-mp="${h.mp}" />`).join('\n')}
     </g>
+    <g id="edgeLayer">
+${edges.map((e) => `      <g class="edge" data-key="${e.key}"><line class="hit" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="road" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="trail" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /></g>`).join('\n')}
+    </g>
     <g id="labelLayer">
-${hexes.map((h) => `      <text class="mp" x="${h.cx.toFixed(1)}" y="${(h.cy + a * 0.15).toFixed(1)}" font-size="${(a * 0.5).toFixed(1)}">${h.mp}</text><text class="hexid" x="${h.cx.toFixed(1)}" y="${(h.cy - a * 0.32).toFixed(1)}" font-size="${(a * 0.28).toFixed(1)}">${h.id}</text>`).join('\n')}
+${hexes.map((h) => `      <text class="mp" data-id="${h.id}" x="${h.cx.toFixed(1)}" y="${(h.cy + a * 0.15).toFixed(1)}" font-size="${(a * 0.5).toFixed(1)}">${h.mp}</text><text class="hexid" x="${h.cx.toFixed(1)}" y="${(h.cy - a * 0.32).toFixed(1)}" font-size="${(a * 0.28).toFixed(1)}">${h.id}</text>`).join('\n')}
+    </g>
+    <g id="removedLayer">
+${hexes.map((h) => `      <text class="remx" data-id="${h.id}" x="${h.cx.toFixed(1)}" y="${(h.cy + a * 0.32).toFixed(1)}" font-size="${(a * 0.9).toFixed(1)}">&times;</text>`).join('\n')}
     </g>
   </svg>
 </main>
 
+<div id="terrainMenu" hidden></div>
+
+<script id="roads-data" type="application/json">${JSON.stringify(initialRoads)}</script>
+<script id="trails-data" type="application/json">${JSON.stringify(initialTrails)}</script>
+<script id="removed-data" type="application/json">${JSON.stringify(initialRemoved)}</script>
+
 <footer>
-  <span>${hexes.length} hexs</span>
+  <span>${hexes.length} hexs &middot; ${edges.length} bordures</span>
   <span><span class="dot" style="background:var(--manual-dot)"></span>colonie (lecture manuelle des noms de la carte)</span>
   <span><span class="dot" style="background:var(--auto-dot)"></span>terrain (classification automatique par couleur)</span>
-  <span>routes / sentiers / rivières / ponts non détectés &mdash; à ajouter</span>
+  <span><span class="dot" style="background:var(--road)"></span>route (tracée à la main, enregistrée dans le module)</span>
+  <span><span class="dot" style="background:var(--trail)"></span>sentier (tracé à la main, enregistré dans le module)</span>
+  <span>rivières / ponts non couverts encore &mdash; à ajouter</span>
 </footer>
 
 <script>
 const TYPES = ${JSON.stringify(TYPES)};
-const counts = {};
-document.querySelectorAll('.hex').forEach(h => { const t = h.dataset.terrain; counts[t] = (counts[t]||0)+1; });
 const legend = document.getElementById('legend');
-Object.keys(TYPES).forEach(k => {
-  const chip = document.createElement('div');
-  chip.className = 'chip';
-  chip.innerHTML = '<span class="swatch" style="background:var(--' + k + ')"></span>' +
-    TYPES[k].label + ' <span class="count">' + TYPES[k].mp + 'MP &middot; ' + (counts[k]||0) + '</span>';
-  legend.appendChild(chip);
-});
+function renderLegend() {
+  const counts = {};
+  document.querySelectorAll('.hex').forEach(h => { const t = h.dataset.terrain; counts[t] = (counts[t]||0)+1; });
+  legend.innerHTML = '';
+  Object.keys(TYPES).forEach(k => {
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.innerHTML = '<span class="swatch" style="background:var(--' + k + ')"></span>' +
+      TYPES[k].label + ' <span class="count">' + TYPES[k].mp + 'MP &middot; ' + (counts[k]||0) + '</span>';
+    legend.appendChild(chip);
+  });
+}
+renderLegend();
 
 const viewport = document.getElementById('viewport');
 const svg = document.getElementById('svg');
@@ -291,6 +470,7 @@ viewport.addEventListener('wheel', (e) => {
 
 let drag = null;
 viewport.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
   drag = { x: e.clientX, y: e.clientY, sl: viewport.scrollLeft, st: viewport.scrollTop };
   viewport.classList.add('dragging');
 });
@@ -311,7 +491,238 @@ document.getElementById('toggleId').addEventListener('change', (e) => {
 document.getElementById('toggleFill').addEventListener('change', (e) => {
   document.getElementById('hexLayer').style.display = e.target.checked ? '' : 'none';
 });
+document.getElementById('toggleRoads').addEventListener('change', (e) => {
+  svg.classList.toggle('hide-roads', !e.target.checked);
+});
+document.getElementById('toggleTrails').addEventListener('change', (e) => {
+  svg.classList.toggle('hide-trails', !e.target.checked);
+});
 document.querySelectorAll('text.hexid').forEach(t => t.style.display = 'none');
+
+// ─────────────────────────────────────────────────────────────
+// Édition des routes : clic sur une bordure hex-à-hex pour tracer/effacer
+// une route. État en mémoire (roads: Set des clés "id-id"), persistée via
+// la capability "artifact" (le bouton "enregistrer" republie une nouvelle
+// version de la page). Rien n'est conservé tant que ce n'est pas
+// explicitement enregistré.
+// ─────────────────────────────────────────────────────────────
+const roadsData = document.getElementById('roads-data');
+const roads = new Set(JSON.parse(roadsData.textContent || '[]'));
+let dirty = false;
+
+function edgeGroup(key) { return document.querySelector('.edge[data-key="' + key + '"]'); }
+function paintRoad(key) {
+  const g = edgeGroup(key);
+  if (g) g.classList.toggle('road-active', roads.has(key));
+}
+roads.forEach(paintRoad);
+
+function updateRoadCount() {
+  document.getElementById('roadCount').textContent = roads.size + ' route(s)';
+}
+function setStatus(text, cls) {
+  const el = document.getElementById('saveStatus');
+  el.textContent = text;
+  el.className = cls || '';
+}
+updateRoadCount();
+
+const roadModeBox = document.getElementById('roadMode');
+const trailModeBox = document.getElementById('trailMode');
+roadModeBox.addEventListener('change', (e) => {
+  viewport.classList.toggle('mode-road', e.target.checked);
+  if (e.target.checked) { trailModeBox.checked = false; viewport.classList.remove('mode-trail'); }
+});
+trailModeBox.addEventListener('change', (e) => {
+  viewport.classList.toggle('mode-trail', e.target.checked);
+  if (e.target.checked) { roadModeBox.checked = false; viewport.classList.remove('mode-road'); }
+});
+viewport.classList.toggle('mode-road', roadModeBox.checked);
+
+document.getElementById('edgeLayer').addEventListener('click', (e) => {
+  const g = e.target.closest('.edge');
+  if (!g) return;
+  const key = g.dataset.key;
+  if (roadModeBox.checked) {
+    if (roads.has(key)) roads.delete(key); else roads.add(key);
+    paintRoad(key);
+    updateRoadCount();
+  } else if (trailModeBox.checked) {
+    if (trails.has(key)) trails.delete(key); else trails.add(key);
+    paintTrail(key);
+    updateTrailCount();
+  } else {
+    return;
+  }
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+});
+
+document.getElementById('clearRoads').addEventListener('click', () => {
+  if (!roads.size) return;
+  if (!confirm('Effacer les ' + roads.size + ' route(s) tracée(s) ?')) return;
+  [...roads].forEach((key) => { roads.delete(key); paintRoad(key); });
+  updateRoadCount();
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Édition des sentiers : fonctionnement identique aux routes ci-dessus
+// (même bordures, Set séparé, persistance via le même bouton "enregistrer").
+// Les modes route/sentier sont mutuellement exclusifs (cf. plus haut) —
+// un seul détermine ce que le clic sur une bordure modifie.
+// ─────────────────────────────────────────────────────────────
+const trailsData = document.getElementById('trails-data');
+const trails = new Set(JSON.parse(trailsData.textContent || '[]'));
+
+function paintTrail(key) {
+  const g = edgeGroup(key);
+  if (g) g.classList.toggle('trail-active', trails.has(key));
+}
+trails.forEach(paintTrail);
+
+function updateTrailCount() {
+  document.getElementById('trailCount').textContent = trails.size + ' sentier(s)';
+}
+updateTrailCount();
+
+document.getElementById('clearTrails').addEventListener('click', () => {
+  if (!trails.size) return;
+  if (!confirm('Effacer les ' + trails.size + ' sentier(s) tracé(s) ?')) return;
+  [...trails].forEach((key) => { trails.delete(key); paintTrail(key); });
+  updateTrailCount();
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Suppression d'hex : clic sur un hex (mode "suppression" actif) pour le
+// marquer comme absent de la carte imprimée. Même logique de persistance que
+// les routes (republication de la page) ; le bouton "export JSON" affiche en
+// plus la valeur à recopier dans map.removedHexes du module (aucune écriture
+// disque n'est possible depuis la page publiée).
+// ─────────────────────────────────────────────────────────────
+const removedData = document.getElementById('removed-data');
+const removedHexes = new Set(JSON.parse(removedData.textContent || '[]'));
+
+function paintRemoved(id) {
+  const poly = document.querySelector('polygon.hex[data-id="' + id + '"]');
+  const mark = document.querySelector('text.remx[data-id="' + id + '"]');
+  const on = removedHexes.has(id);
+  if (poly) poly.classList.toggle('marked-removed', on);
+  if (mark) mark.classList.toggle('active', on);
+}
+removedHexes.forEach(paintRemoved);
+
+function updateRemovedCount() {
+  document.getElementById('removedCount').textContent = removedHexes.size + ' hex marqué(s)';
+}
+updateRemovedCount();
+
+const removeModeBox = document.getElementById('removeMode');
+removeModeBox.addEventListener('change', (e) => { viewport.classList.toggle('mode-remove', e.target.checked); });
+
+document.getElementById('hexLayer').addEventListener('click', (e) => {
+  const poly = e.target.closest('polygon.hex');
+  if (!poly) return;
+  const id = poly.dataset.id;
+  if (removeModeBox.checked) {
+    if (removedHexes.has(id)) removedHexes.delete(id); else removedHexes.add(id);
+    paintRemoved(id);
+    updateRemovedCount();
+    dirty = true;
+    setStatus('non enregistré', 'dirty');
+    return;
+  }
+  // Hors mode suppression, un clic sur un hex ouvre le menu de terrain
+  // (cf. plus bas) — stopPropagation évite que ce même clic soit aussitôt
+  // vu comme un "clic en dehors" par le listener qui ferme ce menu.
+  e.stopPropagation();
+  openTerrainMenu(id, e.clientX, e.clientY);
+});
+
+document.getElementById('clearRemoved').addEventListener('click', () => {
+  if (!removedHexes.size) return;
+  if (!confirm('Effacer les ' + removedHexes.size + ' hex marqué(s) ?')) return;
+  [...removedHexes].forEach((id) => { removedHexes.delete(id); paintRemoved(id); });
+  updateRemovedCount();
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Changement de terrain : clic gauche sur un hex (mode suppression inactif,
+// cf. le handler de clic sur #hexLayer plus haut) ouvre un petit menu pour
+// choisir un nouveau type. L'état vit directement dans le DOM (classe
+// hex-<type>, data-terrain, data-mp, texte du coût) donc il est capturé tel
+// quel par "enregistrer", sans Set ni script de données séparé.
+// ─────────────────────────────────────────────────────────────
+const terrainMenu = document.getElementById('terrainMenu');
+let terrainMenuHexId = null;
+terrainMenu.innerHTML = Object.keys(TYPES).map((k) =>
+  '<button data-terrain="' + k + '"><span class="swatch" style="background:var(--' + k + ')"></span>' +
+  TYPES[k].label + ' (' + TYPES[k].mp + ' MP)</button>'
+).join('');
+
+function closeTerrainMenu() { terrainMenu.hidden = true; terrainMenuHexId = null; }
+function openTerrainMenu(id, x, y) {
+  terrainMenuHexId = id;
+  terrainMenu.style.left = Math.min(x, innerWidth - 190) + 'px';
+  terrainMenu.style.top = Math.min(y, innerHeight - 220) + 'px';
+  terrainMenu.hidden = false;
+}
+
+function setHexTerrain(id, terrain) {
+  const poly = document.querySelector('polygon.hex[data-id="' + id + '"]');
+  if (!poly || poly.dataset.terrain === terrain) return;
+  poly.classList.remove('hex-' + poly.dataset.terrain);
+  poly.classList.add('hex-' + terrain);
+  poly.dataset.terrain = terrain;
+  poly.dataset.mp = TYPES[terrain].mp;
+  const mpText = document.querySelector('text.mp[data-id="' + id + '"]');
+  if (mpText) mpText.textContent = TYPES[terrain].mp;
+  renderLegend();
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+}
+
+terrainMenu.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-terrain]');
+  if (btn && terrainMenuHexId) setHexTerrain(terrainMenuHexId, btn.dataset.terrain);
+  closeTerrainMenu();
+});
+document.addEventListener('click', (e) => {
+  if (!terrainMenu.hidden && !terrainMenu.contains(e.target)) closeTerrainMenu();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeTerrainMenu(); });
+viewport.addEventListener('wheel', closeTerrainMenu, { passive: true });
+
+document.getElementById('exportJson').addEventListener('click', () => {
+  const value = [...removedHexes].sort().join(',');
+  window.prompt(
+    'A copier dans public/modules/arnhem/arnhem.json, clé "map.removedHexes" (Ctrl+C puis Entrée) :',
+    value
+  );
+});
+
+async function save() {
+  const artifact = await claude.use('artifact');
+  if (!artifact) { setStatus('indisponible', 'err'); return; }
+  setStatus('enregistrement...', 'dirty');
+  roadsData.textContent = JSON.stringify([...roads].sort());
+  trailsData.textContent = JSON.stringify([...trails].sort());
+  removedData.textContent = JSON.stringify([...removedHexes].sort());
+  try {
+    await artifact.publish('<!doctype html>\\n' + document.documentElement.outerHTML);
+    dirty = false;
+    setStatus('à jour');
+  } catch (err) {
+    setStatus('échec (' + (err && err.code || 'erreur') + ')', 'err');
+  }
+}
+document.getElementById('save').addEventListener('click', save);
+window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 </script>
 `
 
