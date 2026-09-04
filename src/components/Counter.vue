@@ -17,23 +17,39 @@ const props = defineProps({
   calibration: { type: Object, required: true }, // { x0,y0,colStep,a,rowStep } — cf. lib/calibration.js
   selected: { type: Boolean, default: false },
   size: { type: Number, default: 0.8 },         // taille du pion, fraction du pas de ligne (rowStep)
+  // Faux (marqueurs type DZ, cf. HexMap.vue) : pas de sélection ni de
+  // déplacement par clic sur hex adjacent — reste librement déplaçable en
+  // drag & drop, qui ne passe pas par `select`.
+  selectable: { type: Boolean, default: true },
+  // Décalage visuel en cas d'empilement de plusieurs pions sur le même hex
+  // (cf. `stackOffsets` dans HexMap.vue) — fraction de la taille du pion.
+  offset: { type: Object, default: () => ({ dx: 0, dy: 0 }) },
 })
 
-const emit = defineEmits(['select', 'dragstart'])
+const emit = defineEmits(['select', 'dragstart', 'contextmenu'])
 
-/** Centre pixel du pion — même formule que HexMap.vue (grille flat-top, offset odd-q). */
+/** Centre pixel du pion — même formule que HexMap.vue (grille flat-top, offset odd-q) — plus le décalage d'empilement. */
 const center = computed(() => {
   const { x0, y0, colStep, rowStep } = props.calibration
   const yoff = props.col % 2 === 1 ? rowStep / 2 : 0
-  return { x: x0 + props.col * colStep, y: y0 + (props.row - 1) * rowStep + yoff }
+  const w = rowStep * props.size
+  return {
+    x: x0 + props.col * colStep + props.offset.dx * w,
+    y: y0 + (props.row - 1) * rowStep + yoff + props.offset.dy * w,
+  }
 })
 const w = computed(() => props.calibration.rowStep * props.size)
+
+function onClick() {
+  if (props.selectable) emit('select', props.id)
+}
 </script>
 
 <template>
   <g class="counter" :class="{ selected }">
     <image :href="src" :x="center.x - w / 2" :y="center.y - w / 2" :width="w" :height="w" class="counter-img"
-      draggable="true" @click.stop="emit('select', id)" @dragstart="emit('dragstart', id, $event)" />
+      draggable="true" @click.stop="onClick" @dragstart="emit('dragstart', id, $event)"
+      @contextmenu.prevent.stop="emit('contextmenu', id, $event)" />
     <rect v-if="selected" class="counter-ring" :x="center.x - w / 2 - 3" :y="center.y - w / 2 - 3" :width="w + 6"
       :height="w + 6" rx="5" ry="5" />
   </g>

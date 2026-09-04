@@ -2,15 +2,19 @@
 // Contenu de l'onglet "Calendrier des renforts" — inspiré de
 // ambush-tactique/src/components/PionsPanel.vue (liste de pions
 // glissables) : chaque pion pas encore posé sur la carte (cf.
-// HexMap.vue -> `reinforcements`) est affiché sous le tour où il arrive,
-// glissable vers la carte pour le poser à son hex d'entrée.
+// HexMap.vue -> `reinforcements`) est affiché sous le tour où il arrive.
+// Deux façons de le faire entrer en jeu (cf. HexMap.vue) :
+//  1. glisser l'image directement sur la carte, n'importe quel hex ;
+//  2. cliquer l'image (bordure orange ici) puis cliquer un des hex d'entrée
+//     surlignés en orange sur la carte.
 import { computed } from 'vue'
 
 const props = defineProps({
   reinforcements: { type: Array, required: true }, // pions avec `setup` non encore posés
+  selectedId: { type: [String, Number], default: null }, // pion choisi via le système 2 (clic)
 })
 
-const emit = defineEmits(['dragstart'])
+const emit = defineEmits(['dragstart', 'select'])
 
 /** Groupes { turn, items } triés par tour croissant. */
 const groups = computed(() => {
@@ -30,14 +34,20 @@ const groups = computed(() => {
     <section v-for="g in groups" :key="g.turn" class="rf-turn">
       <h3 class="rf-turn-title">Tour {{ g.turn }}</h3>
       <div class="rf-grid">
-        <figure v-for="c in g.items" :key="c.id" class="rf-piece" draggable="true"
-          @dragstart="emit('dragstart', c.id, $event)">
-          <img :src="c.src" :alt="c.name" width="48" height="48" draggable="false" />
-          <figcaption>{{ c.name }} <span class="rf-hex">&rarr; {{ c.setup }}</span></figcaption>
+        <figure v-for="c in g.items" :key="c.id" class="rf-piece">
+          <img :src="c.src" :alt="c.name" width="48" height="48" draggable="true"
+            :class="{ 'rf-selected': String(c.id) === String(selectedId) }"
+            @dragstart="emit('dragstart', c.id, $event)" @click="emit('select', c.id)" />
+          <!-- Indication d'hex : pure information, pas de drag & drop (seule
+               l'image ci-dessus déclenche dragstart/select). -->
+          <figcaption class="rf-hex">{{ c.setup }}</figcaption>
         </figure>
       </div>
     </section>
-    <p class="rf-hint">Glisser un pion sur la carte pour le poser à son hex d'entrée.</p>
+    <p class="rf-hint">
+      Glisser un pion sur la carte pour le poser librement, ou cliquer dessus puis cliquer un des
+      hex d'entrée surlignés en orange.
+    </p>
   </div>
 </template>
 
@@ -67,19 +77,22 @@ const groups = computed(() => {
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  cursor: grab;
   text-align: center;
 }
 .rf-piece img {
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.15);
+  cursor: grab;
+  border: 3px solid transparent;
+  box-sizing: border-box;
 }
-.rf-piece figcaption {
+.rf-piece img.rf-selected {
+  border-color: #ff8c00;
+}
+.rf-hex {
   font-size: 0.68rem;
   line-height: 1.2;
   word-break: break-word;
-}
-.rf-hex {
   opacity: 0.75;
 }
 .rf-hint {

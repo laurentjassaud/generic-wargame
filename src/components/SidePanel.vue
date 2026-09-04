@@ -240,6 +240,24 @@ function rowVars(tab, i) {
   min-height: 0;
   overflow-y: auto;
   color: var(--tone-ink);
+  /* Scrollbar fine et arrondie façon perfect-scrollbar/vue-custom-scrollbar
+     (rail discret, pouce semi-transparent qui s'éclaircit au survol) —
+     couleurs alignées sur le ton de l'onglet ouvert. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--tone-rule) transparent;
+}
+.dc-content-slot::-webkit-scrollbar {
+  width: 8px;
+}
+.dc-content-slot::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dc-content-slot::-webkit-scrollbar-thumb {
+  background: var(--tone-rule);
+  border-radius: 4px;
+}
+.dc-content-slot::-webkit-scrollbar-thumb:hover {
+  background: var(--tone-soft);
 }
 
 .dc-close-btn {
