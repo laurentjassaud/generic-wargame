@@ -18,36 +18,122 @@
 //    "image" — la mise à l'échelle est faite par le navigateur.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { reactive, ref, computed, onMounted } from 'vue'
+import { reactive, ref, computed, onUnmounted, nextTick } from 'vue'
 import { hexId, parseHexId, DEFAULT_CALIBRATION } from '../lib/calibration.js'
 import { neighborsOf } from '../lib/hex.js'
 import { hexExists, removedHexSet } from '../lib/mapShape.js'
 import CalibrationPanel from './CalibrationPanel.vue'
 import Counter from './Counter.vue'
+import TurnTracker from './TurnTracker.vue'
+import SupportTracker from './SupportTracker.vue'
+import JournalPanel from './JournalPanel.vue'
 import SidePanel from './SidePanel.vue'
 import ReinforcementsPanel from './ReinforcementsPanel.vue'
 import EliminatedPanel from './EliminatedPanel.vue'
 import ContextMenu from './ContextMenu.vue'
+import RollModal from './RollModal.vue'
 
 const props = defineProps({
   module: { type: Object, required: true }, // cf. src/modules/*.json — { boardGame, name, map: {...} }
   // Positions déjà déplacées depuis le setup du module (partie multijoueur en
   // cours) — { [counterId]: { col, row } }. Absent en solo/démo.
   initialPositions: { type: Object, default: () => ({}) },
+  // Pas courant du suivi de tour déjà en cours (partie multijoueur reprise
+  // en route) — cf. `turnTrack` ci-dessous. Absent (0) en solo/démo.
+  initialTurnStep: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['move'])
+const emit = defineEmits(['move', 'turn'])
 
 const map = computed(() => props.module.map)
+
+// --- Journal de partie : historique de tout ce qui se passe (cf.
+// JournalPanel.vue, onglet du panneau latéral — toute la logique y vit).
+// HexMap.vue se contente d'appeler `log(kind, text)` à chaque évènement de
+// jeu (tour, déplacement, entrée en jeu, élimination...).
+const journalRef = ref(null)
+function log(kind, text, data) { return journalRef.value?.log(kind, text, data) }
+
+// --- Retour arrière : annule le dernier déplacement d'un pion déjà posé sur
+// la carte (onHex / onCounterDragEnd ci-dessous) et efface son entrée de
+// journal correspondante. Ne couvre volontairement que les déplacements —
+// pas les entrées en jeu, éliminations, etc., qui ont leurs propres
+// mécanismes de retour (menu contextuel "Replacer le pion").
+const moveHistory = ref([])
+function pushMoveHistory(counterId, from, to, journalId) {
+  if (journalId == null) return
+  moveHistory.value.push({ counterId, from, to, journalId })
+}
+function undoLastMove() {
+  if (replayLocked.value) return
+  const last = moveHistory.value.pop()
+  if (!last) return
+  const c = counters.value.find((c) => String(c.id) === String(last.counterId))
+  if (c) {
+    c.col = last.from.col; c.row = last.from.row
+    emit('move', { counterId: c.id, col: c.col, row: c.row })
+  }
+  journalRef.value?.remove(last.journalId)
+}
+
+// --- Dé : widget flottant non-bloquant (cf. RollModal.vue), toujours monté
+// (v-show, pas v-if, pour conserver sa position glissée et son état pendant
+// qu'il est caché) — résultat journalisé à chaque lancer.
+const showRollModal = ref(true)
+function onDiceRoll(value) { log('dice', `Lancer de dé : ${value}`) }
+
+// --- Lecteur de rejeu : rejoue sur la carte les actions d'un journal
+// chargé (cf. JournalPanel.vue::onFileChosen, évènement `loaded`) — un
+// bouton lecture façon lecteur audio avance d'une ligne à chaque clic,
+// un bouton avance rapide saute directement à la fin. `isReplaying` coupe
+// le ré-enregistrement le temps d'appliquer un pas (cf. onTurnChange plus
+// haut) : les entrées rejouées existent déjà dans le fichier chargé, les
+// rejouer ne doit faire bouger que la carte, pas dupliquer le journal. Le
+// détail de l'application de chaque type d'entrée (`applyReplayEntry`) vit
+// plus bas, une fois `applyRemoteMove`/`applyRemoteTurn` déclarées.
+const replayEntries = ref([])   // [{ kind, text, data }] — ordre chronologique
+const replayIndex = ref(0)      // nombre d'entrées déjà appliquées à la carte
+const isReplaying = ref(false)  // vrai le temps d'appliquer un pas
+
+// --- Suivi de tour : piste de `turns` tours, chacun joué par les camps de
+// `order` dans cet ordre (ex. ["allies","german"] -> Tour 1 Alliés, Tour 1
+// Allemands, Tour 2 Alliés, ...). Toute la logique (pas courant, camp actif,
+// restriction de contrôle) vit dans TurnTracker.vue, autonome — HexMap.vue ne
+// garde qu'un miroir léger (`turnInfo`, mis à jour via `change`) pour ses
+// propres besoins ailleurs (régénération du soutien allié par tour) et
+// délègue `canControl`/`applyRemoteTurn` au composant enfant (cf. ref
+// `turnTrackerRef`).
+const turnTrackerRef = ref(null)
+const turnInfo = ref({ step: props.initialTurnStep, turn: 1, activeSideKey: null, activeFactions: null })
+function onTurnChange(info) {
+  turnInfo.value = info
+  // Ne pas ré-écrire dans le journal un changement de tour provoqué par le
+  // lecteur de rejeu (cf. plus bas) — l'entrée existe déjà dans le fichier
+  // chargé, la rejouer ne doit que faire bouger la carte, pas dupliquer le
+  // journal.
+  if (isReplaying.value) return
+  const label = props.module.turnTrack?.sides?.[info.activeSideKey]?.label ?? info.activeSideKey
+  log('turn', `Tour ${info.turn} — ${label}`, { step: info.step })
+}
+function onTurnAdvance(step) { emit('turn', step) }
+function applyRemoteTurn(step) { turnTrackerRef.value?.applyRemoteTurn(step) }
+const canControl = (c) => turnTrackerRef.value?.canControl(c) ?? true
+
+// --- Soutien allié : tablette autonome (cf. SupportTracker.vue, toute la
+// logique — régénération par tour, tablette actuelle — y vit). HexMap.vue ne
+// garde qu'une ref pour y déléguer la résolution/retrait d'un pion glissé
+// depuis la tablette (cf. onCounterDragStart / onMapDrop plus bas).
+const supportTrackerRef = ref(null)
 
 const calibration = reactive({ ...DEFAULT_CALIBRATION })
 const gridStyle = reactive({ stroke: '#d11a1a', width: 1.5, opacity: 0 })
 const mapConfig = reactive({ cols: map.value.cols, rows: map.value.rows })
 
-const zoom = ref(0.55)
+const zoom = ref(0.5)
 const showGrid = ref(true)
 const showLabels = ref(false)
 const showCalib = ref(false)
+const showCounters = ref(true)
 const selected = ref(null)
 
 // Forme réelle de la grille (colonnes décalées amputées d'une ligne, hexs
@@ -150,7 +236,14 @@ const isUnit = (c) => c.type !== 'marker'
 // répartit pour éviter le stacking (les marqueurs, eux, ignorent
 // complètement cette logique — cf. isUnit).
 const autoPlacesAtLoad = (c) => (c.turn ?? 1) === 1 && !(c.faction === 'german' && c.turn === 1)
-const counters = ref((() => {
+/** Placement initial du module — extrait en fonction pour être rejouable
+ *  (cf. `resetBoardForReplay` plus bas), pas seulement au montage. Utilise
+ *  `resolveEntryTarget`/`pickArrivalHex`, qui tirent au hasard un hex parmi
+ *  la plage `setup` : rejouer ne reproduit donc pas exactement le tirage
+ *  aléatoire d'origine pour les pions jamais déplacés depuis (non
+ *  journalisé) — sans conséquence pour ceux qui bougent, puisque chaque
+ *  `move`/`place` rejoué fixe une position absolue. */
+function buildInitialCounters() {
   const occupied = new Set()
   const placed = []
   for (const c of allCounters.value.filter((c) => c.setup && autoPlacesAtLoad(c))) {
@@ -161,7 +254,8 @@ const counters = ref((() => {
     placed.push({ ...c, ...pos })
   }
   return placed
-})())
+}
+const counters = ref(buildInitialCounters())
 const selectedCounterId = ref(null)
 
 // Pions retirés de la carte via "Éliminé" (menu contextuel, cf.
@@ -194,7 +288,7 @@ const sidePanelTabs = computed(() => {
   const base = !sides
     ? [{ key: 'reinforcements', label: 'Renforts' }]
     : Object.keys(sides).map((side) => ({ key: side, label: SIDE_LABELS[side] ?? `Renfort ${side}` }))
-  return [...base, { key: 'eliminated', label: 'Unités éliminées' }]
+  return [...base, { key: 'eliminated', label: 'Unités éliminées' }, { key: 'journal', label: 'Journal' }]
 })
 function reinforcementsForTab(key) {
   const sides = props.module.sides
@@ -224,20 +318,26 @@ function returnCounterToReinforcements(id) {
   if (i !== -1) counters.value.splice(i, 1)
   eliminatedIds.value.delete(String(id))
   eliminatedIds.value = new Set(eliminatedIds.value)
+  const c = allCounters.value.find((c) => String(c.id) === String(id))
+  log('return', `${c?.name ?? id} replacé dans les renforts`, { counterId: id })
 }
 function eliminateCounter(id) {
   const i = counters.value.findIndex((c) => String(c.id) === String(id))
   if (i !== -1) counters.value.splice(i, 1)
   eliminatedIds.value.add(String(id))
   eliminatedIds.value = new Set(eliminatedIds.value)
+  const c = allCounters.value.find((c) => String(c.id) === String(id))
+  log('eliminate', `${c?.name ?? id} éliminé`, { counterId: id })
 }
 function onCounterContextMenu(id, ev) {
+  if (replayLocked.value) return
   openContextMenu(ev, [
     { label: 'Replacer le pion', action: () => returnCounterToReinforcements(id) },
     { label: 'Éliminé', action: () => eliminateCounter(id) },
   ])
 }
 function onEliminatedContextMenu(id, ev) {
+  if (replayLocked.value) return
   openContextMenu(ev, [
     { label: 'Replacer le pion', action: () => returnCounterToReinforcements(id) },
   ])
@@ -284,7 +384,36 @@ const stackOffsets = computed(() => {
 })
 const ZERO_OFFSET = { dx: 0, dy: 0 }
 
+/** Centre pixel d'un hex (col 0-based, row 1-based) — même formule que
+ *  Counter.vue, dupliquée ici pour placer les badges d'empilement. */
+function hexCenterPx(col, row) {
+  const { x0, y0, colStep, rowStep } = calibration
+  const yoff = col % 2 === 1 ? rowStep / 2 : 0
+  return { x: x0 + col * colStep, y: y0 + (row - 1) * rowStep + yoff }
+}
+
+// Nombre de pions de soutien empilés sur un même hex, affiché en badge sur
+// la carte (les pions de soutien étant tous identiques, un décalage visuel
+// seul ne suffit pas à voir combien il y en a) — seulement à partir de 2.
+const supportStackBadges = computed(() => {
+  const counts = new Map()
+  for (const c of counters.value) {
+    if (c.kind !== 'support') continue
+    const key = c.col + ',' + c.row
+    const entry = counts.get(key) ?? { col: c.col, row: c.row, count: 0 }
+    entry.count += 1
+    counts.set(key, entry)
+  }
+  return [...counts.values()].filter((b) => b.count >= 2).map((b) => {
+    const center = hexCenterPx(b.col, b.row)
+    return { key: b.col + ',' + b.row, count: b.count, x: center.x + calibration.a * 0.55, y: center.y + calibration.a * 0.5 }
+  })
+})
+
 function onCounterSelect(id) {
+  if (replayLocked.value) return
+  const c = counters.value.find((c) => String(c.id) === String(id))
+  if (!canControl(c)) return
   selectedCounterId.value = selectedCounterId.value === id ? null : id
   selectedReinforcementId.value = null
 }
@@ -307,6 +436,9 @@ const entryHexSet = computed(() => {
 const isEntryHex = (h) => entryHexSet.value.has(h.c + ',' + h.r)
 
 function onReinforcementSelect(id) {
+  if (replayLocked.value) return
+  const c = reinforcements.value.find((c) => String(c.id) === String(id))
+  if (!canControl(c)) return
   selectedReinforcementId.value = selectedReinforcementId.value === id ? null : id
   selectedCounterId.value = null
 }
@@ -316,8 +448,12 @@ function onReinforcementSelect(id) {
  *     ses hex d'entrée valides -> il s'y pose, fin de sélection ;
  *  2. un pion déjà sur la carte est sélectionné et l'hex cliqué lui est
  *     adjacent -> il s'y déplace (et reste sélectionné, pour enchaîner) ;
- *  3. sinon, comportement existant : simple sélection d'info hex. */
+ *  3. sinon, comportement existant : simple sélection d'info hex.
+ *  Aucune action pendant un rejeu en cours (cf. `replayLocked`) — seul le
+ *  lecteur (stepReplay/fastForwardReplay) fait bouger la carte tant que le
+ *  journal chargé n'est pas entièrement joué. */
 const onHex = (h) => {
+  if (replayLocked.value) return
   if (selectedReinforcementId.value != null) {
     if (isEntryHex(h)) {
       const r = selectedReinforcement.value
@@ -325,6 +461,7 @@ const onHex = (h) => {
         const placed = { ...r, col: h.c, row: h.r }
         counters.value.push(placed)
         emit('move', { counterId: placed.id, col: h.c, row: h.r })
+        log('place', `${r.name} entre en jeu en ${hexId(h.c + 1, h.r)}`, { counterId: placed.id, col: h.c, row: h.r })
       }
       selectedReinforcementId.value = null
     }
@@ -332,7 +469,13 @@ const onHex = (h) => {
   }
   if (selectedCounterId.value != null && isAdjacent(h)) {
     const c = counters.value.find((c) => c.id === selectedCounterId.value)
-    if (c) { c.col = h.c; c.row = h.r; emit('move', { counterId: c.id, col: c.col, row: c.row }) }
+    if (c) {
+      const from = { col: c.col, row: c.row }
+      c.col = h.c; c.row = h.r
+      emit('move', { counterId: c.id, col: c.col, row: c.row })
+      const journalId = log('move', `${c.name} se déplace vers ${hexId(h.c + 1, h.r)}`, { counterId: c.id, col: c.col, row: c.row })
+      pushMoveHistory(c.id, from, { col: c.col, row: c.row }, journalId)
+    }
     return
   }
   selected.value = isSel(h) ? null : { col: h.c, row: h.r, coord: h.id }
@@ -341,10 +484,85 @@ const onHex = (h) => {
 // --- Drag & drop d'un pion : dépose au centre de l'hex le plus proche du curseur ---
 const svgRef = ref(null)
 
-function onCounterDragStart(id, ev) {
-  draggedCounterId.value = id
-  if (ev?.dataTransfer) { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', String(id)) }
+// Position courante (coordonnées SVG) du pion suivi par un glisser "souris"
+// (cf. onCounterDragStart plus bas) — permet un retour visuel live pendant
+// le déplacement, avant que le relâchement ne fixe la case définitive.
+const dragCurrentPx = ref(null)
+
+function svgPointFromEvent(ev) {
+  const svg = svgRef.value
+  if (!svg) return null
+  const pt = svg.createSVGPoint()
+  pt.x = ev.clientX; pt.y = ev.clientY
+  return pt.matrixTransform(svg.getScreenCTM().inverse())
 }
+
+function onCounterDragStart(id, ev) {
+  // Pendant un rejeu (cf. `replayLocked`), preventDefault() sur `dragstart`
+  // annule aussi le glisser natif HTML5 (tablette de soutien, panneau de
+  // renforts) — un seul guard couvre donc les deux mécanismes de glisser.
+  if (replayLocked.value) { ev?.preventDefault(); return }
+  const c = counters.value.find((c) => String(c.id) === String(id))
+    ?? supportTrackerRef.value?.findToken(id)
+    ?? allCounters.value.find((c) => String(c.id) === String(id))
+  // Les pions de soutien (kind: 'support', cf. SupportTracker.vue) sont une
+  // ressource commune, pas rattachée à un camp — toujours glissables, que ce
+  // soit depuis la tablette ou déjà posés sur la carte, sans passer par
+  // canControl (ni par le tour actif).
+  if (c?.kind !== 'support' && !canControl(c)) { ev?.preventDefault(); return }
+  draggedCounterId.value = id
+  if (ev?.dataTransfer) {
+    // Glisser natif HTML5 (pion pas encore sur la carte : <img> de la
+    // tablette de soutien ou du panneau "Renfort ...", tous deux hors du
+    // <svg>) — le natif gère lui-même survol/dépôt, cf. onMapDrop.
+    ev.dataTransfer.effectAllowed = 'move'
+    ev.dataTransfer.setData('text/plain', String(id))
+    return
+  }
+  // Glisser "souris" (pion Counter.vue déjà posé sur la carte, <image> SVG) :
+  // le DnD natif HTML5 ne se déclenche jamais de façon fiable sur une <image>
+  // SVG (confirmé en test réel ET automatisé — `dragstart` ne part pas malgré
+  // draggable="true"), donc on suit nous-mêmes la souris jusqu'au relâchement.
+  const loc = svgPointFromEvent(ev)
+  if (loc) dragCurrentPx.value = { x: loc.x, y: loc.y }
+  window.addEventListener('mousemove', onCounterDragMove)
+  window.addEventListener('mouseup', onCounterDragEnd)
+}
+
+function onCounterDragMove(ev) {
+  const loc = svgPointFromEvent(ev)
+  if (loc) dragCurrentPx.value = loc
+}
+
+function onCounterDragEnd(ev) {
+  window.removeEventListener('mousemove', onCounterDragMove)
+  window.removeEventListener('mouseup', onCounterDragEnd)
+  const loc = svgPointFromEvent(ev) ?? dragCurrentPx.value
+  dragCurrentPx.value = null
+  const id = draggedCounterId.value
+  draggedCounterId.value = null
+  if (!loc || id == null) return
+  const hex = pixelToHex(loc.x, loc.y)
+  if (!hex) return
+  const c = counters.value.find((c) => String(c.id) === String(id))
+  // Un simple clic (mousedown puis mouseup sans déplacement réel, cf.
+  // Counter.vue::onClick pour la sélection) retombe ici aussi — on n'émet
+  // `move` que si la case a réellement changé, pour ne pas spammer le réseau
+  // à chaque clic de sélection en partie multijoueur.
+  if (c && (c.col !== hex.col || c.row !== hex.row)) {
+    const fromLabel = hexId(c.col + 1, c.row)
+    const from = { col: c.col, row: c.row }
+    c.col = hex.col; c.row = hex.row
+    emit('move', { counterId: c.id, col: c.col, row: c.row })
+    const journalId = log(c.kind === 'support' ? 'support' : 'move', `${c.name} déplacé de ${fromLabel} vers ${hexId(c.col + 1, c.row)}`, { counterId: c.id, col: c.col, row: c.row })
+    pushMoveHistory(c.id, from, { col: c.col, row: c.row }, journalId)
+  }
+}
+
+onUnmounted(() => {
+  window.removeEventListener('mousemove', onCounterDragMove)
+  window.removeEventListener('mouseup', onCounterDragEnd)
+})
 
 /** Convertit un point en coordonnées SVG vers l'hex logique le plus proche —
  *  cherche dans une fenêtre de 3×3 hex autour de l'estimation initiale (la
@@ -369,6 +587,7 @@ function pixelToHex(x, y) {
 }
 
 function onMapDrop(ev) {
+  if (replayLocked.value) return
   const svg = svgRef.value
   if (!svg || draggedCounterId.value == null) return
   const pt = svg.createSVGPoint()
@@ -376,21 +595,32 @@ function onMapDrop(ev) {
   const loc = pt.matrixTransform(svg.getScreenCTM().inverse())
   const hex = pixelToHex(loc.x, loc.y)
   if (hex) {
-    const c = counters.value.find((c) => c.id === draggedCounterId.value)
-    if (c) {
-      c.col = hex.col; c.row = hex.row
-      emit('move', { counterId: c.id, col: c.col, row: c.row })
+    // Un pion déjà posé sur la carte emprunte désormais le glisser "souris"
+    // (cf. onCounterDragEnd), qui ne passe pas par l'événement natif `drop` —
+    // on n'arrive ici que pour un pion pas encore sur la carte : renfort
+    // glissé depuis le panneau "Renfort ..." (glisser-déposer libre, système
+    // 1, cf. entrée en jeu dans le commentaire de `entryHexSet`) ou pion de
+    // soutien tiré de la tablette (cf. SupportTracker.vue::removeToken).
+    const reinforcement = allCounters.value.find((c) => String(c.id) === String(draggedCounterId.value))
+    if (reinforcement) {
+      const placed = { ...reinforcement, ...hex }
+      counters.value.push(placed)
+      emit('move', { counterId: placed.id, col: placed.col, row: placed.row })
+      log('place', `${placed.name} entre en jeu en ${hexId(placed.col + 1, placed.row)}`,
+        { counterId: placed.id, col: placed.col, row: placed.row })
     } else {
-      // Pas encore sur la carte : c'est un renfort glissé depuis le panneau
-      // "Renfort ...". Glisser-déposer libre (système 1, cf. entrée en jeu
-      // dans le commentaire de `entryHexSet`) : il atterrit exactement où on
-      // le lâche, n'importe quel hex de la carte, sans lien avec son hex
-      // d'entrée déclaré.
-      const reinforcement = allCounters.value.find((c) => String(c.id) === String(draggedCounterId.value))
-      if (reinforcement) {
-        const placed = { ...reinforcement, ...hex }
+      const token = supportTrackerRef.value?.removeToken(draggedCounterId.value)
+      if (token) {
+        const placed = { ...token, ...hex }
         counters.value.push(placed)
         emit('move', { counterId: placed.id, col: placed.col, row: placed.row })
+        // Les pions de soutien sont créés à la volée (cf. SupportTracker.vue),
+        // pas déclarés dans `allCounters` — contrairement à un renfort normal,
+        // le rejeu ne peut pas les retrouver par id : on embarque l'objet
+        // complet dans `data.counter` pour pouvoir le recréer (cf.
+        // applyReplayEntry plus bas).
+        log('support', `${placed.name} posé en ${hexId(placed.col + 1, placed.row)}`,
+          { counterId: placed.id, col: placed.col, row: placed.row, counter: placed })
       }
     }
   }
@@ -408,7 +638,89 @@ function applyRemoteMove(counterId, col, row) {
   if (reinforcement) counters.value.push({ ...reinforcement, col, row })
 }
 
-defineExpose({ applyRemoteMove })
+defineExpose({ applyRemoteMove, applyRemoteTurn })
+
+/** Reçoit le journal chargé (cf. JournalPanel.vue, évènement `loaded`) en
+ *  ordre chronologique et remet la carte au déploiement initial pour
+ *  rejouer depuis la première ligne. */
+function onJournalLoaded(list) {
+  replayEntries.value = list
+  replayIndex.value = 0
+  resetBoardForReplay()
+}
+
+function resetBoardForReplay() {
+  isReplaying.value = true
+  counters.value = buildInitialCounters()
+  eliminatedIds.value = new Set()
+  selectedCounterId.value = null
+  selectedReinforcementId.value = null
+  moveHistory.value = []
+  turnTrackerRef.value?.applyRemoteTurn(0)
+  nextTick(() => { isReplaying.value = false })
+}
+
+/** Applique une entrée de journal à la carte — même logique que la synchro
+ *  multijoueur (`applyRemoteMove`/`applyRemoteTurn`), qui ne réémet ni ne
+ *  journalise rien : rejouer une ligne ne fait bouger que la carte. */
+function applyReplayEntry(entry) {
+  const d = entry.data
+  if (!d) return
+  if (entry.kind === 'move' || entry.kind === 'place') {
+    applyRemoteMove(d.counterId, d.col, d.row)
+  } else if (entry.kind === 'support') {
+    if (counters.value.some((c) => String(c.id) === String(d.counterId))) {
+      applyRemoteMove(d.counterId, d.col, d.row)
+    } else if (d.counter) {
+      counters.value.push({ ...d.counter, col: d.col, row: d.row })
+    }
+  } else if (entry.kind === 'eliminate') {
+    const i = counters.value.findIndex((c) => String(c.id) === String(d.counterId))
+    if (i !== -1) counters.value.splice(i, 1)
+    eliminatedIds.value.add(String(d.counterId))
+    eliminatedIds.value = new Set(eliminatedIds.value)
+  } else if (entry.kind === 'return') {
+    const i = counters.value.findIndex((c) => String(c.id) === String(d.counterId))
+    if (i !== -1) counters.value.splice(i, 1)
+    eliminatedIds.value.delete(String(d.counterId))
+    eliminatedIds.value = new Set(eliminatedIds.value)
+  } else if (entry.kind === 'turn') {
+    turnTrackerRef.value?.applyRemoteTurn(d.step)
+  }
+}
+
+/** Bouton lecture (▶) : avance d'une ligne — l'entrée réapparaît dans le
+ *  journal (cf. JournalPanel.vue::revealEntry) en même temps qu'elle bouge
+ *  la carte. */
+function stepReplay() {
+  if (replayIndex.value >= replayEntries.value.length) return
+  isReplaying.value = true
+  const entry = replayEntries.value[replayIndex.value]
+  applyReplayEntry(entry)
+  journalRef.value?.revealEntry(entry)
+  replayIndex.value += 1
+  nextTick(() => { isReplaying.value = false })
+}
+
+/** Bouton avance rapide (⏭) : applique toutes les lignes restantes d'un coup. */
+function fastForwardReplay() {
+  if (replayIndex.value >= replayEntries.value.length) return
+  isReplaying.value = true
+  while (replayIndex.value < replayEntries.value.length) {
+    const entry = replayEntries.value[replayIndex.value]
+    applyReplayEntry(entry)
+    journalRef.value?.revealEntry(entry)
+    replayIndex.value += 1
+  }
+  nextTick(() => { isReplaying.value = false })
+}
+
+// Vrai tant qu'un journal chargé n'a pas été entièrement rejoué (cf.
+// stepReplay/fastForwardReplay) — bloque alors toute action de jeu (cf.
+// guards dans onHex/onCounterDragStart/onMapDrop/sélections/menu contextuel
+// plus haut, et props `disabled` sur TurnTracker/RollModal ci-dessous) :
+// la carte ne doit bouger qu'au rythme du lecteur pendant un rejeu.
+const replayLocked = computed(() => replayEntries.value.length > 0 && replayIndex.value < replayEntries.value.length)
 
 function zoomIn() {
   zoom.value = Math.min(2, +(zoom.value + 0.05).toFixed(2))
@@ -427,14 +739,6 @@ function onMapWheel(e) {
 // --- Drag-to-scroll (pan) au clic droit maintenu ---
 const mapWrapRef = ref(null)
 const mapDrag = ref(null) // { startX, startY, scrollLeft, scrollTop }
-
-// Zoom initial : la carte doit occuper toute la largeur disponible au
-// chargement plutôt qu'un pourcentage arbitraire fixe — recalculé une seule
-// fois au montage (un zoom manuel ensuite n'est jamais réécrit).
-onMounted(() => {
-  const width = mapWrapRef.value?.clientWidth
-  if (width) zoom.value = +(width / map.value.imageWidth).toFixed(3)
-})
 
 function onMapDragStart(e) {
   const el = mapWrapRef.value
@@ -462,10 +766,37 @@ function onMapDragEnd() {
   <div class="hexmap">
     <header class="toolbar">
       <h1>{{ module.name }}</h1>
+
+      <div v-if="module.turnTrack" class="turn-tracker-block">
+        <TurnTracker ref="turnTrackerRef" :config="module.turnTrack" :sides="module.sides"
+          :initial-step="initialTurnStep" :disabled="replayLocked" @turn="onTurnAdvance" @change="onTurnChange" />
+
+        <SupportTracker ref="supportTrackerRef" :config="module.supportTrack" :turn="turnInfo.turn"
+          @dragstart="onCounterDragStart" />
+      </div>
+
       <div class="controls">
         <label><input type="checkbox" v-model="showGrid"> grille</label>
         <label><input type="checkbox" v-model="showLabels"> coordonnées</label>
         <label><input type="checkbox" v-model="showCalib"> calibration</label>
+        <button type="button" class="toggle-btn" :class="{ active: !showCounters }"
+          @click="showCounters = !showCounters">
+          {{ showCounters ? 'Cacher les pions' : 'Afficher les pions' }}
+        </button>
+        <button type="button" class="toggle-btn" :disabled="!moveHistory.length || replayLocked" @click="undoLastMove">
+          ↩ Retour arrière
+        </button>
+        <button type="button" class="toggle-btn" :class="{ active: !showRollModal }"
+          @click="showRollModal = !showRollModal">
+          {{ showRollModal ? 'Cacher le dé' : 'Afficher le dé' }}
+        </button>
+        <div v-if="replayEntries.length" class="replay-ctl">
+          <span class="replay-pos">{{ replayIndex }} / {{ replayEntries.length }}</span>
+          <button type="button" class="toggle-btn replay-btn" title="Lecture : avancer d'une ligne"
+            :disabled="replayIndex >= replayEntries.length" @click="stepReplay">▶</button>
+          <button type="button" class="toggle-btn replay-btn" title="Avance rapide : aller à la fin"
+            :disabled="replayIndex >= replayEntries.length" @click="fastForwardReplay">⏭</button>
+        </div>
         <div class="zoom-ctl">
           <button @click="zoomOut">−</button>
           <span>{{ Math.round(zoom * 100) }}%</span>
@@ -497,16 +828,24 @@ function onMapDragEnd() {
             text-anchor="middle" :font-size="calibration.a * 0.42">{{ h.id }}</text>
         </g>
 
-        <g class="counters">
+        <g v-if="showCounters" class="counters">
           <!-- Marqueurs (DZ...) rendus en premier : toujours sous les unités
                dans l'ordre de peinture SVG, quel que soit le hex. -->
           <Counter v-for="c in counters.filter((c) => !isUnit(c))" :key="c.id" :id="c.id" :src="c.src" :col="c.col"
             :row="c.row" :calibration="calibration" :selected="selectedCounterId === c.id" :selectable="false"
-            :offset="stackOffsets.get(c.id) ?? ZERO_OFFSET" @dragstart="onCounterDragStart" />
+            :offset="stackOffsets.get(c.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === c.id ? dragCurrentPx : null"
+            @dragstart="onCounterDragStart" />
           <Counter v-for="c in counters.filter(isUnit)" :key="c.id" :id="c.id" :src="c.src" :col="c.col"
             :row="c.row" :calibration="calibration" :selected="selectedCounterId === c.id"
-            :offset="stackOffsets.get(c.id) ?? ZERO_OFFSET" @select="onCounterSelect"
-            @dragstart="onCounterDragStart" @contextmenu="onCounterContextMenu" />
+            :offset="stackOffsets.get(c.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === c.id ? dragCurrentPx : null"
+            @select="onCounterSelect" @dragstart="onCounterDragStart" @contextmenu="onCounterContextMenu" />
+        </g>
+
+        <g v-if="showCounters" class="support-badges">
+          <circle v-for="b in supportStackBadges" :key="b.key" :cx="b.x" :cy="b.y" :r="calibration.a * 0.26"
+            class="support-badge-bg" />
+          <text v-for="b in supportStackBadges" :key="'t' + b.key" :x="b.x" :y="b.y + calibration.a * 0.1"
+            class="support-badge-text" text-anchor="middle" :font-size="calibration.a * 0.34">{{ b.count }}</text>
         </g>
       </svg>
     </main>
@@ -518,6 +857,7 @@ function onMapDragEnd() {
       <template v-for="tab in sidePanelTabs" :key="tab.key" v-slot:[tab.key]>
         <EliminatedPanel v-if="tab.key === 'eliminated'" :units="eliminatedCounters"
           @contextmenu="onEliminatedContextMenu" />
+        <JournalPanel v-else-if="tab.key === 'journal'" ref="journalRef" @loaded="onJournalLoaded" />
         <ReinforcementsPanel v-else :reinforcements="reinforcementsForTab(tab.key)"
           :selected-id="selectedReinforcementId" @dragstart="onCounterDragStart" @select="onReinforcementSelect" />
       </template>
@@ -525,12 +865,16 @@ function onMapDragEnd() {
 
     <ContextMenu v-if="contextMenu" :x="contextMenu.x" :y="contextMenu.y" :items="contextMenu.items"
       @choose="chooseContextMenuItem" @close="closeContextMenu" />
+
+    <RollModal v-show="showRollModal" :disabled="replayLocked" @roll="onDiceRoll" />
   </div>
 </template>
 
 <style scoped>
 .hexmap {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
 }
 
 .toolbar {
@@ -541,6 +885,9 @@ function onMapDragEnd() {
   gap: 12px;
   padding: 16px 36px 0;
   background: #8a7c76;
+  flex: none;
+  position: relative;
+  z-index: 1;
 }
 
 .toolbar h1 {
@@ -548,6 +895,12 @@ function onMapDragEnd() {
   font-weight: 700;
   margin: 0;
   color: #cac9ae;
+}
+
+.turn-tracker-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .controls {
@@ -564,6 +917,43 @@ function onMapDragEnd() {
   gap: 6px;
   cursor: pointer;
   color: var(--color-text);
+}
+
+.toggle-btn {
+  padding: 5px 10px;
+  font-size: 0.85rem;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.toggle-btn.active {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.toggle-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.replay-ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.replay-pos {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+.replay-btn {
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 5px 9px;
 }
 
 .zoom-ctl {
@@ -584,7 +974,8 @@ function onMapDragEnd() {
 
 .map-wrap {
   overflow: hidden;
-  height: calc( 100vh - 76px );
+  flex: 1;
+  min-height: 0;
   background: #8a7c76;
 }
 
@@ -635,6 +1026,21 @@ polygon.hex.entry:hover {
   font-family: monospace;
   font-weight: 700;
   fill: #111;
+  pointer-events: none;
+}
+
+.support-badge-bg {
+  fill: #c0392b;
+  stroke: #fff;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.support-badge-text {
+  fill: #fff;
+  font-weight: 700;
+  font-family: sans-serif;
   pointer-events: none;
 }
 </style>

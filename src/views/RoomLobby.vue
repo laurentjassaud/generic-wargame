@@ -74,6 +74,9 @@ function attachSocketListeners() {
   socket.on('game:move', ({ counterId, col, row }) => {
     hexMapRef.value?.applyRemoteMove(counterId, col, row)
   })
+  socket.on('game:turn', ({ turnStep }) => {
+    hexMapRef.value?.applyRemoteTurn(turnStep)
+  })
   socket.on('connect', () => {
     // Reconnexion (auto par socket.io après coupure réseau) : on rejoint à
     // nouveau avec les mêmes identifiants pour que le serveur nous remarque
@@ -109,6 +112,13 @@ function onLocalMove({ counterId, col, row }) {
   getSocket().emit('game:move', { gameId: props.id, counterId, col, row })
 }
 
+function onLocalTurn() {
+  // Le nouveau pas est déjà appliqué localement (optimiste, cf. HexMap.vue
+  // -> nextTurn) ; le serveur incrémente sa propre copie et rediffuse la
+  // valeur faisant autorité à tous les joueurs (soi-même inclus).
+  getSocket().emit('game:turn', { gameId: props.id })
+}
+
 onMounted(async () => {
   attachSocketListeners()
   await loadGame()
@@ -128,6 +138,7 @@ onUnmounted(() => {
   socket.off('room:update')
   socket.off('room:started')
   socket.off('game:move')
+  socket.off('game:turn')
   socket.off('connect')
 })
 </script>
@@ -186,7 +197,9 @@ onUnmounted(() => {
       class="board"
       :module="moduleData"
       :initial-positions="room.boardState"
+      :initial-turn-step="room.turnStep ?? 0"
       @move="onLocalMove"
+      @turn="onLocalTurn"
     />
   </div>
 </template>

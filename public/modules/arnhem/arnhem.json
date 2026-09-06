@@ -23,6 +23,19 @@
       "pol"
     ]
   },
+  "turnTrack": {
+    "turns": 10,
+    "order": ["allies", "german"],
+    "sides": {
+      "allies": { "label": "Alliés", "marker": "/modules/arnhem/images/Marker_Game Turn-A.png" },
+      "german": { "label": "Allemands", "marker": "/modules/arnhem/images/Marker_Game Turn-G.png" }
+    }
+  },
+  "supportTrack": {
+    "label": "Soutien allié",
+    "marker": "/modules/arnhem/images/Allied Air Support.png",
+    "byTurn": [0, 3, 7, 3, 3, 0, 3, 0, 0, 0]
+  },
   "counters": {
     "german": [
       {

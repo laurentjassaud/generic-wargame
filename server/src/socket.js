@@ -1,4 +1,4 @@
-import { RoomError, getGame, joinGame, recordMove, setPlayerConnectionBySocket, toPublic } from './rooms.js'
+import { RoomError, getGame, joinGame, recordMove, advanceTurn, setPlayerConnectionBySocket, toPublic } from './rooms.js'
 
 export function registerSocketHandlers(io) {
   io.on('connection', (socket) => {
@@ -36,6 +36,18 @@ export function registerSocketHandlers(io) {
       try {
         recordMove(gameId, { counterId, col, row })
         io.to(`game:${gameId}`).emit('game:move', { counterId, col, row })
+      } catch {
+        // Partie pas encore lancée ou déjà supprimée : on ignore silencieusement.
+      }
+    })
+
+    socket.on('game:turn', ({ gameId } = {}) => {
+      // Même garde que game:move : seul un joueur ayant rejoint cette room
+      // peut faire avancer sa piste de tour.
+      if (socket.data.gameId !== gameId) return
+      try {
+        const game = advanceTurn(gameId)
+        io.to(`game:${gameId}`).emit('game:turn', { turnStep: game.turnStep })
       } catch {
         // Partie pas encore lancée ou déjà supprimée : on ignore silencieusement.
       }

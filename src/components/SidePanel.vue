@@ -24,10 +24,10 @@ let fadeTimer = null
 
 // Palette par onglet (ton clair → sombre). Cycle si plus de 4 onglets.
 const TONES = [
-  { bg: '#c6c8af', ink: '#24271f', soft: '#6f7360', rule: '#9a9d84', hover: '#b0b298', label: '#55584a' },
-  { bg: '#a9ac93', ink: '#1f2219', soft: '#585c49', rule: '#878b71', hover: '#989b81', label: '#3f4235' },
-  { bg: '#7c8069', ink: '#f0f1e8', soft: '#cbcdba', rule: '#9ea28a', hover: '#8b8f77', label: '#e2e3d6' },
-  { bg: '#383b31', ink: '#eceedf', soft: '#b9bba6', rule: '#5c604f', hover: '#474b3e', label: '#b9bba6' },
+  { bg: '#a7a089', ink: '#24271f', soft: '#6f7360', rule: '#9a9d84', hover: '#b0b298', label: '#55584a' },
+  { bg: '#e8c468', ink: '#1f2219', soft: '#585c49', rule: '#878b71', hover: '#989b81', label: '#3f4235' },
+  { bg: '#716661', ink: '#f0f1e8', soft: '#cbcdba', rule: '#9ea28a', hover: '#8b8f77', label: '#e2e3d6' },
+  { bg: '#453e3b', ink: '#eceedf', soft: '#b9bba6', rule: '#5c604f', hover: '#474b3e', label: '#b9bba6' },
 ]
 
 const TAB_TOPS = [220, 346, 444, 560]

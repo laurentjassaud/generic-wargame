@@ -28,6 +28,7 @@ export function createGame({ moduleId, scenarioId, variants, maxPlayers }) {
     createdAt: Date.now(),
     players: new Map(), // playerId -> { id, name, side, connected, socketId }
     boardState: new Map(), // counterId -> { col, row } — positions déplacées depuis le setup du module
+    turnStep: 0, // index dans la séquence tours × camps du module (cf. HexMap.vue -> turnTrack)
   }
   games.set(id, game)
   return game
@@ -64,6 +65,7 @@ export function toPublic(game) {
       connected: p.connected,
     })),
     boardState: Object.fromEntries(game.boardState),
+    turnStep: game.turnStep,
   }
 }
 
@@ -104,6 +106,17 @@ export function recordMove(id, { counterId, col, row }) {
   if (!game) throw new RoomError('not-found')
   if (game.status !== 'started') throw new RoomError('not-started')
   game.boardState.set(String(counterId), { col, row })
+  return game
+}
+
+export function advanceTurn(id) {
+  const game = games.get(id)
+  if (!game) throw new RoomError('not-found')
+  if (game.status !== 'started') throw new RoomError('not-started')
+  // Le serveur ne connaît pas la longueur de la piste (données du module,
+  // chargées seulement côté client) : il incrémente sans borne, chaque
+  // client s'arrête déjà lui-même en fin de piste avant d'émettre.
+  game.turnStep += 1
   return game
 }
 

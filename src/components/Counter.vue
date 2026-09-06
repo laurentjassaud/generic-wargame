@@ -24,12 +24,17 @@ const props = defineProps({
   // Décalage visuel en cas d'empilement de plusieurs pions sur le même hex
   // (cf. `stackOffsets` dans HexMap.vue) — fraction de la taille du pion.
   offset: { type: Object, default: () => ({ dx: 0, dy: 0 }) },
+  // Position pixel SVG live pendant un glisser "souris" en cours (cf.
+  // dragCurrentPx dans HexMap.vue) — remplace le centre calculé depuis
+  // col/row tant que ce pion est celui suivi par le glisser.
+  dragPx: { type: Object, default: null },
 })
 
 const emit = defineEmits(['select', 'dragstart', 'contextmenu'])
 
 /** Centre pixel du pion — même formule que HexMap.vue (grille flat-top, offset odd-q) — plus le décalage d'empilement. */
 const center = computed(() => {
+  if (props.dragPx) return props.dragPx
   const { x0, y0, colStep, rowStep } = props.calibration
   const yoff = props.col % 2 === 1 ? rowStep / 2 : 0
   const w = rowStep * props.size
@@ -43,12 +48,22 @@ const w = computed(() => props.calibration.rowStep * props.size)
 function onClick() {
   if (props.selectable) emit('select', props.id)
 }
+
+/** Démarre le glisser au clic gauche — cf. HexMap.vue::onCounterDragStart :
+ *  le DnD natif HTML5 (`draggable`/`dragstart`) ne se déclenche pas de façon
+ *  fiable sur une <image> SVG, donc on suit la souris nous-mêmes plutôt que
+ *  de compter sur l'événement natif. */
+function onMouseDown(ev) {
+  if (ev.button !== 0) return
+  ev.preventDefault()
+  emit('dragstart', props.id, ev)
+}
 </script>
 
 <template>
   <g class="counter" :class="{ selected }">
     <image :href="src" :x="center.x - w / 2" :y="center.y - w / 2" :width="w" :height="w" class="counter-img"
-      draggable="true" @click.stop="onClick" @dragstart="emit('dragstart', id, $event)"
+      @mousedown="onMouseDown" @click.stop="onClick"
       @contextmenu.prevent.stop="emit('contextmenu', id, $event)" />
     <rect v-if="selected" class="counter-ring" :x="center.x - w / 2 - 3" :y="center.y - w / 2 - 3" :width="w + 6"
       :height="w + 6" rx="5" ry="5" />
@@ -58,6 +73,8 @@ function onClick() {
 <style scoped>
 .counter-img {
   cursor: pointer;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .counter-ring {
