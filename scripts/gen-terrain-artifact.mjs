@@ -79,6 +79,8 @@ for (let c = 0; c < cols; c++) {
 const edges = [...edgeMap.values()]
 const initialRoads = mod.terrain.roads || []
 const initialTrails = mod.terrain.trails || []
+const initialRivers = mod.terrain.rivers || []
+const initialStreams = mod.terrain.streams || []
 
 const html = `<!doctype html>
 <title>Grille de Mouvement Arnhem</title>
@@ -100,6 +102,8 @@ const html = `<!doctype html>
   --manual-dot: #a8551f;
   --road: #d13b1f;
   --trail: #8a6d1f;
+  --river: #1f5f8a;
+  --stream: #4a90b8;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -119,6 +123,8 @@ const html = `<!doctype html>
     --manual-dot: #e0925a;
     --road: #e8532f;
     --trail: #d1ab4a;
+    --river: #5fb3e0;
+    --stream: #8ecae6;
   }
 }
 :root[data-theme="dark"] {
@@ -138,6 +144,8 @@ const html = `<!doctype html>
   --manual-dot: #e0925a;
   --road: #e8532f;
   --trail: #d1ab4a;
+  --river: #5fb3e0;
+  --stream: #8ecae6;
 }
 * { box-sizing: border-box; }
 body {
@@ -285,10 +293,29 @@ text.hexid {
   pointer-events: none;
 }
 .edge.trail-active .trail { opacity: .95; }
+.edge .river {
+  stroke: var(--river);
+  stroke-width: 9;
+  stroke-linecap: round;
+  opacity: 0;
+  pointer-events: none;
+}
+.edge.river-active .river { opacity: .95; }
+.edge .stream {
+  stroke: var(--stream);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 2 5;
+  opacity: 0;
+  pointer-events: none;
+}
+.edge.stream-active .stream { opacity: .95; }
 svg.hide-roads .road { display: none; }
 svg.hide-trails .trail { display: none; }
-.mode-road .hit, .mode-trail .hit { cursor: pointer; }
-.mode-road .hit:hover, .mode-trail .hit:hover { stroke: rgba(255,255,255,.32); }
+svg.hide-rivers .river { display: none; }
+svg.hide-streams .stream { display: none; }
+.mode-road .hit, .mode-trail .hit, .mode-river .hit, .mode-stream .hit { cursor: pointer; }
+.mode-road .hit:hover, .mode-trail .hit:hover, .mode-river .hit:hover, .mode-stream .hit:hover { stroke: rgba(255,255,255,.32); }
 .mode-remove polygon.hex:hover { fill: rgba(192,57,43,.45); }
 polygon.hex.marked-removed { fill: #c0392b; fill-opacity: .65; }
 text.remx {
@@ -376,6 +403,8 @@ footer .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block
     <label><input type="checkbox" id="toggleFill" checked> teinte</label>
     <label><input type="checkbox" id="toggleRoads" checked> routes</label>
     <label><input type="checkbox" id="toggleTrails" checked> sentiers</label>
+    <label><input type="checkbox" id="toggleRivers" checked> rivières</label>
+    <label><input type="checkbox" id="toggleStreams" checked> ruisseaux</label>
     <button id="reset">recentrer</button>
     <span id="zoomLabel">100%</span>
   </div>
@@ -386,6 +415,12 @@ footer .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block
     <label><input type="checkbox" id="trailMode"> mode sentier (clic = tracer)</label>
     <span id="trailCount">0 sentier(s)</span>
     <button id="clearTrails">tout effacer</button>
+    <label><input type="checkbox" id="riverMode"> mode rivière (clic = tracer)</label>
+    <span id="riverCount">0 rivière(s)</span>
+    <button id="clearRivers">tout effacer</button>
+    <label><input type="checkbox" id="streamMode"> mode ruisseau (clic = tracer)</label>
+    <span id="streamCount">0 ruisseau(x)</span>
+    <button id="clearStreams">tout effacer</button>
     <label><input type="checkbox" id="removeMode"> mode suppression hex (clic = marquer)</label>
     <span id="removedCount">0 hex marqué(s)</span>
     <button id="clearRemoved">tout effacer</button>
@@ -402,7 +437,7 @@ footer .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block
 ${hexes.map((h) => `      <polygon class="hex hex-${h.terrain}" points="${h.pts}" data-id="${h.id}" data-terrain="${h.terrain}" data-mp="${h.mp}" />`).join('\n')}
     </g>
     <g id="edgeLayer">
-${edges.map((e) => `      <g class="edge" data-key="${e.key}"><line class="hit" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="road" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="trail" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /></g>`).join('\n')}
+${edges.map((e) => `      <g class="edge" data-key="${e.key}"><line class="hit" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="road" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="trail" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="river" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="stream" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /></g>`).join('\n')}
     </g>
     <g id="labelLayer">
 ${hexes.map((h) => `      <text class="mp" data-id="${h.id}" x="${h.cx.toFixed(1)}" y="${(h.cy + a * 0.15).toFixed(1)}" font-size="${(a * 0.5).toFixed(1)}">${h.mp}</text><text class="hexid" x="${h.cx.toFixed(1)}" y="${(h.cy - a * 0.32).toFixed(1)}" font-size="${(a * 0.28).toFixed(1)}">${h.id}</text>`).join('\n')}
@@ -417,6 +452,8 @@ ${hexes.map((h) => `      <text class="remx" data-id="${h.id}" x="${h.cx.toFixed
 
 <script id="roads-data" type="application/json">${JSON.stringify(initialRoads)}</script>
 <script id="trails-data" type="application/json">${JSON.stringify(initialTrails)}</script>
+<script id="rivers-data" type="application/json">${JSON.stringify(initialRivers)}</script>
+<script id="streams-data" type="application/json">${JSON.stringify(initialStreams)}</script>
 <script id="removed-data" type="application/json">${JSON.stringify(initialRemoved)}</script>
 
 <footer>
@@ -425,7 +462,9 @@ ${hexes.map((h) => `      <text class="remx" data-id="${h.id}" x="${h.cx.toFixed
   <span><span class="dot" style="background:var(--auto-dot)"></span>terrain (classification automatique par couleur)</span>
   <span><span class="dot" style="background:var(--road)"></span>route (tracée à la main, enregistrée dans le module)</span>
   <span><span class="dot" style="background:var(--trail)"></span>sentier (tracé à la main, enregistré dans le module)</span>
-  <span>rivières / ponts non couverts encore &mdash; à ajouter</span>
+  <span><span class="dot" style="background:var(--river)"></span>rivière (tracée à la main, enregistrée dans le module)</span>
+  <span><span class="dot" style="background:var(--stream)"></span>ruisseau (tracé à la main, enregistré dans le module)</span>
+  <span>ponts non couverts encore &mdash; à ajouter</span>
 </footer>
 
 <script>
@@ -497,6 +536,12 @@ document.getElementById('toggleRoads').addEventListener('change', (e) => {
 document.getElementById('toggleTrails').addEventListener('change', (e) => {
   svg.classList.toggle('hide-trails', !e.target.checked);
 });
+document.getElementById('toggleRivers').addEventListener('change', (e) => {
+  svg.classList.toggle('hide-rivers', !e.target.checked);
+});
+document.getElementById('toggleStreams').addEventListener('change', (e) => {
+  svg.classList.toggle('hide-streams', !e.target.checked);
+});
 document.querySelectorAll('text.hexid').forEach(t => t.style.display = 'none');
 
 // ─────────────────────────────────────────────────────────────
@@ -527,15 +572,30 @@ function setStatus(text, cls) {
 }
 updateRoadCount();
 
+// Les 4 modes d'édition de bordure (route/sentier/rivière/ruisseau) sont
+// mutuellement exclusifs : cocher l'un décoche automatiquement les 3 autres,
+// pour qu'un clic sur une bordure n'ait jamais qu'une seule interprétation
+// possible. edgeModes liste, pour chaque case, sa classe CSS sur #viewport
+// (active tant que la case est cochée, pour le style ".mode-XXX .hit:hover").
 const roadModeBox = document.getElementById('roadMode');
 const trailModeBox = document.getElementById('trailMode');
-roadModeBox.addEventListener('change', (e) => {
-  viewport.classList.toggle('mode-road', e.target.checked);
-  if (e.target.checked) { trailModeBox.checked = false; viewport.classList.remove('mode-trail'); }
-});
-trailModeBox.addEventListener('change', (e) => {
-  viewport.classList.toggle('mode-trail', e.target.checked);
-  if (e.target.checked) { roadModeBox.checked = false; viewport.classList.remove('mode-road'); }
+const riverModeBox = document.getElementById('riverMode');
+const streamModeBox = document.getElementById('streamMode');
+const edgeModes = [
+  { box: roadModeBox, cls: 'mode-road' },
+  { box: trailModeBox, cls: 'mode-trail' },
+  { box: riverModeBox, cls: 'mode-river' },
+  { box: streamModeBox, cls: 'mode-stream' },
+];
+edgeModes.forEach(({ box, cls }) => {
+  box.addEventListener('change', (e) => {
+    viewport.classList.toggle(cls, e.target.checked);
+    if (e.target.checked) {
+      edgeModes.forEach((other) => {
+        if (other.box !== box) { other.box.checked = false; viewport.classList.remove(other.cls); }
+      });
+    }
+  });
 });
 viewport.classList.toggle('mode-road', roadModeBox.checked);
 
@@ -551,6 +611,14 @@ document.getElementById('edgeLayer').addEventListener('click', (e) => {
     if (trails.has(key)) trails.delete(key); else trails.add(key);
     paintTrail(key);
     updateTrailCount();
+  } else if (riverModeBox.checked) {
+    if (rivers.has(key)) rivers.delete(key); else rivers.add(key);
+    paintRiver(key);
+    updateRiverCount();
+  } else if (streamModeBox.checked) {
+    if (streams.has(key)) streams.delete(key); else streams.add(key);
+    paintStream(key);
+    updateStreamCount();
   } else {
     return;
   }
@@ -592,6 +660,61 @@ document.getElementById('clearTrails').addEventListener('click', () => {
   if (!confirm('Effacer les ' + trails.size + ' sentier(s) tracé(s) ?')) return;
   [...trails].forEach((key) => { trails.delete(key); paintTrail(key); });
   updateTrailCount();
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Édition des rivières et ruisseaux : même mécanique que routes/sentiers
+// ci-dessus (bordures hex-à-hex, Set en mémoire par type, persistance via le
+// bouton "enregistrer"). Contrairement à route/sentier qui RÉDUISENT le coût
+// de mouvement en suivant la bordure, rivière/ruisseau sont des obstacles —
+// leur effet sur le coût de traversée (et l'éventuelle règle de pont) n'est
+// pas encore branché dans useAssisted.js ; cet artefact ne fait pour l'instant
+// que capturer leur tracé géographique dans terrain.rivers / terrain.streams.
+// ─────────────────────────────────────────────────────────────
+const riversData = document.getElementById('rivers-data');
+const rivers = new Set(JSON.parse(riversData.textContent || '[]'));
+
+function paintRiver(key) {
+  const g = edgeGroup(key);
+  if (g) g.classList.toggle('river-active', rivers.has(key));
+}
+rivers.forEach(paintRiver);
+
+function updateRiverCount() {
+  document.getElementById('riverCount').textContent = rivers.size + ' rivière(s)';
+}
+updateRiverCount();
+
+document.getElementById('clearRivers').addEventListener('click', () => {
+  if (!rivers.size) return;
+  if (!confirm('Effacer les ' + rivers.size + ' rivière(s) tracée(s) ?')) return;
+  [...rivers].forEach((key) => { rivers.delete(key); paintRiver(key); });
+  updateRiverCount();
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+});
+
+const streamsData = document.getElementById('streams-data');
+const streams = new Set(JSON.parse(streamsData.textContent || '[]'));
+
+function paintStream(key) {
+  const g = edgeGroup(key);
+  if (g) g.classList.toggle('stream-active', streams.has(key));
+}
+streams.forEach(paintStream);
+
+function updateStreamCount() {
+  document.getElementById('streamCount').textContent = streams.size + ' ruisseau(x)';
+}
+updateStreamCount();
+
+document.getElementById('clearStreams').addEventListener('click', () => {
+  if (!streams.size) return;
+  if (!confirm('Effacer les ' + streams.size + ' ruisseau(x) tracé(s) ?')) return;
+  [...streams].forEach((key) => { streams.delete(key); paintStream(key); });
+  updateStreamCount();
   dirty = true;
   setStatus('non enregistré', 'dirty');
 });
@@ -712,6 +835,8 @@ async function save() {
   setStatus('enregistrement...', 'dirty');
   roadsData.textContent = JSON.stringify([...roads].sort());
   trailsData.textContent = JSON.stringify([...trails].sort());
+  riversData.textContent = JSON.stringify([...rivers].sort());
+  streamsData.textContent = JSON.stringify([...streams].sort());
   removedData.textContent = JSON.stringify([...removedHexes].sort());
   try {
     await artifact.publish('<!doctype html>\\n' + document.documentElement.outerHTML);

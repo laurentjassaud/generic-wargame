@@ -18,10 +18,12 @@
 //    "image" — la mise à l'échelle est faite par le navigateur.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { reactive, ref, computed, onUnmounted, nextTick } from 'vue'
+import { reactive, ref, computed, toRef, onUnmounted, nextTick } from 'vue'
 import { hexId, parseHexId, DEFAULT_CALIBRATION } from '../lib/calibration.js'
 import { neighborsOf } from '../lib/hex.js'
 import { hexExists, removedHexSet } from '../lib/mapShape.js'
+import { useAssisted } from '../lib/useAssisted.js'
+import { useDebug } from '../lib/useDebug.js'
 import CalibrationPanel from './CalibrationPanel.vue'
 import Counter from './Counter.vue'
 import TurnTracker from './TurnTracker.vue'
@@ -32,6 +34,8 @@ import ReinforcementsPanel from './ReinforcementsPanel.vue'
 import EliminatedPanel from './EliminatedPanel.vue'
 import ContextMenu from './ContextMenu.vue'
 import RollModal from './RollModal.vue'
+import MovementChartModal from './MovementChartModal.vue'
+import CombatChartModal from './CombatChartModal.vue'
 
 const props = defineProps({
   module: { type: Object, required: true }, // cf. src/modules/*.json — { boardGame, name, map: {...} }
@@ -41,6 +45,16 @@ const props = defineProps({
   // Pas courant du suivi de tour déjà en cours (partie multijoueur reprise
   // en route) — cf. `turnTrack` ci-dessous. Absent (0) en solo/démo.
   initialTurnStep: { type: Number, default: 0 },
+  // Identifiant court du module (ex. "arnhem", cf. public/modules/index.json)
+  // — sert uniquement à nommer les sauvegardes du journal (cf.
+  // JournalPanel.vue::saveLabel). À défaut (non fourni par l'appelant), on
+  // retombe sur `module.name`.
+  moduleId: { type: String, default: '' },
+  // Partie "Assistée" (cf. LocalGameSetup.vue, param `party`) : variante
+  // opt-in avec garde-fous (grille, sélection au clic, restriction de tour
+  // — cf. lib/useAssisted.js). Comportement PAR DÉFAUT (`false`) : "Libre",
+  // bac à sable sans garde-fous.
+  assisted: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['move', 'turn'])
@@ -64,14 +78,82 @@ function pushMoveHistory(counterId, from, to, journalId) {
   if (journalId == null) return
   moveHistory.value.push({ counterId, from, to, journalId })
 }
+
+// --- Liseré orange "a bougé ce tour" : un pion déplacé (clic ou glisser,
+// cf. onHex / onCounterDragEnd / applyRemoteMove) rejoint `movedThisTurnIds`
+// et sa position de départ (avant son PREMIER mouvement du tour) est gardée
+// dans `turnStartPositions`, pour que "Annuler le mouvement" (menu
+// contextuel, cf. onCounterContextMenu) puisse le ramener d'un coup à cette
+// position quel que soit le nombre de déplacements intermédiaires. Les deux
+// sont vidés à chaque changement de tour (cf. onTurnChange) : "à la fin du
+// tour du joueur, tous les liserés sont enlevés".
+const movedThisTurnIds = ref(new Set())
+const turnStartPositions = new Map()
+function markMoved(counterId, from) {
+  const key = String(counterId)
+  if (!turnStartPositions.has(key)) turnStartPositions.set(key, from)
+  movedThisTurnIds.value.add(key)
+  movedThisTurnIds.value = new Set(movedThisTurnIds.value)
+}
+function clearMoved(counterId) {
+  const key = String(counterId)
+  turnStartPositions.delete(key)
+  if (movedThisTurnIds.value.delete(key)) movedThisTurnIds.value = new Set(movedThisTurnIds.value)
+}
+function clearAllMoved() {
+  turnStartPositions.clear()
+  movedThisTurnIds.value = new Set()
+}
+/** Menu contextuel "Annuler le mouvement" (cf. onCounterContextMenu) : remet
+ *  le pion à sa position de début de tour, en une seule fois. */
+function cancelMovement(id) {
+  const key = String(id)
+  const start = turnStartPositions.get(key)
+  if (!start) return
+  const c = counters.value.find((c) => String(c.id) === String(id))
+  if (c) {
+    // cf. lib/useAssisted.js::resetMp — annule d'un coup TOUS les
+    // déplacements du tour de `c` (pas hex par hex comme `undoLastMove`
+    // ci-dessous), donc on lui redonne la TOTALITÉ de ses MP plutôt que de
+    // recréditer un seul hex. Ne fait rien hors mode Assisté.
+    resetMp(c)
+    c.col = start.col; c.row = start.row
+    emit('move', { counterId: c.id, col: c.col, row: c.row })
+    log('move', `${c.name} : mouvement annulé, retour en ${hexId(c.col + 1, c.row)}`, { counterId: c.id, col: c.col, row: c.row })
+  }
+  clearMoved(id)
+}
+
+// --- Retour arrière (bouton de la barre d'outils) : disponible UNIQUEMENT
+// en mode Assisté (cf. `v-if="assisted"` sur le bouton plus bas) — en mode
+// Libre, aucun garde-fou de tour/MP n'existe, "annuler" un glisser-déposer
+// libre n'aurait pas vraiment de sens dans un bac à sable.
 function undoLastMove() {
-  if (replayLocked.value) return
+  if (!props.assisted || replayLocked.value) return
   const last = moveHistory.value.pop()
   if (!last) return
   const c = counters.value.find((c) => String(c.id) === String(last.counterId))
   if (c) {
+    // cf. lib/useAssisted.js::refundMp — recrédite le COT de l'hex QUITTÉ
+    // par cette annulation (`last.to`, celui que `c` avait payé pour y
+    // entrer EN VENANT de `last.from`), avant même de replacer `c` : l'ordre
+    // n'a pas d'importance ici (refundMp ne regarde que les hex passés en
+    // paramètre, pas la position courante de `c`). `last.to`/`last.from`
+    // sont au format `{ col, row }` (comme tout `moveHistory`/position de
+    // pion) — `terrainCost` attend `{ c, r }` (comme les hex de clic, cf.
+    // onHex/hexes) : conversion nécessaire, sans quoi `terrainCost` ne
+    // trouve jamais le bon type de terrain (ni la bonne arête route/piste)
+    // et retombe silencieusement sur son coût par défaut (1 MP) au lieu du
+    // vrai coût. Passer `last.from` ici (le MÊME "from" qu'au `spendMp`
+    // d'origine, cf. onHex) est ce qui garantit un remboursement exact,
+    // route/piste comprise, même si `c` a depuis quitté cette position.
+    refundMp(c, { c: last.to.col, r: last.to.row }, { c: last.from.col, r: last.from.row })
     c.col = last.from.col; c.row = last.from.row
     emit('move', { counterId: c.id, col: c.col, row: c.row })
+    // Si l'annulation ramène le pion à sa position de tout début de tour,
+    // il n'a plus "bougé ce tour" au sens du liseré orange.
+    const start = turnStartPositions.get(String(c.id))
+    if (start && start.col === c.col && start.row === c.row) clearMoved(c.id)
   }
   journalRef.value?.remove(last.journalId)
 }
@@ -81,6 +163,17 @@ function undoLastMove() {
 // qu'il est caché) — résultat journalisé à chaque lancer.
 const showRollModal = ref(true)
 function onDiceRoll(value) { log('dice', `Lancer de dé : ${value}`) }
+
+// --- Table des mouvements : widget flottant du même genre (cf.
+// MovementChartModal.vue), affiché uniquement si le module déclare l'image
+// (`module.movementChart`) — modules pas encore illustrés : pas de bouton.
+const showMovementChart = ref(false)
+const movementChartSrc = computed(() => props.module.movementChart)
+
+// --- Table de combat : même widget flottant, affiché uniquement si le
+// module déclare l'image (`module.combatChart`).
+const showCombatChart = ref(false)
+const combatChartSrc = computed(() => props.module.combatChart)
 
 // --- Lecteur de rejeu : rejoue sur la carte les actions d'un journal
 // chargé (cf. JournalPanel.vue::onFileChosen, évènement `loaded`) — un
@@ -107,6 +200,9 @@ const turnTrackerRef = ref(null)
 const turnInfo = ref({ step: props.initialTurnStep, turn: 1, activeSideKey: null, activeFactions: null })
 function onTurnChange(info) {
   turnInfo.value = info
+  // Fin du tour du joueur précédent : tous les liserés "a bougé ce tour"
+  // sont enlevés (cf. `movedThisTurnIds`).
+  clearAllMoved()
   // Ne pas ré-écrire dans le journal un changement de tour provoqué par le
   // lecteur de rejeu (cf. plus bas) — l'entrée existe déjà dans le fichier
   // chargé, la rejouer ne doit que faire bouger la carte, pas dupliquer le
@@ -117,7 +213,14 @@ function onTurnChange(info) {
 }
 function onTurnAdvance(step) { emit('turn', step) }
 function applyRemoteTurn(step) { turnTrackerRef.value?.applyRemoteTurn(step) }
-const canControl = (c) => turnTrackerRef.value?.canControl(c) ?? true
+// cf. lib/useAssisted.js — toute la logique propre au mode "Assisté"
+// (grille, sélection au clic, restriction de tour, phases Mouvement/Combat)
+// y vit.
+const { showGrid, selectable, draggable, canControl, phase, nextLabel, advance, canEnterHex, spendMp, refundMp, resetMp, terrainCost, remainingMp } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain)
+// Un renfort ne peut entrer en jeu qu'à partir de son tour d'arrivée déclaré
+// (`c.turn`, cf. module JSON) — jamais en avance. Par défaut (pas de `turn`
+// déclaré), l'unité arrive dès le tour 1.
+const canEnterThisTurn = (c) => (c?.turn ?? 1) <= turnInfo.value.turn
 
 // --- Soutien allié : tablette autonome (cf. SupportTracker.vue, toute la
 // logique — régénération par tour, tablette actuelle — y vit). HexMap.vue ne
@@ -130,11 +233,11 @@ const gridStyle = reactive({ stroke: '#d11a1a', width: 1.5, opacity: 0 })
 const mapConfig = reactive({ cols: map.value.cols, rows: map.value.rows })
 
 const zoom = ref(0.5)
-const showGrid = ref(true)
+// `showGrid` vient de useAssisted() ci-dessus (verrouillé à false hors mode
+// assisté).
 const showLabels = ref(false)
 const showCalib = ref(false)
 const showCounters = ref(true)
-const selected = ref(null)
 
 // Forme réelle de la grille (colonnes décalées amputées d'une ligne, hexs
 // ponctuels absents) — cf. lib/mapShape.js — recalculée seulement quand le
@@ -165,8 +268,6 @@ const hexes = computed(() => {
   }
   return out
 })
-
-const isSel = (h) => selected.value && selected.value.col === h.c && selected.value.row === h.r
 
 // Tous les pions déclarés par le module, toutes factions confondues (cf.
 // public/modules/arnhem/arnhem.json -> counters.*) — sert à la fois au
@@ -224,18 +325,31 @@ const isUnit = (c) => c.type !== 'marker'
 
 // Un pion est posé sur la carte au chargement s'il a un `setup` (hex de
 // départ) ET arrive au tour 1 (ou sans `turn` — rétrocompatible avec les
-// pions sans ce champ, ex. la garnison allemande fixe). Exception : les
-// renforts ALLEMANDS du tour 1 restent hors carte malgré tout — ils
-// arrivent bien pendant ce tour mais pas déjà déployés au coup d'envoi
-// (contrairement au largage aéroporté allié, qui EST le déploiement initial
-// du scénario) — donc glissables depuis le panneau comme n'importe quel
-// autre tour. Les renforts restants (tous tours/factions confondus) restent
-// hors carte, glissables depuis le panneau "Renfort ..." (cf.
-// `reinforcements`). Plusieurs pions peuvent partager le même hex d'entrée
-// déclaré (ex. les 3 bataillons d'un même régiment) : pickArrivalHex les
-// répartit pour éviter le stacking (les marqueurs, eux, ignorent
-// complètement cette logique — cf. isUnit).
-const autoPlacesAtLoad = (c) => (c.turn ?? 1) === 1 && !(c.faction === 'german' && c.turn === 1)
+// pions sans ce champ, ex. la garnison allemande fixe). Exceptions :
+//  - les renforts ALLEMANDS du tour 1 restent hors carte malgré tout — ils
+//    arrivent bien pendant ce tour mais pas déjà déployés au coup d'envoi
+//    (contrairement au largage aéroporté allié, qui EST le déploiement
+//    initial du scénario) — donc glissables depuis le panneau comme
+//    n'importe quel autre tour ;
+//  - les UNITÉS alliées (tout ce qui n'est pas un marqueur, cf. isUnit) du
+//    tour 1 restent elles aussi hors carte : seuls les marqueurs de zone de
+//    largage ("DZ ...") sont posés au coup d'envoi. Les unités attendent
+//    dans le panneau "Renfort alliés" — l'utilisateur les pose lui-même sur
+//    ou autour de leur DZ (cf. `entryHexSet` plus bas, qui accepte l'hex de
+//    référence ET ses 6 voisins).
+// Les renforts restants (tous tours/factions confondus) restent hors carte,
+// glissables depuis le panneau "Renfort ..." (cf. `reinforcements`).
+// Plusieurs pions peuvent partager le même hex d'entrée déclaré (ex. les 3
+// bataillons d'un même régiment) : pickArrivalHex les répartit pour éviter
+// le stacking (les marqueurs, eux, ignorent complètement cette logique — cf.
+// isUnit).
+function autoPlacesAtLoad(c) {
+  if ((c.turn ?? 1) !== 1) return false
+  if (c.faction === 'german' && c.turn === 1) return false
+  const alliedFactions = props.module.sides?.allies ?? []
+  if (isUnit(c) && alliedFactions.includes(c.faction)) return false
+  return true
+}
 /** Placement initial du module — extrait en fonction pour être rejouable
  *  (cf. `resetBoardForReplay` plus bas), pas seulement au montage. Utilise
  *  `resolveEntryTarget`/`pickArrivalHex`, qui tirent au hasard un hex parmi
@@ -269,9 +383,13 @@ const eliminatedCounters = computed(() =>
 
 // --- Renforts : pions du module avec un hex d'entrée mais pas encore posés
 // ni éliminés (typiquement arrivée tour 2+) — cf. ReinforcementsPanel.vue.
-// Glissés sur la carte via le même mécanisme que le déplacement d'un pion
-// existant (onCounterDragStart / onMapDrop plus bas), ou choisis via le
-// menu contextuel "Replacer le pion" (ils y retournent alors).
+// Entrée en jeu SELON LE MODE (cf. lib/useAssisted.js::draggable) : en mode
+// Libre, glissés sur la carte comme le déplacement d'un pion existant
+// (onCounterDragStart / onMapDrop plus bas) ; en mode Assisté, uniquement
+// par clic (onReinforcementSelect puis onHex, cf. plus bas — le glisser est
+// désactivé pour laisser le clic comme seul chemin). Toujours possible, dans
+// les deux modes, via le menu contextuel "Replacer le pion" (ils y
+// retournent alors).
 const placedIds = computed(() => new Set(counters.value.map((c) => String(c.id))))
 const reinforcements = computed(() =>
   allCounters.value.filter((c) => c.setup && !placedIds.value.has(String(c.id)) && !eliminatedIds.value.has(String(c.id)))
@@ -331,10 +449,14 @@ function eliminateCounter(id) {
 }
 function onCounterContextMenu(id, ev) {
   if (replayLocked.value) return
-  openContextMenu(ev, [
+  const items = [
     { label: 'Replacer le pion', action: () => returnCounterToReinforcements(id) },
     { label: 'Éliminé', action: () => eliminateCounter(id) },
-  ])
+  ]
+  if (movedThisTurnIds.value.has(String(id))) {
+    items.push({ label: 'Annuler le mouvement', action: () => cancelMovement(id) })
+  }
+  openContextMenu(ev, items)
 }
 function onEliminatedContextMenu(id, ev) {
   if (replayLocked.value) return
@@ -347,16 +469,53 @@ function chooseContextMenuItem(action) {
   closeContextMenu()
 }
 
+/** Le pion actuellement sélectionné (objet complet, pas que son id) — `null`
+ *  si aucun. Factorisé ici car réutilisé par `adjacentSet`, `reachableSet`
+ *  ci-dessous ET par lib/useDebug.js (portée de déplacement en mode debug). */
+const selectedCounter = computed(() => counters.value.find((c) => c.id === selectedCounterId.value) ?? null)
+
 /** Hex voisins (0-based col / 1-based row) du pion actuellement sélectionné,
  *  sous forme de clés "col,row" pour un lookup O(1) depuis isAdjacent(). */
 const adjacentSet = computed(() => {
-  const c = counters.value.find((c) => c.id === selectedCounterId.value)
+  const c = selectedCounter.value
   if (!c) return new Set()
   return new Set(
     neighborsOf(c.col, c.row).filter((n) => hexOnMap(n.col, n.row)).map((n) => n.col + ',' + n.row)
   )
 })
 const isAdjacent = (h) => adjacentSet.value.has(h.c + ',' + h.r)
+
+// Sous-ensemble de `adjacentSet` : uniquement les hex adjacents que le pion
+// sélectionné peut RÉELLEMENT rejoindre, MP suffisants pour en payer le coût
+// de terrain (cf. lib/useAssisted.js::canEnterHex) — sert au surlignage vert
+// (mode Assisté), pour ne pas laisser croire qu'un hex adjacent trop coûteux
+// est une destination valide. Vide dès qu'aucun pion n'est sélectionné, donc
+// aussi hors mode Assisté (où `selectedCounterId` ne prend jamais de valeur,
+// cf. lib/useAssisted.js::selectable) — pas besoin d'un garde-fou de mode ici.
+// Hors mode debug uniquement (cf. template) : le mode debug affiche à la
+// place la portée COMPLÈTE de déplacement (cf. lib/useDebug.js::isInRange),
+// pas que le premier pas.
+const reachableSet = computed(() => {
+  const c = selectedCounter.value
+  if (!c) return new Set()
+  const set = new Set()
+  for (const key of adjacentSet.value) {
+    const [col, row] = key.split(',').map(Number)
+    if (canEnterHex(c, { c: col, r: row })) set.add(key)
+  }
+  return set
+})
+const isReachable = (h) => reachableSet.value.has(h.c + ',' + h.r)
+
+// cf. lib/useDebug.js — case à cocher "debug" (ci-dessous dans le template)
+// et tous les affichages qu'elle déclenche : le coût de terrain (COT) des
+// hex adjacents au pion sélectionné (`adjacentCotLabels`), et la portée
+// COMPLÈTE de déplacement de ce pion, au-delà du simple premier pas adjacent
+// (`isInRange`, cf. surlignage vert dans le template, en mode debug
+// seulement — le clic, lui, reste toujours limité aux hex adjacents).
+const { debug, adjacentCotLabels, isInRange } = useDebug(
+  hexes, isAdjacent, terrainCost, selectedCounter, remainingMp, neighborsOf, hexOnMap,
+)
 
 // Décalage visuel des pions empilés sur un même hex — même principe
 // qu'ambush-tactique (HexMap.vue, `placedPositions`) : chaque pion suivant
@@ -422,8 +581,12 @@ function onCounterSelect(id) {
 // 1) glisser-déposer libre (n'importe quel hex, cf. onMapDrop) ;
 // 2) clic sur le pion dans le panneau (bordure orange, cf.
 //    ReinforcementsPanel.vue) puis clic sur un des hex d'entrée valides,
-//    surlignés en orange sur la carte (un seul hex, ou tous les hex de la
-//    plage bord-de-carte si `setup` en déclare une — cf. enumerateSetupHexes).
+//    surlignés en orange sur la carte : pour un `setup` à hex unique (ex.
+//    chaque unité alliée posée près de sa DZ), l'hex de référence ET ses 6
+//    voisins sont valides ; pour une entrée par plage bord-de-carte (ex.
+//    renforts allemands), toute la plage déclarée reste valide telle quelle
+//    (cf. enumerateSetupHexes) — pas d'élargissement supplémentaire, la
+//    plage couvre déjà large.
 const selectedReinforcementId = ref(null)
 const selectedReinforcement = computed(() =>
   reinforcements.value.find((c) => String(c.id) === String(selectedReinforcementId.value))
@@ -431,14 +594,18 @@ const selectedReinforcement = computed(() =>
 const entryHexSet = computed(() => {
   const r = selectedReinforcement.value
   if (!r) return new Set()
-  return new Set(enumerateSetupHexes(r.setup).map((h) => h.col + ',' + h.row))
+  const base = enumerateSetupHexes(r.setup)
+  const cells = r.setup.includes('-')
+    ? base
+    : [...base, ...neighborsOf(base[0].col, base[0].row).filter((n) => hexOnMap(n.col, n.row))]
+  return new Set(cells.map((h) => h.col + ',' + h.row))
 })
 const isEntryHex = (h) => entryHexSet.value.has(h.c + ',' + h.r)
 
 function onReinforcementSelect(id) {
   if (replayLocked.value) return
   const c = reinforcements.value.find((c) => String(c.id) === String(id))
-  if (!canControl(c)) return
+  if (!canControl(c) || !canEnterThisTurn(c)) return
   selectedReinforcementId.value = selectedReinforcementId.value === id ? null : id
   selectedCounterId.value = null
 }
@@ -446,9 +613,12 @@ function onReinforcementSelect(id) {
 /** Clic sur un hex, par ordre de priorité :
  *  1. un renfort est sélectionné (système 2) et l'hex cliqué fait partie de
  *     ses hex d'entrée valides -> il s'y pose, fin de sélection ;
- *  2. un pion déjà sur la carte est sélectionné et l'hex cliqué lui est
- *     adjacent -> il s'y déplace (et reste sélectionné, pour enchaîner) ;
- *  3. sinon, comportement existant : simple sélection d'info hex.
+ *  2. un pion déjà sur la carte est sélectionné, l'hex cliqué lui est
+ *     adjacent ET il lui reste assez de MP pour en payer le coût de terrain
+ *     (cf. lib/useAssisted.js::canEnterHex/spendMp) -> il s'y déplace (et
+ *     reste sélectionné, pour enchaîner sur d'autres hex tant qu'il lui
+ *     reste des MP) ;
+ *  3. sinon, le clic ne fait rien (pas de pion/renfort concerné par cet hex).
  *  Aucune action pendant un rejeu en cours (cf. `replayLocked`) — seul le
  *  lecteur (stepReplay/fastForwardReplay) fait bouger la carte tant que le
  *  journal chargé n'est pas entièrement joué. */
@@ -457,7 +627,7 @@ const onHex = (h) => {
   if (selectedReinforcementId.value != null) {
     if (isEntryHex(h)) {
       const r = selectedReinforcement.value
-      if (r) {
+      if (r && canEnterThisTurn(r)) {
         const placed = { ...r, col: h.c, row: h.r }
         counters.value.push(placed)
         emit('move', { counterId: placed.id, col: h.c, row: h.r })
@@ -469,16 +639,26 @@ const onHex = (h) => {
   }
   if (selectedCounterId.value != null && isAdjacent(h)) {
     const c = counters.value.find((c) => c.id === selectedCounterId.value)
-    if (c) {
-      const from = { col: c.col, row: c.row }
+    // Position de départ capturée AVANT tout déplacement — sert à la fois à
+    // l'historique (from ci-dessous) et de paramètre "from" pour
+    // canEnterHex/spendMp (cf. useAssisted.js::terrainCost, règle
+    // route/piste : le coût dépend de d'où on VIENT, pas seulement de l'hex
+    // d'arrivée).
+    const from = c ? { col: c.col, row: c.row } : null
+    // Pas assez de MP pour entrer dans cet hex (cf. useAssisted.js) : le
+    // pion reste sélectionné et sur place, comme si l'hex n'était pas une
+    // destination valide — libre à l'utilisateur d'essayer un autre hex
+    // adjacent moins coûteux.
+    if (c && canEnterHex(c, h, { c: from.col, r: from.row })) {
       c.col = h.c; c.row = h.r
+      spendMp(c, h, { c: from.col, r: from.row })
       emit('move', { counterId: c.id, col: c.col, row: c.row })
       const journalId = log('move', `${c.name} se déplace vers ${hexId(h.c + 1, h.r)}`, { counterId: c.id, col: c.col, row: c.row })
       pushMoveHistory(c.id, from, { col: c.col, row: c.row }, journalId)
+      markMoved(c.id, from)
     }
     return
   }
-  selected.value = isSel(h) ? null : { col: h.c, row: h.r, coord: h.id }
 }
 
 // --- Drag & drop d'un pion : dépose au centre de l'hex le plus proche du curseur ---
@@ -502,7 +682,8 @@ function onCounterDragStart(id, ev) {
   // annule aussi le glisser natif HTML5 (tablette de soutien, panneau de
   // renforts) — un seul guard couvre donc les deux mécanismes de glisser.
   if (replayLocked.value) { ev?.preventDefault(); return }
-  const c = counters.value.find((c) => String(c.id) === String(id))
+  const onMap = counters.value.find((c) => String(c.id) === String(id))
+  const c = onMap
     ?? supportTrackerRef.value?.findToken(id)
     ?? allCounters.value.find((c) => String(c.id) === String(id))
   // Les pions de soutien (kind: 'support', cf. SupportTracker.vue) sont une
@@ -510,6 +691,17 @@ function onCounterDragStart(id, ev) {
   // soit depuis la tablette ou déjà posés sur la carte, sans passer par
   // canControl (ni par le tour actif).
   if (c?.kind !== 'support' && !canControl(c)) { ev?.preventDefault(); return }
+  // cf. lib/useAssisted.js::draggable — en mode Assisté, une UNITÉ (pion déjà
+  // sur la carte ou renfort pas encore posé) ne se glisse plus du tout : elle
+  // ne peut entrer en jeu ou se déplacer que par clic (sélection, puis clic
+  // sur l'hex de destination — cf. onHex/onCounterSelect/onReinforcementSelect
+  // plus haut). Les pions de soutien restent exemptés, comme pour canControl
+  // ci-dessus : ce ne sont pas des "unités" soumises aux règles de tour/camp.
+  if (c?.kind !== 'support' && !draggable.value) { ev?.preventDefault(); return }
+  // Un renfort pas encore posé sur la carte ne peut être glissé qu'à partir
+  // de son tour d'arrivée (cf. `canEnterThisTurn`) — un pion déjà sur la
+  // carte (mouvement) ou un pion de soutien (tablette) n'est pas concerné.
+  if (!onMap && c?.kind !== 'support' && !canEnterThisTurn(c)) { ev?.preventDefault(); return }
   draggedCounterId.value = id
   if (ev?.dataTransfer) {
     // Glisser natif HTML5 (pion pas encore sur la carte : <img> de la
@@ -556,6 +748,7 @@ function onCounterDragEnd(ev) {
     emit('move', { counterId: c.id, col: c.col, row: c.row })
     const journalId = log(c.kind === 'support' ? 'support' : 'move', `${c.name} déplacé de ${fromLabel} vers ${hexId(c.col + 1, c.row)}`, { counterId: c.id, col: c.col, row: c.row })
     pushMoveHistory(c.id, from, { col: c.col, row: c.row }, journalId)
+    if (c.kind !== 'support') markMoved(c.id, from)
   }
 }
 
@@ -602,7 +795,7 @@ function onMapDrop(ev) {
     // 1, cf. entrée en jeu dans le commentaire de `entryHexSet`) ou pion de
     // soutien tiré de la tablette (cf. SupportTracker.vue::removeToken).
     const reinforcement = allCounters.value.find((c) => String(c.id) === String(draggedCounterId.value))
-    if (reinforcement) {
+    if (reinforcement && canEnterThisTurn(reinforcement)) {
       const placed = { ...reinforcement, ...hex }
       counters.value.push(placed)
       emit('move', { counterId: placed.id, col: placed.col, row: placed.row })
@@ -631,7 +824,12 @@ function onMapDrop(ev) {
  *  pas `move` pour éviter une boucle avec le serveur. */
 function applyRemoteMove(counterId, col, row) {
   const c = counters.value.find((c) => String(c.id) === String(counterId))
-  if (c) { c.col = col; c.row = row; return }
+  if (c) {
+    const from = { col: c.col, row: c.row }
+    c.col = col; c.row = row
+    if (c.kind !== 'support' && (from.col !== col || from.row !== row)) markMoved(c.id, from)
+    return
+  }
   // Un autre joueur a posé un renfort pas encore présent localement (glissé
   // depuis son propre panneau "Renfort alliés") : on l'ajoute.
   const reinforcement = allCounters.value.find((c) => String(c.id) === String(counterId))
@@ -656,6 +854,7 @@ function resetBoardForReplay() {
   selectedCounterId.value = null
   selectedReinforcementId.value = null
   moveHistory.value = []
+  clearAllMoved()
   turnTrackerRef.value?.applyRemoteTurn(0)
   nextTick(() => { isReplaying.value = false })
 }
@@ -769,26 +968,39 @@ function onMapDragEnd() {
 
       <div v-if="module.turnTrack" class="turn-tracker-block">
         <TurnTracker ref="turnTrackerRef" :config="module.turnTrack" :sides="module.sides"
-          :initial-step="initialTurnStep" :disabled="replayLocked" @turn="onTurnAdvance" @change="onTurnChange" />
+          :initial-step="initialTurnStep" :disabled="replayLocked" :phase="phase" :next-label="nextLabel"
+          @turn="onTurnAdvance" @change="onTurnChange" @phase-next="advance" />
 
         <SupportTracker ref="supportTrackerRef" :config="module.supportTrack" :turn="turnInfo.turn"
           @dragstart="onCounterDragStart" />
       </div>
 
       <div class="controls">
-        <label><input type="checkbox" v-model="showGrid"> grille</label>
+        <label :title="!assisted ? 'Grille désactivée en partie libre' : ''">
+          <input type="checkbox" v-model="showGrid" :disabled="!assisted"> grille
+        </label>
         <label><input type="checkbox" v-model="showLabels"> coordonnées</label>
         <label><input type="checkbox" v-model="showCalib"> calibration</label>
+        <label><input type="checkbox" v-model="debug"> debug</label>
         <button type="button" class="toggle-btn" :class="{ active: !showCounters }"
           @click="showCounters = !showCounters">
           {{ showCounters ? 'Cacher les pions' : 'Afficher les pions' }}
         </button>
-        <button type="button" class="toggle-btn" :disabled="!moveHistory.length || replayLocked" @click="undoLastMove">
+        <button v-if="assisted" type="button" class="toggle-btn" :disabled="!moveHistory.length || replayLocked"
+          @click="undoLastMove">
           ↩ Retour arrière
         </button>
         <button type="button" class="toggle-btn" :class="{ active: !showRollModal }"
           @click="showRollModal = !showRollModal">
           {{ showRollModal ? 'Cacher le dé' : 'Afficher le dé' }}
+        </button>
+        <button v-if="movementChartSrc" type="button" class="toggle-btn" :class="{ active: showMovementChart }"
+          @click="showMovementChart = !showMovementChart">
+          Table des mouvements
+        </button>
+        <button v-if="combatChartSrc" type="button" class="toggle-btn" :class="{ active: showCombatChart }"
+          @click="showCombatChart = !showCombatChart">
+          Table de combat
         </button>
         <div v-if="replayEntries.length" class="replay-ctl">
           <span class="replay-pos">{{ replayIndex }} / {{ replayEntries.length }}</span>
@@ -802,7 +1014,6 @@ function onMapDragEnd() {
           <span>{{ Math.round(zoom * 100) }}%</span>
           <button @click="zoomIn">+</button>
         </div>
-        <span v-if="selected" class="selected-hex">hex sélectionné : <b>{{ selected.coord }}</b></span>
       </div>
     </header>
 
@@ -818,7 +1029,7 @@ function onMapDragEnd() {
 
         <g v-if="showGrid">
           <polygon v-for="h in hexes" :key="h.id" class="hex"
-            :class="{ sel: isSel(h), adjacent: isAdjacent(h), entry: isEntryHex(h) }"
+            :class="{ adjacent: debug ? isInRange(h) : isReachable(h), entry: isEntryHex(h) }"
             :points="h.pts" :stroke="gridStyle.stroke" :stroke-width="gridStyle.width"
             :stroke-opacity="gridStyle.opacity" vector-effect="non-scaling-stroke" @click="onHex(h)" />
         </g>
@@ -826,6 +1037,13 @@ function onMapDragEnd() {
         <g v-if="showLabels">
           <text v-for="h in hexes" :key="'t' + h.id" class="coordtxt" :x="h.cx" :y="h.cy + calibration.a * 0.18"
             text-anchor="middle" :font-size="calibration.a * 0.42">{{ h.id }}</text>
+        </g>
+
+        <!-- cf. lib/useDebug.js — coût de terrain (COT) des hex adjacents au
+             pion sélectionné, uniquement quand la case "debug" est cochée. -->
+        <g v-if="debug">
+          <text v-for="d in adjacentCotLabels" :key="'cot' + d.id" class="debug-cot" :x="d.cx" :y="d.cy"
+            text-anchor="middle" :font-size="calibration.a * 0.55">{{ d.cot }}</text>
         </g>
 
         <g v-if="showCounters" class="counters">
@@ -836,7 +1054,8 @@ function onMapDragEnd() {
             :offset="stackOffsets.get(c.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === c.id ? dragCurrentPx : null"
             @dragstart="onCounterDragStart" />
           <Counter v-for="c in counters.filter(isUnit)" :key="c.id" :id="c.id" :src="c.src" :col="c.col"
-            :row="c.row" :calibration="calibration" :selected="selectedCounterId === c.id"
+            :row="c.row" :calibration="calibration" :selected="selectedCounterId === c.id" :selectable="selectable"
+            :moved="movedThisTurnIds.has(String(c.id))"
             :offset="stackOffsets.get(c.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === c.id ? dragCurrentPx : null"
             @select="onCounterSelect" @dragstart="onCounterDragStart" @contextmenu="onCounterContextMenu" />
         </g>
@@ -857,9 +1076,11 @@ function onMapDragEnd() {
       <template v-for="tab in sidePanelTabs" :key="tab.key" v-slot:[tab.key]>
         <EliminatedPanel v-if="tab.key === 'eliminated'" :units="eliminatedCounters"
           @contextmenu="onEliminatedContextMenu" />
-        <JournalPanel v-else-if="tab.key === 'journal'" ref="journalRef" @loaded="onJournalLoaded" />
+        <JournalPanel v-else-if="tab.key === 'journal'" ref="journalRef" :module-id="moduleId || module.name"
+          :turn="turnInfo.turn" @loaded="onJournalLoaded" />
         <ReinforcementsPanel v-else :reinforcements="reinforcementsForTab(tab.key)"
-          :selected-id="selectedReinforcementId" @dragstart="onCounterDragStart" @select="onReinforcementSelect" />
+          :selected-id="selectedReinforcementId" :current-turn="turnInfo.turn" :draggable="draggable"
+          @dragstart="onCounterDragStart" @select="onReinforcementSelect" />
       </template>
     </SidePanel>
 
@@ -867,6 +1088,8 @@ function onMapDragEnd() {
       @choose="chooseContextMenuItem" @close="closeContextMenu" />
 
     <RollModal v-show="showRollModal" :disabled="replayLocked" @roll="onDiceRoll" />
+    <MovementChartModal v-if="movementChartSrc" v-show="showMovementChart" :src="movementChartSrc" />
+    <CombatChartModal v-if="combatChartSrc" v-show="showCombatChart" :src="combatChartSrc" />
   </div>
 </template>
 
@@ -968,10 +1191,6 @@ function onMapDragEnd() {
   cursor: pointer;
 }
 
-.selected-hex {
-  font-family: monospace;
-}
-
 .map-wrap {
   overflow: hidden;
   flex: 1;
@@ -994,16 +1213,7 @@ function onMapDragEnd() {
 
 polygon.hex {
   fill: rgba(255, 255, 255, 0);
-  cursor: pointer;
   transition: fill 0.05s;
-}
-
-polygon.hex:hover {
-  fill: rgba(255, 247, 180, 0.28);
-}
-
-polygon.hex.sel {
-  fill: rgba(244, 227, 161, 0.45);
 }
 
 polygon.hex.adjacent {
@@ -1026,6 +1236,20 @@ polygon.hex.entry:hover {
   font-family: monospace;
   font-weight: 700;
   fill: #111;
+  pointer-events: none;
+}
+
+/* cf. lib/useDebug.js — coût de terrain (COT) affiché sur les hex adjacents
+   au pion sélectionné quand le mode debug est actif. Contour blanc (double
+   trait, cf. paint-order) pour rester lisible sur n'importe quel fond de
+   carte, y compris par-dessus la teinte verte de `.hex.adjacent`. */
+.debug-cot {
+  font-family: monospace;
+  font-weight: 700;
+  fill: #c0392b;
+  stroke: #fff;
+  stroke-width: 3px;
+  paint-order: stroke fill;
   pointer-events: none;
 }
 

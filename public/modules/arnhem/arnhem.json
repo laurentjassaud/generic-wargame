@@ -2,6 +2,8 @@
   "boardGame": "A Bridge Too Far: Arnhem",
   "name": "Arnhem: Operation Market-Garden, September 1944",
   "favicon": "/modules/arnhem/favicon.ico",
+  "movementChart": "/modules/arnhem/images/movement-chart.png",
+  "combatChart": "/modules/arnhem/images/combat-chart.png",
   "map": {
     "url": "/modules/arnhem/images/arnhem-map.jpg",
     "imageWidth": 3300,
@@ -1408,6 +1410,14 @@
       },
       "town": {
         "label": "Town",
+        "mp": 1
+      },
+      "road": {
+        "label": "Road",
+        "mp": 0.5
+      },
+      "trail": {
+        "label": "Trail",
         "mp": 1
       }
     },
@@ -2967,6 +2977,8 @@
       "3919-3920",
       "3920-3921",
       "3921-3922"
-    ]
+    ],
+    "rivers": [],
+    "streams": []
   }
 }

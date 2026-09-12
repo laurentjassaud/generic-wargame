@@ -105,9 +105,11 @@ async function submit() {
           <button
             type="button"
             :class="{ selected: selectedModuleId === mod.id }"
+            :disabled="mod.active === false"
             @click="chooseModule(mod)"
           >
             {{ mod.name }}
+            <span v-if="mod.active === false" class="badge">Bientôt disponible</span>
           </button>
         </li>
       </ul>
@@ -198,6 +200,15 @@ async function submit() {
 .choice-list button.selected {
   border-color: #2563eb;
   background: #eff6ff;
+}
+.choice-list button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.badge {
+  margin-left: 8px;
+  font-size: 0.75em;
+  color: #666;
 }
 .checkbox-choice {
   display: flex;

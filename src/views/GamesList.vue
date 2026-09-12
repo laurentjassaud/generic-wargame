@@ -35,7 +35,7 @@ onMounted(refresh)
     <header>
       <h1>Parties en cours</h1>
       <div class="header-links">
-        <router-link to="/demo" class="button-link secondary">Partie en local</router-link>
+        <router-link to="/local" class="button-link secondary">Partie en local</router-link>
         <router-link to="/create" class="button-link">Créer une partie</router-link>
       </div>
     </header>

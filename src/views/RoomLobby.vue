@@ -196,6 +196,7 @@ onUnmounted(() => {
       ref="hexMapRef"
       class="board"
       :module="moduleData"
+      :module-id="gameSummary.moduleId"
       :initial-positions="room.boardState"
       :initial-turn-step="room.turnStep ?? 0"
       @move="onLocalMove"

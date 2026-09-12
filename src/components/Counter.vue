@@ -16,6 +16,10 @@ const props = defineProps({
   row: { type: Number, required: true },        // hex courant — 1-based
   calibration: { type: Object, required: true }, // { x0,y0,colStep,a,rowStep } — cf. lib/calibration.js
   selected: { type: Boolean, default: false },
+  // Vrai si ce pion a bougé pendant le tour en cours (cf. HexMap.vue,
+  // `movedThisTurnIds`) — liseré orange 1px, effacé en fin de tour ou par
+  // "Annuler le mouvement" (menu contextuel).
+  moved: { type: Boolean, default: false },
   size: { type: Number, default: 0.8 },         // taille du pion, fraction du pas de ligne (rowStep)
   // Faux (marqueurs type DZ, cf. HexMap.vue) : pas de sélection ni de
   // déplacement par clic sur hex adjacent — reste librement déplaçable en
@@ -67,6 +71,8 @@ function onMouseDown(ev) {
       @contextmenu.prevent.stop="emit('contextmenu', id, $event)" />
     <rect v-if="selected" class="counter-ring" :x="center.x - w / 2 - 3" :y="center.y - w / 2 - 3" :width="w + 6"
       :height="w + 6" rx="5" ry="5" />
+    <rect v-if="moved" class="counter-moved-ring" :x="center.x - w / 2" :y="center.y - w / 2" :width="w" :height="w"
+      rx="3" ry="3" />
   </g>
 </template>
 
@@ -81,6 +87,14 @@ function onMouseDown(ev) {
   fill: none;
   stroke: #2ecc71;
   stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.counter-moved-ring {
+  fill: none;
+  stroke: #ff8c00;
+  stroke-width: 1;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
