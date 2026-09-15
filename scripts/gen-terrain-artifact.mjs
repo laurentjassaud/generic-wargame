@@ -42,6 +42,44 @@ const centerOf = (c, r) => {
 }
 const idOf = (c, r) => String(c + 1).padStart(2, '0') + String(r).padStart(2, '0')
 
+// Les 6 sommets de l'hexagone centré en (cx, cy), dans le même ordre que le
+// polygone tracé plus bas (pts) — réutilisé pour retrouver le côté partagé
+// entre 2 hex voisins (cf. sharedSide juste après).
+function hexVertices(cx, cy) {
+  return [
+    { x: cx - a, y: cy }, { x: cx - a / 2, y: cy - b }, { x: cx + a / 2, y: cy - b },
+    { x: cx + a, y: cy }, { x: cx + a / 2, y: cy + b }, { x: cx - a / 2, y: cy + b },
+  ]
+}
+
+// Renvoie les 2 sommets de l'hexagone centré en (cx, cy) qui forment le côté
+// COMMUN avec l'hexagone voisin situé dans la direction (dx, dy) depuis ce
+// centre (dx, dy = vecteur vers l'autre centre, pas besoin d'être normalisé).
+// Sert à tracer rivières/ruisseaux le long du véritable hexside partagé —
+// contrairement aux routes/sentiers, tracés eux centre-à-centre (une route
+// traverse l'hex, une rivière longe sa bordure). Pour chacun des 6 côtés de
+// l'hexagone, on calcule la direction de son milieu depuis le centre, et on
+// garde celui dont la direction est la plus alignée avec (dx, dy) — c'est
+// géométriquement toujours exactement un des 6 côtés dans un pavage
+// hexagonal régulier (la ligne centre-à-centre est perpendiculaire au côté
+// partagé et passe par son milieu).
+function sharedSide(cx, cy, dx, dy) {
+  const verts = hexVertices(cx, cy)
+  let best = 0
+  let bestScore = -Infinity
+  for (let i = 0; i < 6; i++) {
+    const p1 = verts[i]
+    const p2 = verts[(i + 1) % 6]
+    const mx = (p1.x + p2.x) / 2 - cx
+    const my = (p1.y + p2.y) / 2 - cy
+    const score = mx * dx + my * dy
+    if (score > bestScore) { bestScore = score; best = i }
+  }
+  const p1 = verts[best]
+  const p2 = verts[(best + 1) % 6]
+  return { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y }
+}
+
 const hexes = []
 for (let c = 0; c < cols; c++) {
   for (let r = 1; r <= rows; r++) {
@@ -57,9 +95,13 @@ for (let c = 0; c < cols; c++) {
   }
 }
 
-// Bordures hex-à-hex (routes) : chaque paire d'hex adjacents, une seule fois
-// (clé canonique = les deux id triés), avec le centre des deux hex pour
-// tracer la ligne cliquable.
+// Bordures hex-à-hex : chaque paire d'hex adjacents, une seule fois (clé
+// canonique = les deux id triés). On garde 2 géométries par bordure :
+//   - ax/ay-bx/by : les 2 CENTRES d'hex, pour la zone cliquable (.hit) et le
+//     tracé route/sentier (une route traverse l'hex de bord en bord) ;
+//   - sx1/sy1-sx2/sy2 : le véritable HEXSIDE partagé (cf. sharedSide
+//     ci-dessus), pour le tracé rivière/ruisseau (qui longe la bordure entre
+//     les 2 hex, pas leurs centres).
 const edgeMap = new Map()
 for (let c = 0; c < cols; c++) {
   for (let r = 1; r <= rows; r++) {
@@ -72,7 +114,11 @@ for (let c = 0; c < cols; c++) {
       const key = aId < bId ? aId + '-' + bId : bId + '-' + aId
       if (edgeMap.has(key)) continue
       const B = centerOf(n.col, n.row)
-      edgeMap.set(key, { key, ax: A.x, ay: A.y, bx: B.x, by: B.y })
+      const side = sharedSide(A.x, A.y, B.x - A.x, B.y - A.y)
+      edgeMap.set(key, {
+        key, ax: A.x, ay: A.y, bx: B.x, by: B.y,
+        sx1: side.x1, sy1: side.y1, sx2: side.x2, sy2: side.y2,
+      })
     }
   }
 }
@@ -81,6 +127,10 @@ const initialRoads = mod.terrain.roads || []
 const initialTrails = mod.terrain.trails || []
 const initialRivers = mod.terrain.rivers || []
 const initialStreams = mod.terrain.streams || []
+const initialCanalBridges = mod.terrain.canalBridges || []
+const initialRailroadBridges = mod.terrain.railroadBridges || []
+const initialHighwayBridges = mod.terrain.highwayBridges || []
+const initialFerries = mod.terrain.ferries || []
 
 const html = `<!doctype html>
 <title>Grille de Mouvement Arnhem</title>
@@ -102,8 +152,12 @@ const html = `<!doctype html>
   --manual-dot: #a8551f;
   --road: #d13b1f;
   --trail: #8a6d1f;
-  --river: #1f5f8a;
+  --river: #66faff;
   --stream: #4a90b8;
+  --canal-bridge: #00b8d9;
+  --railroad-bridge: #8e44ad;
+  --highway-bridge: #f39c12;
+  --ferry: #16a085;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -123,8 +177,12 @@ const html = `<!doctype html>
     --manual-dot: #e0925a;
     --road: #e8532f;
     --trail: #d1ab4a;
-    --river: #5fb3e0;
+    --river: #66faff;
     --stream: #8ecae6;
+    --canal-bridge: #3fd4ee;
+    --railroad-bridge: #b478d4;
+    --highway-bridge: #f5a623;
+    --ferry: #4fd1ae;
   }
 }
 :root[data-theme="dark"] {
@@ -144,8 +202,12 @@ const html = `<!doctype html>
   --manual-dot: #e0925a;
   --road: #e8532f;
   --trail: #d1ab4a;
-  --river: #5fb3e0;
+  --river: #66faff;
   --stream: #8ecae6;
+  --canal-bridge: #3fd4ee;
+  --railroad-bridge: #b478d4;
+  --highway-bridge: #f5a623;
+  --ferry: #4fd1ae;
 }
 * { box-sizing: border-box; }
 body {
@@ -295,7 +357,7 @@ text.hexid {
 .edge.trail-active .trail { opacity: .95; }
 .edge .river {
   stroke: var(--river);
-  stroke-width: 9;
+  stroke-width: 5;
   stroke-linecap: round;
   opacity: 0;
   pointer-events: none;
@@ -310,12 +372,55 @@ text.hexid {
   pointer-events: none;
 }
 .edge.stream-active .stream { opacity: .95; }
+/* Ponts et bac : tracés centre-à-centre comme route/sentier (PAS le long du
+   hexside comme rivière/ruisseau, cf. sharedSide) — un pont/bac franchit
+   l'obstacle en ligne droite d'un hex à l'autre, il ne longe pas sa rive. */
+.edge .canal-bridge {
+  stroke: var(--canal-bridge);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-dasharray: 11 4;
+  opacity: 0;
+  pointer-events: none;
+}
+.edge.canal-bridge-active .canal-bridge { opacity: .95; }
+.edge .railroad-bridge {
+  stroke: var(--railroad-bridge);
+  stroke-width: 6;
+  stroke-linecap: butt;
+  stroke-dasharray: 2 4;
+  opacity: 0;
+  pointer-events: none;
+}
+.edge.railroad-bridge-active .railroad-bridge { opacity: .95; }
+.edge .highway-bridge {
+  stroke: var(--highway-bridge);
+  stroke-width: 7;
+  stroke-linecap: round;
+  opacity: 0;
+  pointer-events: none;
+}
+.edge.highway-bridge-active .highway-bridge { opacity: .95; }
+.edge .ferry {
+  stroke: var(--ferry);
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-dasharray: 1 6;
+  opacity: 0;
+  pointer-events: none;
+}
+.edge.ferry-active .ferry { opacity: .95; }
 svg.hide-roads .road { display: none; }
 svg.hide-trails .trail { display: none; }
 svg.hide-rivers .river { display: none; }
 svg.hide-streams .stream { display: none; }
-.mode-road .hit, .mode-trail .hit, .mode-river .hit, .mode-stream .hit { cursor: pointer; }
-.mode-road .hit:hover, .mode-trail .hit:hover, .mode-river .hit:hover, .mode-stream .hit:hover { stroke: rgba(255,255,255,.32); }
+svg.hide-canal-bridges .canal-bridge { display: none; }
+svg.hide-railroad-bridges .railroad-bridge { display: none; }
+svg.hide-highway-bridges .highway-bridge { display: none; }
+svg.hide-ferries .ferry { display: none; }
+.mode-road .hit, .mode-trail .hit, .mode-river .hit, .mode-stream .hit,
+.mode-canal-bridge .hit, .mode-railroad-bridge .hit, .mode-highway-bridge .hit, .mode-ferry .hit { cursor: pointer; }
+.mode-road .hit:hover, .mode-trail .hit:hover { stroke: rgba(255,255,255,.32); }
 .mode-remove polygon.hex:hover { fill: rgba(192,57,43,.45); }
 polygon.hex.marked-removed { fill: #c0392b; fill-opacity: .65; }
 text.remx {
@@ -405,6 +510,10 @@ footer .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block
     <label><input type="checkbox" id="toggleTrails" checked> sentiers</label>
     <label><input type="checkbox" id="toggleRivers" checked> rivières</label>
     <label><input type="checkbox" id="toggleStreams" checked> ruisseaux</label>
+    <label><input type="checkbox" id="toggleCanalBridges" checked> ponts canal</label>
+    <label><input type="checkbox" id="toggleRailroadBridges" checked> ponts rail</label>
+    <label><input type="checkbox" id="toggleHighwayBridges" checked> ponts route</label>
+    <label><input type="checkbox" id="toggleFerries" checked> bacs</label>
     <button id="reset">recentrer</button>
     <span id="zoomLabel">100%</span>
   </div>
@@ -421,6 +530,18 @@ footer .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block
     <label><input type="checkbox" id="streamMode"> mode ruisseau (clic = tracer)</label>
     <span id="streamCount">0 ruisseau(x)</span>
     <button id="clearStreams">tout effacer</button>
+    <label><input type="checkbox" id="canalBridgeMode"> mode pont canal (clic = tracer)</label>
+    <span id="canalBridgeCount">0 pont(s)</span>
+    <button id="clearCanalBridges">tout effacer</button>
+    <label><input type="checkbox" id="railroadBridgeMode"> mode pont rail (clic = tracer)</label>
+    <span id="railroadBridgeCount">0 pont(s)</span>
+    <button id="clearRailroadBridges">tout effacer</button>
+    <label><input type="checkbox" id="highwayBridgeMode"> mode pont route (clic = tracer)</label>
+    <span id="highwayBridgeCount">0 pont(s)</span>
+    <button id="clearHighwayBridges">tout effacer</button>
+    <label><input type="checkbox" id="ferryMode"> mode bac (clic = tracer)</label>
+    <span id="ferryCount">0 bac(s)</span>
+    <button id="clearFerries">tout effacer</button>
     <label><input type="checkbox" id="removeMode"> mode suppression hex (clic = marquer)</label>
     <span id="removedCount">0 hex marqué(s)</span>
     <button id="clearRemoved">tout effacer</button>
@@ -437,7 +558,14 @@ footer .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block
 ${hexes.map((h) => `      <polygon class="hex hex-${h.terrain}" points="${h.pts}" data-id="${h.id}" data-terrain="${h.terrain}" data-mp="${h.mp}" />`).join('\n')}
     </g>
     <g id="edgeLayer">
-${edges.map((e) => `      <g class="edge" data-key="${e.key}"><line class="hit" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="road" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="trail" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="river" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /><line class="stream" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" /></g>`).join('\n')}
+${edges.map((e) => {
+  const center = (cls) => `<line class="${cls}" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" />`
+  const side = (cls) => `<line class="${cls}" x1="${e.sx1.toFixed(1)}" y1="${e.sy1.toFixed(1)}" x2="${e.sx2.toFixed(1)}" y2="${e.sy2.toFixed(1)}" />`
+  // Centre-à-centre : route/sentier ET ponts/bac (cf. sharedSide plus haut —
+  // ces derniers franchissent l'obstacle en ligne droite, ils ne longent
+  // pas sa rive comme rivière/ruisseau, qui restent tracés côté hexside).
+  return `      <g class="edge" data-key="${e.key}">${center('hit')}${center('road')}${center('trail')}${side('river')}${side('stream')}${center('canal-bridge')}${center('railroad-bridge')}${center('highway-bridge')}${center('ferry')}</g>`
+}).join('\n')}
     </g>
     <g id="labelLayer">
 ${hexes.map((h) => `      <text class="mp" data-id="${h.id}" x="${h.cx.toFixed(1)}" y="${(h.cy + a * 0.15).toFixed(1)}" font-size="${(a * 0.5).toFixed(1)}">${h.mp}</text><text class="hexid" x="${h.cx.toFixed(1)}" y="${(h.cy - a * 0.32).toFixed(1)}" font-size="${(a * 0.28).toFixed(1)}">${h.id}</text>`).join('\n')}
@@ -454,6 +582,10 @@ ${hexes.map((h) => `      <text class="remx" data-id="${h.id}" x="${h.cx.toFixed
 <script id="trails-data" type="application/json">${JSON.stringify(initialTrails)}</script>
 <script id="rivers-data" type="application/json">${JSON.stringify(initialRivers)}</script>
 <script id="streams-data" type="application/json">${JSON.stringify(initialStreams)}</script>
+<script id="canal-bridges-data" type="application/json">${JSON.stringify(initialCanalBridges)}</script>
+<script id="railroad-bridges-data" type="application/json">${JSON.stringify(initialRailroadBridges)}</script>
+<script id="highway-bridges-data" type="application/json">${JSON.stringify(initialHighwayBridges)}</script>
+<script id="ferries-data" type="application/json">${JSON.stringify(initialFerries)}</script>
 <script id="removed-data" type="application/json">${JSON.stringify(initialRemoved)}</script>
 
 <footer>
@@ -464,7 +596,10 @@ ${hexes.map((h) => `      <text class="remx" data-id="${h.id}" x="${h.cx.toFixed
   <span><span class="dot" style="background:var(--trail)"></span>sentier (tracé à la main, enregistré dans le module)</span>
   <span><span class="dot" style="background:var(--river)"></span>rivière (tracée à la main, enregistrée dans le module)</span>
   <span><span class="dot" style="background:var(--stream)"></span>ruisseau (tracé à la main, enregistré dans le module)</span>
-  <span>ponts non couverts encore &mdash; à ajouter</span>
+  <span><span class="dot" style="background:var(--canal-bridge)"></span>pont de canal (tracé à la main, enregistré dans le module)</span>
+  <span><span class="dot" style="background:var(--railroad-bridge)"></span>pont de chemin de fer (tracé à la main, enregistré dans le module)</span>
+  <span><span class="dot" style="background:var(--highway-bridge)"></span>pont de route (tracé à la main, enregistré dans le module)</span>
+  <span><span class="dot" style="background:var(--ferry)"></span>bac/ferry (tracé à la main, enregistré dans le module)</span>
 </footer>
 
 <script>
@@ -542,6 +677,18 @@ document.getElementById('toggleRivers').addEventListener('change', (e) => {
 document.getElementById('toggleStreams').addEventListener('change', (e) => {
   svg.classList.toggle('hide-streams', !e.target.checked);
 });
+document.getElementById('toggleCanalBridges').addEventListener('change', (e) => {
+  svg.classList.toggle('hide-canal-bridges', !e.target.checked);
+});
+document.getElementById('toggleRailroadBridges').addEventListener('change', (e) => {
+  svg.classList.toggle('hide-railroad-bridges', !e.target.checked);
+});
+document.getElementById('toggleHighwayBridges').addEventListener('change', (e) => {
+  svg.classList.toggle('hide-highway-bridges', !e.target.checked);
+});
+document.getElementById('toggleFerries').addEventListener('change', (e) => {
+  svg.classList.toggle('hide-ferries', !e.target.checked);
+});
 document.querySelectorAll('text.hexid').forEach(t => t.style.display = 'none');
 
 // ─────────────────────────────────────────────────────────────
@@ -581,11 +728,19 @@ const roadModeBox = document.getElementById('roadMode');
 const trailModeBox = document.getElementById('trailMode');
 const riverModeBox = document.getElementById('riverMode');
 const streamModeBox = document.getElementById('streamMode');
+const canalBridgeModeBox = document.getElementById('canalBridgeMode');
+const railroadBridgeModeBox = document.getElementById('railroadBridgeMode');
+const highwayBridgeModeBox = document.getElementById('highwayBridgeMode');
+const ferryModeBox = document.getElementById('ferryMode');
 const edgeModes = [
   { box: roadModeBox, cls: 'mode-road' },
   { box: trailModeBox, cls: 'mode-trail' },
   { box: riverModeBox, cls: 'mode-river' },
   { box: streamModeBox, cls: 'mode-stream' },
+  { box: canalBridgeModeBox, cls: 'mode-canal-bridge' },
+  { box: railroadBridgeModeBox, cls: 'mode-railroad-bridge' },
+  { box: highwayBridgeModeBox, cls: 'mode-highway-bridge' },
+  { box: ferryModeBox, cls: 'mode-ferry' },
 ];
 edgeModes.forEach(({ box, cls }) => {
   box.addEventListener('change', (e) => {
@@ -619,6 +774,22 @@ document.getElementById('edgeLayer').addEventListener('click', (e) => {
     if (streams.has(key)) streams.delete(key); else streams.add(key);
     paintStream(key);
     updateStreamCount();
+  } else if (canalBridgeModeBox.checked) {
+    if (canalBridges.has(key)) canalBridges.delete(key); else canalBridges.add(key);
+    paintCanalBridge(key);
+    updateCanalBridgeCount();
+  } else if (railroadBridgeModeBox.checked) {
+    if (railroadBridges.has(key)) railroadBridges.delete(key); else railroadBridges.add(key);
+    paintRailroadBridge(key);
+    updateRailroadBridgeCount();
+  } else if (highwayBridgeModeBox.checked) {
+    if (highwayBridges.has(key)) highwayBridges.delete(key); else highwayBridges.add(key);
+    paintHighwayBridge(key);
+    updateHighwayBridgeCount();
+  } else if (ferryModeBox.checked) {
+    if (ferries.has(key)) ferries.delete(key); else ferries.add(key);
+    paintFerry(key);
+    updateFerryCount();
   } else {
     return;
   }
@@ -715,6 +886,94 @@ document.getElementById('clearStreams').addEventListener('click', () => {
   if (!confirm('Effacer les ' + streams.size + ' ruisseau(x) tracé(s) ?')) return;
   [...streams].forEach((key) => { streams.delete(key); paintStream(key); });
   updateStreamCount();
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Ponts (canal / chemin de fer / route) et bac : même mécanique que
+// route/sentier (tracé CENTRE-À-CENTRE, cf. sharedSide plus haut) — un
+// pont/bac franchit l'obstacle en ligne droite d'un hex à l'autre, comme
+// une route, plutôt que de longer sa rive comme rivière/ruisseau. Quatre
+// Sets indépendants, un par type, chacun avec sa propre couleur/tracé (cf.
+// styles .canal-bridge/.railroad-bridge/.highway-bridge/.ferry plus haut).
+// ─────────────────────────────────────────────────────────────
+const canalBridgesData = document.getElementById('canal-bridges-data');
+const canalBridges = new Set(JSON.parse(canalBridgesData.textContent || '[]'));
+function paintCanalBridge(key) {
+  const g = edgeGroup(key);
+  if (g) g.classList.toggle('canal-bridge-active', canalBridges.has(key));
+}
+canalBridges.forEach(paintCanalBridge);
+function updateCanalBridgeCount() {
+  document.getElementById('canalBridgeCount').textContent = canalBridges.size + ' pont(s)';
+}
+updateCanalBridgeCount();
+document.getElementById('clearCanalBridges').addEventListener('click', () => {
+  if (!canalBridges.size) return;
+  if (!confirm('Effacer les ' + canalBridges.size + ' pont(s) de canal tracé(s) ?')) return;
+  [...canalBridges].forEach((key) => { canalBridges.delete(key); paintCanalBridge(key); });
+  updateCanalBridgeCount();
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+});
+
+const railroadBridgesData = document.getElementById('railroad-bridges-data');
+const railroadBridges = new Set(JSON.parse(railroadBridgesData.textContent || '[]'));
+function paintRailroadBridge(key) {
+  const g = edgeGroup(key);
+  if (g) g.classList.toggle('railroad-bridge-active', railroadBridges.has(key));
+}
+railroadBridges.forEach(paintRailroadBridge);
+function updateRailroadBridgeCount() {
+  document.getElementById('railroadBridgeCount').textContent = railroadBridges.size + ' pont(s)';
+}
+updateRailroadBridgeCount();
+document.getElementById('clearRailroadBridges').addEventListener('click', () => {
+  if (!railroadBridges.size) return;
+  if (!confirm('Effacer les ' + railroadBridges.size + ' pont(s) de chemin de fer tracé(s) ?')) return;
+  [...railroadBridges].forEach((key) => { railroadBridges.delete(key); paintRailroadBridge(key); });
+  updateRailroadBridgeCount();
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+});
+
+const highwayBridgesData = document.getElementById('highway-bridges-data');
+const highwayBridges = new Set(JSON.parse(highwayBridgesData.textContent || '[]'));
+function paintHighwayBridge(key) {
+  const g = edgeGroup(key);
+  if (g) g.classList.toggle('highway-bridge-active', highwayBridges.has(key));
+}
+highwayBridges.forEach(paintHighwayBridge);
+function updateHighwayBridgeCount() {
+  document.getElementById('highwayBridgeCount').textContent = highwayBridges.size + ' pont(s)';
+}
+updateHighwayBridgeCount();
+document.getElementById('clearHighwayBridges').addEventListener('click', () => {
+  if (!highwayBridges.size) return;
+  if (!confirm('Effacer les ' + highwayBridges.size + ' pont(s) de route tracé(s) ?')) return;
+  [...highwayBridges].forEach((key) => { highwayBridges.delete(key); paintHighwayBridge(key); });
+  updateHighwayBridgeCount();
+  dirty = true;
+  setStatus('non enregistré', 'dirty');
+});
+
+const ferriesData = document.getElementById('ferries-data');
+const ferries = new Set(JSON.parse(ferriesData.textContent || '[]'));
+function paintFerry(key) {
+  const g = edgeGroup(key);
+  if (g) g.classList.toggle('ferry-active', ferries.has(key));
+}
+ferries.forEach(paintFerry);
+function updateFerryCount() {
+  document.getElementById('ferryCount').textContent = ferries.size + ' bac(s)';
+}
+updateFerryCount();
+document.getElementById('clearFerries').addEventListener('click', () => {
+  if (!ferries.size) return;
+  if (!confirm('Effacer les ' + ferries.size + ' bac(s) tracé(s) ?')) return;
+  [...ferries].forEach((key) => { ferries.delete(key); paintFerry(key); });
+  updateFerryCount();
   dirty = true;
   setStatus('non enregistré', 'dirty');
 });
@@ -837,6 +1096,10 @@ async function save() {
   trailsData.textContent = JSON.stringify([...trails].sort());
   riversData.textContent = JSON.stringify([...rivers].sort());
   streamsData.textContent = JSON.stringify([...streams].sort());
+  canalBridgesData.textContent = JSON.stringify([...canalBridges].sort());
+  railroadBridgesData.textContent = JSON.stringify([...railroadBridges].sort());
+  highwayBridgesData.textContent = JSON.stringify([...highwayBridges].sort());
+  ferriesData.textContent = JSON.stringify([...ferries].sort());
   removedData.textContent = JSON.stringify([...removedHexes].sort());
   try {
     await artifact.publish('<!doctype html>\\n' + document.documentElement.outerHTML);

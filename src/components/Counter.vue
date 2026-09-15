@@ -20,6 +20,9 @@ const props = defineProps({
   // `movedThisTurnIds`) — liseré orange 1px, effacé en fin de tour ou par
   // "Annuler le mouvement" (menu contextuel).
   moved: { type: Boolean, default: false },
+  // Vrai si ce pion a déjà combattu pendant la phase en cours (cf.
+  // lib/useCombat.js::hasFought) — désaturé et à 0.75 d'opacité.
+  spent: { type: Boolean, default: false },
   size: { type: Number, default: 0.8 },         // taille du pion, fraction du pas de ligne (rowStep)
   // Faux (marqueurs type DZ, cf. HexMap.vue) : pas de sélection ni de
   // déplacement par clic sur hex adjacent — reste librement déplaçable en
@@ -65,7 +68,7 @@ function onMouseDown(ev) {
 </script>
 
 <template>
-  <g class="counter" :class="{ selected }">
+  <g class="counter" :class="{ selected, spent }">
     <image :href="src" :x="center.x - w / 2" :y="center.y - w / 2" :width="w" :height="w" class="counter-img"
       @mousedown="onMouseDown" @click.stop="onClick"
       @contextmenu.prevent.stop="emit('contextmenu', id, $event)" />
@@ -81,6 +84,12 @@ function onMouseDown(ev) {
   cursor: pointer;
   user-select: none;
   -webkit-user-drag: none;
+}
+
+.counter.spent .counter-img {
+  filter: grayscale(1);
+  opacity: 0.75;
+  cursor: default;
 }
 
 .counter-ring {

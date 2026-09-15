@@ -342,6 +342,15 @@ defineExpose({ log, clear, remove, revealEntry })
   font-weight: 600;
 }
 
+.jn-row.jn-phase {
+  background: rgba(232, 196, 104, 0.12);
+  font-style: italic;
+}
+
+.jn-row.jn-combat {
+  background: rgba(255, 140, 0, 0.18);
+}
+
 .jn-row.jn-eliminate {
   background: rgba(209, 26, 26, 0.2);
 }

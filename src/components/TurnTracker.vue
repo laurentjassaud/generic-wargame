@@ -16,11 +16,13 @@
 //  - appeler `applyRemoteTurn(step)` (exposé) quand le serveur fait autorité.
 //
 // Phases (mode Assisté uniquement — cf. lib/useAssisted.js) : ce composant
-// reste volontairement "bête" sur le sujet des phases Mouvement/Combat — il
-// ne connaît PAS le concept de phase lui-même (toute cette logique vit dans
-// useAssisted.js, cf. ce fichier pour le détail). Il se contente :
+// reste volontairement "bête" sur le sujet des phases (Mouvement/Combat, et
+// pour le dernier camp de l'ordre, Fin de tour) — il ne connaît PAS le sens
+// de ces phases lui-même (toute cette logique, y compris COMBIEN de
+// marqueurs afficher et LESQUELS, vit dans useAssisted.js::phaseLabels, cf.
+// ce fichier pour le détail). Il se contente :
 //  - d'afficher, si la prop `phase` est fournie (non nulle), une 2e ligne
-//    avec 2 marqueurs "Mouvement"/"Combat" sous la piste de tour, et
+//    avec un marqueur par entrée de `phaseLabels` sous la piste de tour, et
 //    d'y déplacer le bouton "suivant" (au lieu de le laisser en bout de
 //    la 1re ligne comme en mode Libre) ;
 //  - de laisser le PARENT décider ce que "suivant" signifie dans ce cas :
@@ -46,14 +48,21 @@ const props = defineProps({
   // le bouton "tour suivant", le pas courant n'avance alors que via
   // applyRemoteTurn (piloté par le lecteur de rejeu).
   disabled: { type: Boolean, default: false },
-  // Phase active (0 = Mouvement, 1 = Combat), ou `null` hors mode Assisté
-  // (cf. useAssisted.js::phase). C'est cette prop, et elle seule, qui
-  // détermine si la 2e ligne "phases" est affichée : `null` = comportement
-  // historique inchangé (pas de phases, bouton en bout de 1re ligne).
+  // Phase active (index dans `phaseLabels` ci-dessous : 0 = Mouvement,
+  // 1 = Combat, 2 = Fin de tour pour le dernier camp de l'ordre), ou `null`
+  // hors mode Assisté (cf. useAssisted.js::phase). C'est cette prop, et
+  // elle seule, qui détermine si la 2e ligne "phases" est affichée : `null`
+  // = comportement historique inchangé (pas de phases, bouton en bout de
+  // 1re ligne).
   phase: { type: Number, default: null },
+  // Libellés des marqueurs de la ligne "phases", dans l'ordre (cf.
+  // useAssisted.js::phaseLabels — 2 entrées pour un camp normal, 3 pour le
+  // dernier camp de l'ordre). Ignoré hors mode phases (`phase === null`).
+  phaseLabels: { type: Array, default: () => [] },
   // Texte à afficher sur le bouton de la ligne "phases", précisant ce que
   // le prochain clic va déclencher ("Nouvelle phase" / "Autre joueur" /
-  // "Nouveau tour" — calculé par useAssisted.js). Ignoré hors mode phases.
+  // "Fin de tour" / "Nouveau tour" — calculé par useAssisted.js). Ignoré
+  // hors mode phases.
   nextLabel: { type: String, default: null },
 })
 
@@ -121,7 +130,11 @@ function applyRemoteTurn(step) {
 // `nextTurn` est exposé pour que useAssisted.js puisse la déclencher
 // lui-même (cf. plus haut) quand un clic en phase Combat doit AUSSI faire
 // avancer le pas courant.
-defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfTurn })
+// `currentTurn` (numéro de tour, dérivé du pas courant) est en plus exposé
+// pour lib/useAssisted.js (congestion des hex d'entrée de renfort — remise à
+// zéro à chaque NOUVEAU TOUR, pas à chaque changement de camp, cf.
+// useAssisted.js::entryCounts).
+defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfTurn, currentTurn })
 </script>
 
 <template>
@@ -140,13 +153,13 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
     </div>
 
     <!-- Ligne "phases" (mode Assisté uniquement, cf. props `phase` ci-dessus) :
-         2 marqueurs Mouvement/Combat + le bouton "suivant" déplacé ici, à
-         leur droite. Le libellé du bouton (nextLabel) précise ce que le
+         un marqueur par entrée de `phaseLabels` (2 ou 3 selon le camp actif,
+         cf. useAssisted.js::phaseLabels) + le bouton "suivant" déplacé ici,
+         à leur droite. Le libellé du bouton (nextLabel) précise ce que le
          prochain clic va faire — voir useAssisted.js pour le calcul. -->
     <div v-if="phase !== null" class="tt-row tt-row-phases">
       <div class="tt-phases">
-        <span class="tt-phase" :class="{ active: phase === 0 }">Mouvement</span>
-        <span class="tt-phase" :class="{ active: phase === 1 }">Combat</span>
+        <span v-for="(label, i) in phaseLabels" :key="label" class="tt-phase" :class="{ active: phase === i }">{{ label }}</span>
       </div>
       <!-- Pas de `nextTurn()` direct ici : on émet `phase-next` et on laisse
            useAssisted.js (via HexMap.vue) décider de l'effet réel du clic. -->

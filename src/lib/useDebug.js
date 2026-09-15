@@ -32,6 +32,15 @@
 //      chemin (Dijkstra, cf. `reachableHexes` plus bas) où le "poids" pour
 //      entrer dans un hex est son COT — exactement la même notion de coût
 //      que `canEnterHex`/`spendMp`, juste étendue à plusieurs pas d'un coup.
+//      Les hex interdits à ce pion (cf. `canEnterTerrain`, ex. rough/broken/
+//      woods pour un véhicule) sont exclus du graphe exploré, pas juste
+//      comptés "chers" — un chemin ne peut jamais les traverser.
+//   3. le SURCOÛT DE CONGESTION déjà accumulé sur les hex d'entrée de renfort
+//      actuellement surlignés (cf. `entrySurchargeLabels`) — cf.
+//      lib/useAssisted.js::entrySurcharge : un 2e renfort qui entre par le
+//      même hex le même tour paie 2× son coût de base, un 3e 3×, etc. ; ce
+//      surcoût ("+0.5", "+1"...) est ce que la PROCHAINE entrée sur cet hex
+//      devra payer en plus du coût de base.
 //
 // Paramètres reçus (tous déjà calculés/définis côté HexMap.vue — ce
 // composable ne fait QUE les recombiner, il ne récupère ni ne recalcule rien
@@ -50,22 +59,63 @@
 //     complet, avec `col`/`row`/`mov`), ou `null` (cf. HexMap.vue::selectedCounter).
 //   - `remainingMp` : fonction `(pion) => nombre de MP restants, ou `null` si
 //     ce pion n'a pas de MP déclarés (cf. lib/useAssisted.js::remainingMp).
+//   - `canEnterTerrain` : fonction `(pion, hex, from) => bool` (cf.
+//     lib/useAssisted.js::canEnterTerrain) — un hex rough/broken/woods
+//     ("forest"), ou un ruisseau sans route/piste, est infranchissable pour
+//     certains types de pion (véhicules) quel que soit leur MP ; le calcul
+//     de portée doit l'exclure du graphe exploré, pas seulement le compter
+//     "trop cher".
+//   - `zocSet` : ref/computed du Set ("col,row") des hex sous ZOC ennemie du
+//     pion sélectionné (cf. HexMap.vue::zocSet, lib/useAssisted.js::
+//     enemyZocSet) — un pion qui ENTRE dans un tel hex doit s'y arrêter : le
+//     calcul de portée l'inclut (atteignable) mais n'explore JAMAIS plus
+//     loin depuis lui.
 //   - `neighborsOf`, `hexOnMap` : fonctions de géométrie de grille (cf.
 //     lib/hex.js et HexMap.vue::hexOnMap) — nécessaires pour explorer la
 //     grille hex par hex lors du calcul de la portée de déplacement.
+//   - `entryHexSet` : ref/computed du Set ("col,row") des hex d'entrée
+//     actuellement valides pour le renfort sélectionné (cf.
+//     HexMap.vue::entryHexSet) — sert à savoir SUR QUELS hex afficher le
+//     surcoût de congestion (cf. `entrySurchargeLabels` plus bas), pas sur
+//     toute la carte.
+//   - `entrySurcharge` : fonction `(hex) => nombre de MP` (cf.
+//     lib/useAssisted.js::entrySurcharge) — le surcoût de congestion déjà
+//     accumulé sur un hex d'entrée ce tour-ci (0 si personne n'y est encore
+//     entré).
+//   - `hasFriendlyOccupant` : fonction `(pion, hex) => bool` (cf.
+//     lib/useAssisted.js::hasFriendlyOccupant) — même règle d'empilement que
+//     HexMap.vue::reachableSet (1er pas) appliquée ici à CHAQUE hex du
+//     résultat de `reachableHexes` : un hex ami occupé n'est un point
+//     d'ARRÊT valide (donc inclus dans la portée affichée) que si le pion
+//     pourrait ensuite en repartir — le TRAVERSER pour aller plus loin reste
+//     toujours permis, cf. `reachableHexes` pour le détail.
 import { computed, ref } from 'vue'
 
-/** Tous les hex atteignables depuis `{ col, row }` avec au plus `budget` MP à
- *  dépenser, chaque hex traversé coûtant `terrainCost(hex, from)` — plus
- *  court chemin (Dijkstra), PAS un simple calcul "distance × coût moyen",
- *  car le coût pour entrer dans un hex peut varier selon d'où l'on vient
- *  (cf. lib/useAssisted.js::terrainCost, route/piste : moins cher en
- *  suivant une route précise qu'en coupant à travers champs). La grille d'un
- *  module (~1000 hex pour Arnhem) est assez petite pour se passer d'un tas
- *  binaire : une simple recherche linéaire du nœud non visité le plus proche
- *  suffit très largement. Renvoie un Set de clés "col,row", SANS le hex de
- *  départ (`c` n'a pas besoin d'"entrer" dans son propre hex). */
-function reachableHexes({ col, row }, budget, neighborsOf, hexOnMap, terrainCost) {
+/** Tous les hex atteignables par `unit` depuis `{ col, row }` avec au plus
+ *  `budget` MP à dépenser, chaque hex traversé coûtant `terrainCost(hex,
+ *  from)` — plus court chemin (Dijkstra), PAS un simple calcul "distance ×
+ *  coût moyen", car le coût pour entrer dans un hex peut varier selon d'où
+ *  l'on vient (cf. lib/useAssisted.js::terrainCost, route/piste : moins cher
+ *  en suivant une route précise qu'en coupant à travers champs). Un hex où
+ *  `canEnterTerrain(unit, hex, from)` répond faux (cf. lib/useAssisted.js —
+ *  rough/broken/woods ou ruisseau sans route/piste, interdits à certains
+ *  véhicules) est retiré du graphe exploré AVANT même de regarder son coût :
+ *  infranchissable, pas juste "cher".
+ *
+ *  ZOC (`zocSet`, cf. lib/useAssisted.js::enemyZocSet) : un hex sous ZOC
+ *  ennemie reste ATTEIGNABLE (on peut y entrer) mais on n'explore JAMAIS ses
+ *  propres voisins depuis lui — un pion qui y entre doit s'y arrêter, cf.
+ *  useAssisted.js::canEnterHex pour la même règle appliquée au clic. Si le
+ *  hex de DÉPART (`{ col, row }`) est lui-même sous ZOC ennemie, ce même
+ *  mécanisme s'applique dès la 1re itération : rien n'est exploré depuis
+ *  lui, donc rien n'est trouvé -> portée vide, le pion est figé sur place.
+ *
+ *  La grille d'un module (~1000 hex pour Arnhem) est assez petite pour se
+ *  passer d'un tas binaire : une simple recherche linéaire du nœud non
+ *  visité le plus proche suffit très largement. Renvoie un Set de clés
+ *  "col,row", SANS le hex de départ (`c` n'a pas besoin d'"entrer" dans son
+ *  propre hex, quoi qu'il en soit du terrain qu'il occupe déjà). */
+function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terrainCost, canEnterTerrain, zocSet, hasFriendlyOccupant) {
   const startKey = col + ',' + row
   const dist = new Map([[startKey, 0]])
   const visited = new Set()
@@ -77,13 +127,21 @@ function reachableHexes({ col, row }, budget, neighborsOf, hexOnMap, terrainCost
     }
     if (currentKey == null) break // plus aucun nœud à traiter : exploration terminée
     visited.add(currentKey)
+    // ZOC : ce hex force l'arrêt du pion qui y entre (ou qui y a commencé)
+    // — il reste dans le résultat (atteint), mais on n'explore RIEN depuis
+    // lui, cf. useAssisted.js::canEnterHex pour la même règle au clic.
+    if (zocSet.has(currentKey)) continue
     const [c, r] = currentKey.split(',').map(Number)
     for (const n of neighborsOf(c, r)) {
       if (!hexOnMap(n.col, n.row)) continue
       // `from: { c, r }` (le nœud qu'on est en train d'étendre) est ce qui
-      // permet à `terrainCost` de détecter une arête route/piste PRÉCISE
-      // entre ce nœud et son voisin `n` — sans lui, on perdrait cette règle
-      // dans le calcul de portée (cf. useAssisted.js::terrainCost).
+      // permet à `terrainCost`/`canEnterTerrain` de détecter une arête
+      // route/piste PRÉCISE entre ce nœud et son voisin `n` — sans lui, on
+      // perdrait à la fois la règle de coût réduit ET l'exception route/
+      // piste au terrain interdit (cf. useAssisted.js::terrainCost/
+      // canEnterTerrain : une route reste praticable même à travers un
+      // terrain autrement infranchissable pour un véhicule).
+      if (!canEnterTerrain(unit, { c: n.col, r: n.row }, { c, r })) continue // infranchissable pour ce type de pion
       const next = currentDist + terrainCost({ c: n.col, r: n.row }, { c, r })
       if (next > budget) continue // trop cher pour arriver jusque-là : hors de portée
       const key = n.col + ',' + n.row
@@ -91,10 +149,32 @@ function reachableHexes({ col, row }, budget, neighborsOf, hexOnMap, terrainCost
     }
   }
   dist.delete(startKey)
+  // Empilement (cf. lib/useAssisted.js::hasFriendlyOccupant/
+  // canLeaveAfterEntering, même règle qu'au 1er pas — HexMap.vue::
+  // reachableSet) : un hex occupé par un pion AMI n'est un point d'ARRÊT
+  // valide que si le pion pourrait ensuite continuer sa route (MP restants,
+  // À CE POINT DU CHEMIN — `budget - dist`, pas le total du pion — pour
+  // rejoindre au moins un voisin libre). On ne l'exclut du RÉSULTAT que si
+  // c'est un cul-de-sac : rien n'empêche de le TRAVERSER pour atteindre plus
+  // loin (déjà géré ci-dessus, l'exploration continue au travers).
+  for (const [key, d] of dist) {
+    const [c, r] = key.split(',').map(Number)
+    if (!hasFriendlyOccupant(unit, { c, r })) continue
+    const remaining = budget - d
+    const canDepart = remaining > 0 && !zocSet.has(key) && neighborsOf(c, r).some((n) => {
+      if (!hexOnMap(n.col, n.row)) return false
+      const nh = { c: n.col, r: n.row }
+      return canEnterTerrain(unit, nh, { c, r }) && remaining >= terrainCost(nh, { c, r })
+    })
+    if (!canDepart) dist.delete(key)
+  }
   return new Set(dist.keys())
 }
 
-export function useDebug(hexes, isAdjacent, terrainCost, selectedCounter, remainingMp, neighborsOf, hexOnMap) {
+export function useDebug(
+  hexes, isAdjacent, terrainCost, selectedCounter, remainingMp, neighborsOf, hexOnMap, canEnterTerrain, zocSet,
+  entryHexSet, entrySurcharge, hasFriendlyOccupant,
+) {
   // Unique interrupteur du mode debug (case à cocher "debug", cf. HexMap.vue)
   // — tous les affichages de ce composable, présents et futurs, doivent être
   // gardés par lui (`if (!debug.value) return ...`), jamais actifs par défaut.
@@ -129,12 +209,26 @@ export function useDebug(hexes, isAdjacent, terrainCost, selectedCounter, remain
     if (!c) return new Set()
     const budget = remainingMp(c)
     return reachableHexes(
-      { col: c.col, row: c.row },
+      c, { col: c.col, row: c.row },
       budget == null ? Infinity : budget,
-      neighborsOf, hexOnMap, terrainCost,
+      neighborsOf, hexOnMap, terrainCost, canEnterTerrain, zocSet.value, hasFriendlyOccupant,
     )
   })
   const isInRange = (h) => inRangeSet.value.has(h.c + ',' + h.r)
 
-  return { debug, adjacentCotLabels, isInRange }
+  // Un objet `{ id, cx, cy, surcharge }` par hex d'entrée actuellement
+  // surligné (cf. HexMap.vue::entryHexSet) dont le surcoût de congestion
+  // (cf. lib/useAssisted.js::entrySurcharge) est déjà > 0 — vide si le mode
+  // debug est désactivé, si aucun renfort n'est sélectionné, ou si personne
+  // n'est encore entré par aucun de ses hex d'entrée ce tour-ci (rien à
+  // signaler dans ce cas : la 1re entrée ne coûte que le tarif de base).
+  const entrySurchargeLabels = computed(() => {
+    if (!debug.value) return []
+    return hexes.value
+      .filter((h) => entryHexSet.value.has(h.c + ',' + h.r))
+      .map((h) => ({ id: h.id, cx: h.cx, cy: h.cy, surcharge: entrySurcharge({ c: h.c, r: h.r }) }))
+      .filter((d) => d.surcharge > 0)
+  })
+
+  return { debug, adjacentCotLabels, isInRange, entrySurchargeLabels }
 }
