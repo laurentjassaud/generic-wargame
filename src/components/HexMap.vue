@@ -18,7 +18,7 @@
 //    "image" — la mise à l'échelle est faite par le navigateur.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { reactive, ref, computed, toRef, onUnmounted, nextTick, watch } from 'vue'
+import { reactive, ref, computed, toRef, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { hexId, parseHexId, DEFAULT_CALIBRATION } from '../lib/calibration.js'
 import { neighborsOf, hexDistance } from '../lib/hex.js'
 import { hexExists, removedHexSet } from '../lib/mapShape.js'
@@ -212,7 +212,10 @@ function undoLastMove() {
 
 // --- Dé : widget flottant non-bloquant (cf. RollModal.vue), toujours monté
 // (v-show, pas v-if, pour conserver sa position glissée et son état pendant
-// qu'il est caché) — résultat journalisé à chaque lancer.
+// qu'il est caché) — résultat journalisé à chaque lancer. Mode Libre
+// UNIQUEMENT (widget et bouton "Cacher/Afficher le dé" absents en mode
+// Assisté, cf. template) : en mode Assisté, les jets sont faits par l'appli
+// elle-même là où la règle en demande un (cf. CombatModal.vue).
 const showRollModal = ref(true)
 function onDiceRoll(value) { log('dice', `Lancer de dé : ${value}`) }
 
@@ -429,7 +432,11 @@ const counters = ref(buildInitialCounters())
 // comme dans les versions précédentes) parce qu'il a besoin de `counters`
 // (cf. `enemyZocSet`, qui doit savoir où sont les pions ennemis) — lequel
 // doit donc déjà être déclaré.
-const { showGrid, selectable, draggable, canControl, phase, phaseLabels, nextLabel, advance, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, hasFriendlyOccupant, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap)
+// Dernier paramètre : les renforts pas encore posés (phase Airborne, cf.
+// lib/useAssisted.js::airbornePending), passés en FONCTION car
+// `reinforcements` n'est déclaré que plus bas dans ce fichier.
+const { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
+  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, hasFriendlyOccupant, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value)
 
 // Combat du mode Assisté (cf. lib/useCombat.js, qui porte toute la règle :
 // désignation défenseur/attaquants, table de combat, jet de dé). Ce composant
@@ -439,7 +446,7 @@ const {
   combatActive, combatAllowed, targetHexLabels: combatTargetHexLabels, defenders: combatDefenders,
   attackers: combatAttackers, toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought, pendingEngagements,
   isCombatTargetHex, isCombatAttackerHex,
-  attackStrength, defenseStrength, differential, canResolve: combatCanResolve,
+  attackStrength, defenseStrength, differential, canResolve: combatCanResolve, strandedUnits: combatStrandedUnits,
   terrainRow: combatTerrainRow,
   column: combatColumn, resolveCombat, combatResult, crtRows, crtResults,
 } = useCombat(toRef(props, 'assisted'), phase, counters, canControl, props.module.terrain, combatEdgeKind)
@@ -506,13 +513,16 @@ function onPhaseNext() {
   }
   const before = phase.value
   advance()
-  // Journal : on enregistre le passage en Combat / Fin de tour (entrée
-  // `phase`, rejouée par applyReplayEntry -> useAssisted.js::setPhase). Le
-  // retour en Mouvement n'a pas besoin d'entrée propre : il accompagne
-  // toujours un changement de tour, déjà journalisé (cf. onTurnChange), et
-  // la phase y est remise à 0 d'office (cf. useAssisted.js, watcher de
-  // `currentStep`, synchrone — d'où `phase` déjà à jour ici).
-  if (phase.value != null && phase.value !== before && phase.value > 0) {
+  // Journal : on enregistre le passage en Combat / Fin de tour, ET le
+  // passage Airborne -> Mouvement (entrée `phase`, rejouée par
+  // applyReplayEntry -> useAssisted.js::setPhase). Le retour en Mouvement
+  // (ou Airborne) après un changement de camp n'a pas besoin d'entrée
+  // propre : il accompagne toujours un changement de tour, déjà journalisé
+  // (cf. onTurnChange), et la phase de départ y est recalculée d'office (cf.
+  // useAssisted.js::startSidePhase, watcher de `currentStep`, synchrone —
+  // d'où `phase` déjà à jour ici).
+  const leftAirborne = before === PHASE_AIRBORNE && phase.value === 0
+  if (phase.value != null && phase.value !== before && (phase.value > 0 || leftAirborne)) {
     log('phase', `Phase : ${PHASE_NAMES[phase.value]}`, { phase: phase.value, step: turnInfo.value.step })
   }
 }
@@ -525,7 +535,18 @@ const selectedCounterId = ref(null)
 // attaquante.
 watch(phase, (p) => {
   if (p === 1) selectedCounterId.value = null
+  // Tout changement de phase désélectionne un renfort choisi dans le
+  // panneau : il n'est peut-être plus plaçable dans la nouvelle phase (cf.
+  // lib/useAssisted.js::canPlaceReinforcementNow — un aéroporté choisi en
+  // phase Airborne ne se pose plus en Mouvement).
+  selectedReinforcementId.value = null
 })
+
+// Lancement de la partie : phase de départ du camp actif — Airborne s'il a
+// des aéroportés à poser, sinon Mouvement (cf. lib/useAssisted.js::
+// startSidePhase). Au montage, et pas plus tôt : TurnTracker.vue (camp
+// actif, tour courant) doit déjà être monté.
+onMounted(() => initPhase())
 
 // Pions retirés de la carte via "Éliminé" (menu contextuel, cf.
 // onCounterContextMenu plus bas) — id -> true. Un pion éliminé n'est ni sur
@@ -739,6 +760,17 @@ function entryWouldStack(r, hex) {
   return hasFriendlyOccupant(r, h) && !canLeaveAfterReinforcementEntry(r, h, !r.setup.endsWith('+adj'))
 }
 
+// Atterrissage d'un AÉROPORTÉ (`setup` "+adj", cf. `entryHexSet`) : règle
+// "1 unité par hex" — interdit sur tout hex qui contient déjà une unité,
+// amie OU ennemie (plus strict que `entryWouldStack`, qui laisse un renfort
+// de bord de carte traverser l'hex d'un ami). Marqueurs (DZ...) et pions de
+// soutien ne comptent pas. Mode Assisté uniquement : en mode Libre, aucun
+// garde-fou.
+function airborneLandingBlocked(hex) {
+  if (!props.assisted) return false
+  return counters.value.some((c) => c.col === hex.col && c.row === hex.row && isUnit(c) && c.kind !== 'support')
+}
+
 // Hex de repli pour un `setup` "ref seule" (cf. `entryHexSet`) dont l'hex de
 // référence `ref` est bloqué (cf. `isEntryHexBlocked`) : parmi les hex de
 // bord voisins de `ref` (cf. `isEdgeHex` — généralement 2, celui "avant" et
@@ -771,9 +803,11 @@ function fallbackEntryHexes(r, ref) {
 //  1. "CCRR-CCRR" (plage bord-de-carte, ex. renforts allemands) : toute la
 //     plage déclarée (cf. enumerateSetupHexes), sauf les hex où le renfort
 //     resterait coincé avec un ami (cf. `entryWouldStack`) ;
-//  2. "CCRR+adj" (ex. chaque unité alliée près de sa DZ) : l'hex de
-//     référence ET ses 6 voisins (pas de blocage ennemi/ZOC à ce niveau —
-//     l'éventail est déjà large), même exception d'empilement qu'en 1 ;
+//  2. "CCRR+adj" (aéroporté, ex. chaque unité alliée près de sa DZ) : l'hex
+//     de référence ET ses 6 voisins, mais en mode Assisté UNIQUEMENT ceux
+//     qui ne contiennent AUCUNE unité, amie comme ennemie (règle "1 unité par
+//     hex" à l'atterrissage, cf. `airborneLandingBlocked`) — pas de blocage
+//     ZOC à ce niveau, l'éventail est déjà large ;
 //  3. "CCRR" seule (sans "-" ni "+adj") : UNIQUEMENT cet hex précis — SAUF
 //     s'il est bloqué (cf. `isEntryHexBlocked`), auquel cas seuls le(s) hex
 //     de repli valide(s) (cf. `fallbackEntryHexes`) sont proposés à la
@@ -789,7 +823,7 @@ const entryHexSet = computed(() => {
   const ref = parseHexId(r.setup) // tolère un éventuel suffixe "+adj" (ne lit que les 4 premiers caractères)
   if (r.setup.endsWith('+adj')) {
     const cells = [ref, ...neighborsOf(ref.col, ref.row).filter((n) => hexOnMap(n.col, n.row))]
-      .filter((h) => !entryWouldStack(r, h))
+      .filter((h) => !airborneLandingBlocked(h))
     return new Set(cells.map((h) => h.col + ',' + h.row))
   }
   const cells = isEntryHexBlocked(r, ref) ? fallbackEntryHexes(r, ref) : [ref]
@@ -894,6 +928,10 @@ function onCounterSelect(id) {
   if (replayLocked.value) return
   const c = counters.value.find((c) => String(c.id) === String(id))
   if (!c) return
+  // Phase Airborne : on ne fait que POSER des aéroportés, aucun pion déjà
+  // sur la carte ne se sélectionne ni ne bouge (cf. lib/useAssisted.js,
+  // section "Phase Airborne").
+  if (phase.value === PHASE_AIRBORNE) return
   // --- Phase Combat (mode Assisté) : le clic sur un pion compose un COMBAT
   // plutôt que de sélectionner/déplacer (cf. lib/useCombat.js) —
   //   1. c'est une unité ENNEMIE -> son hex est ajouté aux cibles (ouvrant
@@ -926,7 +964,9 @@ const selectedReinforcementId = ref(null)
 function onReinforcementSelect(id) {
   if (replayLocked.value) return
   const c = reinforcements.value.find((c) => String(c.id) === String(id))
-  if (!canControl(c) || !canEnterThisTurn(c)) return
+  // `canPlaceReinforcementNow` : en phase Airborne, seuls les aéroportés ;
+  // dans les autres phases, tout sauf eux (cf. lib/useAssisted.js).
+  if (!canControl(c) || !canEnterThisTurn(c) || !canPlaceReinforcementNow(c)) return
   // Désélection du pion en cours AVANT de choisir le renfort : refusée si ce
   // pion est en overstack (cf. setSelectedCounter), et le renfort n'est
   // alors pas sélectionné non plus.
@@ -1000,7 +1040,9 @@ const onHex = (h) => {
         // déjà sur la carte qui vient de se déplacer (cf. `setSelectedCounter`,
         // qui gère aussi le verrouillage d'un éventuel pion PRÉCÉDEMMENT
         // sélectionné ayant déjà bougé, cf. section "Verrouillage" plus haut).
-        setSelectedCounter(placed.id)
+        // SAUF en phase Airborne : on n'y déplace aucune unité, l'aéroporté
+        // posé reste donc désélectionné (cf. lib/useAssisted.js).
+        if (phase.value !== PHASE_AIRBORNE) setSelectedCounter(placed.id)
       }
       selectedReinforcementId.value = null
     }
@@ -1259,6 +1301,10 @@ function applyReplayEntry(entry) {
   if (!d) return
   if (entry.kind === 'move' || entry.kind === 'place') {
     applyRemoteMove(d.counterId, d.col, d.row)
+    // Journal enregistré AVANT l'ajout de la phase Airborne (pas d'entrée
+    // `phase` Airborne -> Mouvement) : un déplacement prouve qu'on était en
+    // Mouvement.
+    if (entry.kind === 'move' && phase.value === PHASE_AIRBORNE) setPhase(0)
     if (entry.kind === 'move') {
       const key = String(d.counterId)
       const start = turnStartPositions.get(key)
@@ -1390,7 +1436,7 @@ function onMapDragEnd() {
 
       <div v-if="module.turnTrack" class="turn-tracker-block">
         <TurnTracker ref="turnTrackerRef" :config="module.turnTrack" :sides="module.sides"
-          :initial-step="initialTurnStep" :disabled="replayLocked" :phase="phase" :phase-labels="phaseLabels" :next-label="nextLabel"
+          :initial-step="initialTurnStep" :disabled="replayLocked" :phase="phase" :phase-index="phaseIndex" :phase-labels="phaseLabels" :next-label="nextLabel"
           @turn="onTurnAdvance" @change="onTurnChange" @phase-next="onPhaseNext" />
 
         <SupportTracker ref="supportTrackerRef" :config="module.supportTrack" :turn="turnInfo.turn"
@@ -1412,7 +1458,7 @@ function onMapDragEnd() {
           @click="undoLastMove">
           ↩ Retour arrière
         </button>
-        <button type="button" class="toggle-btn" :class="{ active: !showRollModal }"
+        <button v-if="!assisted" type="button" class="toggle-btn" :class="{ active: !showRollModal }"
           @click="showRollModal = !showRollModal">
           {{ showRollModal ? 'Cacher le dé' : 'Afficher le dé' }}
         </button>
@@ -1534,6 +1580,7 @@ function onMapDragEnd() {
           :turn="turnInfo.turn" @loaded="onJournalLoaded" />
         <ReinforcementsPanel v-else :reinforcements="reinforcementsForTab(tab.key)"
           :selected-id="selectedReinforcementId" :current-turn="turnInfo.turn" :draggable="draggable"
+          :can-place="canPlaceReinforcementNow"
           @dragstart="onCounterDragStart" @select="onReinforcementSelect" />
       </template>
     </SidePanel>
@@ -1545,7 +1592,7 @@ function onMapDragEnd() {
          unité ennemie en phase Combat. Non bloquante : la carte reste
          cliquable pour y désigner les unités attaquantes. -->
     <CombatModal v-if="combatActive" :target-hexes="combatTargetHexLabels" :defenders="combatDefenders"
-      :attackers="combatAttackers" :can-resolve="combatCanResolve"
+      :attackers="combatAttackers" :can-resolve="combatCanResolve" :stranded-units="combatStrandedUnits"
       :attack-strength="attackStrength" :defense-strength="defenseStrength" :differential="differential"
       :terrain-row="combatTerrainRow" :column="combatColumn" :combat-result="combatResult"
       :crt-rows="crtRows" :crt-results="crtResults" @close="cancelCombat" @fight="onCombatFight" />
@@ -1563,7 +1610,8 @@ function onMapDragEnd() {
       stack-message="Cette unité partage son hex avec une unité amie. Déplacez-la (ou annulez son mouvement) avant de passer à une autre unité :"
       @close="unitStackBlock = null" />
 
-    <RollModal v-show="showRollModal" :disabled="replayLocked" @roll="onDiceRoll" />
+    <!-- Dé libre : mode Libre uniquement (cf. `showRollModal`). -->
+    <RollModal v-if="!assisted" v-show="showRollModal" :disabled="replayLocked" @roll="onDiceRoll" />
     <MovementChartModal v-if="movementChartSrc" v-show="showMovementChart" :src="movementChartSrc" />
     <CombatChartModal v-if="combatChartSrc" v-show="showCombatChart" :src="combatChartSrc" />
   </div>

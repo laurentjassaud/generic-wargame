@@ -23,13 +23,25 @@ const props = defineProps({
   // Cf. lib/useAssisted.js::draggable — faux en mode Assisté (clic
   // uniquement), vrai en mode Libre (glisser-déposer uniquement).
   draggable: { type: Boolean, default: true },
+  // Cf. lib/useAssisted.js::canPlaceReinforcementNow — le renfort peut-il
+  // être posé DANS LA PHASE EN COURS (phase Airborne : aéroportés
+  // seulement ; autres phases : tout sauf eux) ? Absent : aucune
+  // restriction de phase.
+  canPlace: { type: Function, default: null },
 })
 
 const emit = defineEmits(['dragstart', 'select'])
 
-/** Un renfort n'est jouable qu'à partir de son tour d'arrivée déclaré. */
+/** Un renfort n'est jouable qu'à partir de son tour d'arrivée déclaré, et
+ *  seulement dans une phase qui l'autorise (cf. prop `canPlace`). */
 function isAvailable(c) {
-  return (c.turn ?? 1) <= props.currentTurn
+  return (c.turn ?? 1) <= props.currentTurn && (props.canPlace?.(c) ?? true)
+}
+/** Info-bulle d'un renfort grisé : pourquoi il ne peut pas entrer en jeu. */
+function unavailableReason(c) {
+  if ((c.turn ?? 1) > props.currentTurn) return `Arrive au tour ${c.turn}`
+  if (props.canPlace && !props.canPlace(c)) return 'Ne peut pas entrer en jeu pendant cette phase'
+  return ''
 }
 function onDragStart(c, ev) {
   if (!isAvailable(c)) { ev.preventDefault(); return }
@@ -61,7 +73,7 @@ const groups = computed(() => {
         <figure v-for="c in g.items" :key="c.id" class="rf-piece">
           <img :src="c.src" :alt="c.name" width="48" height="48" :draggable="draggable && isAvailable(c)"
             :class="{ 'rf-selected': String(c.id) === String(selectedId), 'rf-unavailable': !isAvailable(c) }"
-            :title="isAvailable(c) ? '' : `Arrive au tour ${c.turn}`"
+            :title="unavailableReason(c)"
             @dragstart="onDragStart(c, $event)" @click="onSelect(c)" />
           <!-- Indication d'hex : pure information, pas de drag & drop (seule
                l'image ci-dessus déclenche dragstart/select). -->

@@ -55,6 +55,11 @@ const props = defineProps({
   // = comportement historique inchangé (pas de phases, bouton en bout de
   // 1re ligne).
   phase: { type: Number, default: null },
+  // Index du marqueur à allumer dans `phaseLabels` (cf.
+  // useAssisted.js::phaseIndex). Diffère de `phase` quand un marqueur
+  // "Airborne" précède "Mouvement" (phase -1 -> index 0). Absent : on
+  // retombe sur `phase`.
+  phaseIndex: { type: Number, default: null },
   // Libellés des marqueurs de la ligne "phases", dans l'ordre (cf.
   // useAssisted.js::phaseLabels — 2 entrées pour un camp normal, 3 pour le
   // dernier camp de l'ordre). Ignoré hors mode phases (`phase === null`).
@@ -159,7 +164,7 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
          prochain clic va faire — voir useAssisted.js pour le calcul. -->
     <div v-if="phase !== null" class="tt-row tt-row-phases">
       <div class="tt-phases">
-        <span v-for="(label, i) in phaseLabels" :key="label" class="tt-phase" :class="{ active: phase === i }">{{ label }}</span>
+        <span v-for="(label, i) in phaseLabels" :key="label" class="tt-phase" :class="{ active: (phaseIndex ?? phase) === i }">{{ label }}</span>
       </div>
       <!-- Pas de `nextTurn()` direct ici : on émet `phase-next` et on laisse
            useAssisted.js (via HexMap.vue) décider de l'effet réel du clic. -->

@@ -19,8 +19,13 @@ const props = defineProps({
   defenders: { type: Array, default: () => [] },
   // Pions attaquants désignés, dans l'ordre de sélection — cf. useCombat.js::attackers.
   attackers: { type: Array, default: () => [] },
-  // Le combat est-il résoluble (au moins un attaquant) ? — cf. useCombat.js::canResolve.
+  // Le combat est-il résoluble (au moins un attaquant, aucune unité
+  // orpheline) ? — cf. useCombat.js::canResolve.
   canResolve: { type: Boolean, default: false },
+  // Unités amies qui ne pourraient plus attaquer, et hex ennemis qui ne
+  // pourraient plus être attaqués, si ce combat avait lieu (`{ id, side,
+  // name, hex }`, `side` = 'friendly' | 'enemy') — cf. useCombat.js::strandedUnits.
+  strandedUnits: { type: Array, default: () => [] },
   attackStrength: { type: Number, default: 0 },
   defenseStrength: { type: Number, default: 0 },
   differential: { type: Number, default: 0 },
@@ -154,6 +159,19 @@ onUnmounted(() => {
       Cliquez sur une autre unité ennemie pour ajouter son hex au combat (chaque attaquant doit
       toucher tous les hex cibles), ou sur un hex cible pour le retirer.
     </p>
+
+    <!-- Règle de participation (cf. useCombat.js::strandedUnits) : ce combat
+         laisserait ces unités sans adversaire — "Combattre" reste grisé. -->
+    <div v-if="strandedUnits.length" class="cm-stranded">
+      <p>Combat impossible, il laisserait sans adversaire :</p>
+      <ul>
+        <li v-for="u in strandedUnits" :key="u.id">
+          <b>{{ u.name }}</b> ({{ u.hex }}) —
+          {{ u.side === 'friendly' ? 'ne pourrait plus attaquer personne' : 'ne pourrait plus être attaqué par personne' }}
+        </li>
+      </ul>
+      <p>Modifiez les attaquants ou les cibles.</p>
+    </div>
 
     <p class="cm-diff">
       Différentiel <b>{{ differential > 0 ? '+' + differential : differential }}</b>
@@ -350,6 +368,25 @@ onUnmounted(() => {
 .cm-total b {
   color: #e8c468;
   font-size: 1rem;
+}
+
+.cm-stranded {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border-left: 3px solid #e05a47;
+  background: rgba(224, 90, 71, 0.14);
+  color: #f3c2b8;
+  font-size: 0.74rem;
+}
+
+.cm-stranded p {
+  margin: 0;
+}
+
+.cm-stranded ul {
+  margin: 2px 0;
+  padding-left: 16px;
 }
 
 .cm-diff {

@@ -54,7 +54,11 @@
 //           renfort qui entre sur un hex de bord de carte (`setup` "ref
 //           seule" ou "plage", jamais "+adj") paie le coût de cet hex ; si un
 //           AUTRE renfort entre par ce MÊME hex ce MÊME tour, le coût
-//           double, triple, etc. — cf. `entryCost`/`spendEntryCost`.
+//           double, triple, etc. — cf. `entryCost`/`spendEntryCost`,
+//         - PHASE AIRBORNE (cf. section "Phase Airborne" plus bas) : un camp
+//           qui a des unités aéroportées à faire entrer en jeu (ce tour-ci
+//           ou restées des tours précédents) commence son tour par une
+//           phase dédiée à leur placement, AVANT le Mouvement.
 //
 // Une SEULE famille de règles du mode Assisté ne vit pas dans ce fichier :
 // le COMBAT (désignation d'un défenseur et de ses attaquants en phase
@@ -119,6 +123,12 @@
 //     uniquement à `canLeaveAfterEntering` (section "Empilement" plus bas)
 //     pour ignorer les voisins hors carte lors de la recherche d'une case de
 //     repli.
+//   - `getReinforcements` : fonction `() => [pions]` (cf.
+//     HexMap.vue::reinforcements) — renforts PAS ENCORE posés ni éliminés.
+//     Une FONCTION (et non la liste elle-même) parce que HexMap.vue la
+//     calcule APRÈS avoir appelé ce composable : elle n'est lue qu'au moment
+//     où on en a besoin (début du tour d'un camp, cf. `airbornePending`).
+//     Sert uniquement à la phase Airborne.
 import { computed, ref, watch } from 'vue'
 import { hexId } from './calibration.js'
 import { neighborsOf } from './hex.js'
@@ -161,7 +171,7 @@ const IMPASSABLE_FOR_VEHICLES = new Set(['rough', 'broken', 'woods'])
 // MP").
 const WATER_CROSSING_PENALTY = 3
 
-export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap) {
+export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap, getReinforcements) {
   // Arêtes route/piste/ruisseau/rivière/pont/bac du module, construites une
   // seule fois (cf. buildEdgeSet ci-dessus) — `terrain` ne change pas en
   // cours de partie, inutile de les reconstruire à chaque appel de
@@ -303,9 +313,83 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // ; ce composable ne fait QUE superposer une phase locale (0, 1 ou 2)
   // par-dessus ce pas.
 
-  // 0 = Mouvement (phase de départ), 1 = Combat, 2 = Fin de tour (dernier
-  // camp de l'ordre uniquement, cf. ci-dessus).
+  // 0 = Mouvement, 1 = Combat, 2 = Fin de tour (dernier camp de l'ordre
+  // uniquement, cf. ci-dessus), et PHASE_AIRBORNE (-1) = phase Airborne, qui
+  // PRÉCÈDE le Mouvement quand elle existe (cf. section suivante).
   const phaseStep = ref(0)
+
+  // --- Phase Airborne (avant le Mouvement) -----------------------------------
+  // Règle : si le camp actif a des unités AÉROPORTÉES à faire entrer en jeu
+  // — celles de CE tour, ou celles restées hors carte des tours précédents —
+  // son tour commence par une phase "Airborne", AVANT le Mouvement. Elle ne
+  // sert qu'à POSER ces unités sur la carte (par clic, sur leur DZ ou un hex
+  // voisin — `setup` "+adj", cf. HexMap.vue::entryHexSet) :
+  //   - on n'y déplace AUCUNE unité : un pion déjà posé ne peut pas être
+  //     sélectionné (cf. HexMap.vue::onCounterSelect) ;
+  //   - une unité posée n'est PAS sélectionnée ensuite (contrairement à un
+  //     renfort posé en phase Mouvement, qui l'est pour enchaîner sur son
+  //     mouvement, cf. HexMap.vue::onHex) ;
+  //   - un aéroporté n'atterrit que sur un hex VIDE de toute unité, amie ou
+  //     ennemie — 1 unité par hex (cf. HexMap.vue::airborneLandingBlocked) ;
+  //   - seuls les aéroportés y sont plaçables ; à l'inverse, un aéroporté ne
+  //     peut plus être posé dans les autres phases — ceux qui restent hors
+  //     carte attendent la phase Airborne du prochain tour de ce camp (cf.
+  //     `canPlaceReinforcementNow`).
+  // On passe au Mouvement par le bouton "suivant" (cf. `advance`), jamais
+  // automatiquement — même une fois tous les aéroportés posés. Aucun
+  // blocage : on peut passer au Mouvement en en laissant hors carte.
+  //
+  // Valeur NÉGATIVE (-1) plutôt que de décaler les autres phases : 0/1/2
+  // gardent ainsi le sens qu'elles ont partout ailleurs (lib/useCombat.js,
+  // HexMap.vue, entrées `phase` des journaux déjà enregistrés).
+  const PHASE_AIRBORNE = -1
+
+  // Vrai si le tour du camp actif a COMMENCÉ par une phase Airborne. Sert
+  // uniquement à l'affichage (cf. `phaseLabels`/`phaseIndex`) : le marqueur
+  // "Airborne" reste affiché (éteint) une fois passé au Mouvement.
+  const airborneThisStep = ref(false)
+
+  /** `c` est-il une unité AÉROPORTÉE ? Même critère que partout ailleurs
+   *  (cf. HexMap.vue::onHex, coût d'entrée) : son `setup` se termine par
+   *  "+adj" — il entre en jeu sur sa DZ ou l'un des 6 hex voisins. */
+  function isAirborne(c) {
+    return !!c?.setup?.endsWith('+adj')
+  }
+
+  /** Le camp actif a-t-il au moins un aéroporté à poser ? Il faut qu'il ne
+   *  soit ni sur la carte ni éliminé (cf. `getReinforcements`), qu'il soit à
+   *  ce camp (cf. `canControl`) et que son tour d'arrivée soit atteint (ce
+   *  tour-ci ou un tour précédent — `currentTurn` lu sur TurnTracker.vue, à
+   *  jour immédiatement, contrairement à HexMap.vue::turnInfo). Toujours
+   *  faux hors mode Assisté. */
+  function airbornePending() {
+    if (!assisted.value) return false
+    const turn = turnTrackerRef.value?.currentTurn ?? 1
+    return (getReinforcements?.() ?? []).some((c) => isAirborne(c) && canControl(c) && (c.turn ?? 1) <= turn)
+  }
+
+  /** Début du tour d'un camp : phase Airborne s'il a des aéroportés à poser
+   *  (cf. `airbornePending`), sinon directement Mouvement. Appelée :
+   *   - à chaque changement de camp/tour (watcher de `currentStep` plus bas) ;
+   *   - au lancement de la partie (cf. HexMap.vue, `onMounted` -> `initPhase`,
+   *     aucun changement de pas n'ayant alors eu lieu) ;
+   *   - au début d'un rejeu de journal (cf. `resetTurnState`).
+   *  Au rejeu, le résultat est le même qu'en jeu : à l'entrée `turn`, les
+   *  aéroportés posés PENDANT ce tour ne sont pas encore rejoués. */
+  function startSidePhase() {
+    phaseStep.value = airbornePending() ? PHASE_AIRBORNE : 0
+    airborneThisStep.value = phaseStep.value === PHASE_AIRBORNE
+  }
+
+  /** Le renfort `c` peut-il être posé DANS LA PHASE EN COURS ? En phase
+   *  Airborne, uniquement les aéroportés ; dans toute autre phase,
+   *  uniquement les NON aéroportés (cf. règle ci-dessus). Le tour d'arrivée
+   *  et le camp sont vérifiés à part (cf. HexMap.vue::canEnterThisTurn/
+   *  `canControl`). Toujours vrai hors mode Assisté. */
+  function canPlaceReinforcementNow(c) {
+    if (!assisted.value) return true
+    return phaseStep.value === PHASE_AIRBORNE ? isAirborne(c) : !isAirborne(c)
+  }
 
   // MP déjà dépensés ce tour-ci, par unité : Map id -> nombre de MP
   // consommés jusqu'ici. Déclaré ici (avant le watcher juste en dessous) car
@@ -330,7 +414,18 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     if (!assisted.value) return []
     const labels = ['Mouvement', 'Combat']
     if (turnTrackerRef.value?.isLastSideOfTurn) labels.push('Fin de tour')
+    // Tour commencé par une phase Airborne : son marqueur en tête.
+    if (airborneThisStep.value) labels.unshift('Airborne')
     return labels
+  })
+
+  // Index du marqueur ALLUMÉ dans `phaseLabels` (cf. TurnTracker.vue, prop
+  // `phaseIndex`) : égal à la phase, décalé de 1 quand le marqueur
+  // "Airborne" occupe la 1re place (-1 -> 0, 0 -> 1, 1 -> 2...). `null`
+  // hors mode Assisté.
+  const phaseIndex = computed(() => {
+    if (!assisted.value) return null
+    return phaseStep.value + (airborneThisStep.value ? 1 : 0)
   })
 
   // Dès que le camp/tour actif change — que ce soit via NOTRE propre appel
@@ -357,7 +452,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // APRÈS coup et aurait écrasé la phase et les MP que le rejeu venait tout
   // juste de rétablir (cf. `setPhase`/`setSpentMp` plus bas).
   watch(() => turnTrackerRef.value?.currentStep, () => {
-    phaseStep.value = 0
+    // Phase Airborne si le nouveau camp actif a des aéroportés à poser,
+    // sinon Mouvement (cf. `startSidePhase`).
+    startSidePhase()
     spentMp.value = new Map()
   }, { flush: 'sync' })
 
@@ -393,7 +490,8 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // TurnTracker.vue retombe alors sur son titre par défaut ("Tour suivant").
   const nextLabel = computed(() => {
     if (!assisted.value) return null
-    if (phaseStep.value === 0) return 'Nouvelle phase'
+    // Airborne -> Mouvement, ou Mouvement -> Combat : même camp, même tour.
+    if (phaseStep.value === PHASE_AIRBORNE || phaseStep.value === 0) return 'Nouvelle phase'
     if (phaseStep.value === 1) {
       // Dernier camp de l'ordre (German) : la Combat ne rend plus la main
       // directement au camp suivant, elle ouvre d'abord la Fin de tour
@@ -411,6 +509,12 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // (branché sur l'évènement `phase-next` émis par TurnTracker.vue — cf.
   // ce fichier, qui n'implémente pas lui-même cette décision).
   function advance() {
+    if (phaseStep.value === PHASE_AIRBORNE) {
+      // Fin de la phase Airborne : on passe au Mouvement du même camp — le
+      // pas courant de TurnTracker.vue ne bouge pas.
+      phaseStep.value = 0
+      return
+    }
     if (phaseStep.value === 0) {
       // Cas 1 : on ne fait QUE passer à la phase Combat du même camp — le
       // pas courant de TurnTracker.vue ne bouge pas.
@@ -972,13 +1076,15 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     spentMp.value = new Map(spentMp.value).set(String(id), value)
   }
 
-  /** Rejeu : repart de zéro (aucun MP dépensé, phase Mouvement) — appelé au
-   *  chargement d'un journal, avant de rejouer sa première ligne. */
+  /** Rejeu : repart de zéro (aucun MP dépensé, aucune congestion, phase de
+   *  départ du camp actif — Airborne ou Mouvement, cf. `startSidePhase`) —
+   *  appelé au chargement d'un journal, avant de rejouer sa première ligne
+   *  (pions déjà remis au déploiement initial par HexMap.vue). */
   function resetTurnState() {
-    phaseStep.value = 0
     spentMp.value = new Map()
     entryCounts.value = new Map()
     entryHexByUnit.value = new Map()
+    startSidePhase()
   }
 
   // --- Congestion des hex d'entrée de renfort ---------------------------------
@@ -1077,5 +1183,6 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     entryCounts.value = new Map(entryCounts.value).set(key, count)
   }
 
-  return { showGrid, selectable, draggable, canControl, phase, phaseLabels, nextLabel, advance, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, hasFriendlyOccupant, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, setPhase, setSpentMp, resetTurnState }
+  return { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
+    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, hasFriendlyOccupant, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, setPhase, setSpentMp, resetTurnState }
 }

@@ -35,7 +35,11 @@
 //      (CRT, cf. plus bas), puis un dé à 6 faces donne le résultat final.
 //      Il n'est actif qu'avec au moins un attaquant désigné (cf.
 //      `canResolve`) — la règle stricte garantit alors d'elle-même que
-//      chaque hex cible est bien au contact d'un attaquant.
+//      chaque hex cible est bien au contact d'un attaquant — ET si ce
+//      combat ne laisse rien d'"orphelin" : ni unité amie adjacente
+//      seulement à des ennemis déjà attaqués (elle ne pourrait plus
+//      attaquer), ni hex ennemi adjacent seulement à des unités amies ayant
+//      déjà combattu (il ne pourrait plus être attaqué) — cf. `strandedUnits`.
 //   5. Une fois le dé lancé, le combat est FIGÉ (plus d'ajout/retrait de
 //      cible ni d'attaquant) : toutes les unités PARTICIPANTES — attaquants
 //      ET défenseurs — ont "combattu" (cf. `foughtIds`). Elles apparaissent
@@ -276,7 +280,16 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  C'est la brique commune aux deux règles d'adjacence du combat : celle
    *  des CIBLES (`canTargetSet`) et celle des ATTAQUANTS (`canBeAttacker`). */
   function canAttackHex(c, t) {
-    if (!isFighter(c) || !canControl(c) || hasFought(c)) return false
+    return !hasFought(c) && canReachHex(c, t)
+  }
+
+  /** Même règle que `canAttackHex`, SANS la condition "n'a pas déjà
+   *  combattu" : "`c` serait-il géographiquement capable d'attaquer `t` ?".
+   *  Sert à `strandedUnits`, qui simule un état de combat qui n'existe pas
+   *  encore — la vérification "a combattu" s'y fait contre un ensemble
+   *  simulé, et non contre `foughtIds`. */
+  function canReachHex(c, t) {
+    if (!isFighter(c) || !canControl(c)) return false
     if (!isAdjacent(c, t)) return false
     return combatEdgeKind({ c: c.col, r: c.row }, { c: t.col, r: t.row }) !== 'river'
   }
@@ -407,6 +420,12 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  rendrait parfois la phase impossible à terminer. Ici, chaque paire
    *  listée peut toujours être soldée : l'unité amie attaque l'hex ennemi.
    *
+   *  Liste vide = les DEUX obligations de participation sont tenues (toute
+   *  unité amie au contact a attaqué, tout hex ennemi au contact a été
+   *  attaqué) : `strandedUnits` interdit en amont tout combat qui laisserait
+   *  une unité amie ou un hex ennemi sans plus aucun adversaire frais — ce
+   *  qui les ferait sortir de cette liste sans avoir combattu.
+   *
    *  Ne comptent pas : une paire séparée par une rivière sans pont (aucune
    *  attaque possible entre elles, cf. `canAttackHex`), les marqueurs et
    *  pions de soutien (cf. `isFighter`). Liste vide hors phase Combat.
@@ -431,10 +450,123 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     return list
   })
 
-  /** Le combat peut-il être résolu ? Il suffit d'au moins un attaquant : la
+  /** UNITÉS ORPHELINES — règle de PARTICIPATION, à DOUBLE obligation :
+   *   (A) toute unité du camp actif adjacente à un ennemi DOIT attaquer ;
+   *   (B) tout hex ennemi adjacent à une unité du camp actif DOIT être
+   *       attaqué ;
+   *  … sachant qu'un hex ne peut être attaqué qu'UNE fois et qu'une unité
+   *  n'attaque qu'UNE fois. Un combat est donc interdit s'il rend l'une de
+   *  ces obligations IMPOSSIBLE à tenir plus tard :
+   *   - une unité AMIE qui n'aurait plus aucun hex ennemi frais à son
+   *     contact (elle ne pourrait plus attaquer personne) ;
+   *   - un hex ENNEMI qui n'aurait plus aucune unité amie fraîche à son
+   *     contact (il ne pourrait plus être attaqué par personne).
+   *
+   *  Exemple (A) (Nijmegen) : 1/508 et 2/508 sont tous deux au contact de
+   *  BrDf, et 1/508 ne touche AUCUN autre ennemi. Si 2/508 attaque BrDf
+   *  SEUL, BrDf a combattu -> 1/508 n'a plus personne à attaquer. Ce combat
+   *  est refusé tant que 1/508 n'est pas ajouté aux attaquants.
+   *
+   *  Exemple (B) : l'unité amie X touche les hex ennemis E1 et E2, l'unité
+   *  amie Y ne touche que E1, et personne d'autre ne touche E2. Si X et Y
+   *  attaquent E1 ENSEMBLE, X a combattu -> E2 n'a plus aucun attaquant
+   *  possible. Refusé : il faut que Y attaque E1 seule et X attaque E2 (ou
+   *  que X attaque E1+E2 à la fois, mais Y ne pourrait alors pas se joindre
+   *  à elle — règle stricte — et Y serait alors orpheline côté (A)).
+   *
+   *  Algorithme — une SIMULATION locale du combat en cours, avant le dé :
+   *   1. `after` = unités ayant combattu APRÈS ce combat : celles de
+   *      `foughtIds` + les attaquants + les défenseurs désignés.
+   *   2. Côté AMI : pour chaque unité amie `f` hors de `after` (elle devra
+   *      donc attaquer plus tard), on liste les ennemis qu'elle peut
+   *      atteindre (adjacents, pas de rivière sans pont — cf. `canReachHex`).
+   *      `f` est ORPHELINE si l'un d'eux est encore frais AUJOURD'HUI (hors
+   *      `foughtIds`) — elle a donc bien une obligation — mais AUCUN ne
+   *      l'est plus APRÈS ce combat (tous dans `after`).
+   *   3. Côté ENNEMI, même raisonnement mais par HEX (on attaque un hex, pas
+   *      un pion : tous ses occupants défendent ensemble). Pour chaque hex
+   *      ennemi qui reste frais après ce combat (aucun de ses occupants dans
+   *      `after`), on liste les unités amies qui peuvent l'atteindre. L'hex
+   *      est ORPHELIN si l'une d'elles est fraîche AUJOURD'HUI mais AUCUNE
+   *      ne l'est plus APRÈS ce combat.
+   *   Dans les deux cas, le "frais aujourd'hui" évite de reprocher à ce
+   *   combat-ci une situation qu'il n'a pas créée (unité ou hex sans aucun
+   *   voisin adverse, ou déjà orphelin dans une partie rejouée).
+   *
+   *  Pourquoi ce test LOCAL suffit (il n'est pas qu'une approximation) :
+   *  on regarde le graphe "qui peut attaquer qui" restant APRÈS ce combat —
+   *  unités amies fraîches d'un côté, hex ennemis frais de l'autre, un lien
+   *  entre une unité et un hex qu'elle peut atteindre. Sans orpheline, AUCUN
+   *  sommet de ce graphe n'est isolé (chaque unité a au moins un hex, chaque
+   *  hex au moins une unité). Or tout graphe sans sommet isolé se découpe en
+   *  ÉTOILES disjointes qui couvrent tous ses sommets (prendre un
+   *  "recouvrement par arêtes" MINIMAL : il ne contient ni cycle ni chemin de
+   *  3 arêtes — l'arête du milieu serait superflue — donc chaque morceau est
+   *  une étoile). Et chaque étoile est un combat LÉGAL :
+   *   - centre = un hex, branches = des unités -> ces unités attaquent cet
+   *     hex ensemble ;
+   *   - centre = une unité, branches = des hex -> cette unité attaque seule
+   *     tous ces hex à la fois (elle est au contact de chacun : règle
+   *     stricte respectée).
+   *  Chaque unité amie attaque une fois, chaque hex est attaqué une fois :
+   *  les deux obligations sont tenues. Inutile donc d'explorer toutes les
+   *  combinaisons de combats futurs : vérifier chaque unité et chaque hex
+   *  isolément garantit que la phase pourra toujours être menée à son terme.
+   *
+   *  Liste vide tant que le combat n'est pas prêt (aucun attaquant) ou déjà
+   *  résolu. Chaque entrée : `{ id, side, name, hex }` — `side` vaut
+   *  'friendly' (unité amie qui ne pourrait plus attaquer) ou 'enemy' (hex
+   *  ennemi qui ne pourrait plus être attaqué ; `name` liste alors ses
+   *  occupants), `hex` est le numéro d'hex imprimé — pour la modale. */
+  const strandedUnits = computed(() => {
+    if (!combatActive.value || attackers.value.length === 0 || result.value) return []
+    const now = foughtIds.value
+    const after = new Set([
+      ...now,
+      ...attackers.value.map((a) => a.id),
+      ...defenders.value.map((d) => d.id),
+    ])
+    const friendlies = counters.value.filter((f) => isFighter(f) && canControl(f))
+    const enemies = counters.value.filter((e) => isFighter(e) && !canControl(e))
+    const list = []
+
+    // (A) Côté AMI : chaque unité qui devra encore attaquer.
+    for (const f of friendlies) {
+      if (after.has(f.id)) continue
+      const reachable = enemies.filter((e) => canReachHex(f, e))
+      const freshNow = reachable.some((e) => !now.has(e.id))
+      const freshAfter = reachable.some((e) => !after.has(e.id))
+      if (freshNow && !freshAfter) list.push({ id: f.id, side: 'friendly', name: f.name, hex: hexId(f.col + 1, f.row) })
+    }
+
+    // (B) Côté ENNEMI : chaque hex qui devra encore être attaqué. On regroupe
+    // d'abord les ennemis par hex, puis on écarte les hex dont un occupant a
+    // (ou aura, avec ce combat) déjà combattu : ils sont "soldés".
+    const byHex = new Map()
+    for (const e of enemies) {
+      const key = keyOf(e.col, e.row)
+      if (!byHex.has(key)) byHex.set(key, [])
+      byHex.get(key).push(e)
+    }
+    for (const [key, units] of byHex) {
+      if (units.some((e) => after.has(e.id))) continue
+      const t = units[0] // tous au même hex : n'importe lequel donne sa position
+      const reachers = friendlies.filter((f) => canReachHex(f, t))
+      const freshNow = reachers.some((f) => !now.has(f.id))
+      const freshAfter = reachers.some((f) => !after.has(f.id))
+      if (freshNow && !freshAfter) {
+        list.push({ id: `hex:${key}`, side: 'enemy', name: units.map((e) => e.name).join(', '), hex: hexId(t.col + 1, t.row) })
+      }
+    }
+    return list
+  })
+
+  /** Le combat peut-il être résolu ? Il faut au moins un attaquant — la
    *  règle stricte (cf. `canBeAttacker`/`pruneAttackers`) garantit que tout
-   *  attaquant désigné touche CHAQUE hex cible. */
-  const canResolve = computed(() => combatActive.value && attackers.value.length > 0)
+   *  attaquant désigné touche CHAQUE hex cible — et aucune unité orpheline
+   *  (cf. `strandedUnits`). */
+  const canResolve = computed(() =>
+    combatActive.value && attackers.value.length > 0 && strandedUnits.value.length === 0)
 
   /** Ligne de la table pour UN hex cible `t`, et pourquoi :
    *   - si TOUS les attaquants au contact de cet hex franchissent un hexside
@@ -550,7 +682,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     combatActive, combatAllowed, targetHexLabels, defenders, attackers, canBeTarget, canBeAttacker,
     toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought, pendingEngagements,
     isCombatTargetHex, isCombatAttackerHex,
-    attackStrength, defenseStrength, differential, canResolve, terrainRow, column,
+    attackStrength, defenseStrength, differential, canResolve, strandedUnits, terrainRow, column,
     resolveCombat, combatResult: result,
     crtRows, crtResults: CRT_RESULTS,
   }
