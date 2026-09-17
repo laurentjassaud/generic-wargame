@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getGame } from '../lib/api.js'
 import { getSocket } from '../lib/socket.js'
 import HexMap from '../components/HexMap.vue'
+import { resolveSettings, describeSettings } from '../lib/gameSettings.js'
 
 const props = defineProps({ id: { type: String, required: true } })
 
@@ -21,6 +22,29 @@ const joinError = ref('')
 const joining = ref(false)
 
 const form = ref({ name: '', side: '', passcode: '' })
+// Camp du joueur sur CE navigateur (cf. doJoin) — HexMap.vue n'affiche
+// l'alerte "Temps imparti terminé" qu'au joueur dont c'est le tour.
+const mySide = ref('')
+// Journal partagé reçu en (re)joignant la partie (cf. HexMap.vue, prop
+// `initialJournal`).
+const sharedJournal = ref([])
+
+// Réglages choisis à la création (cf. CreateGame.vue) : mêmes règles que la
+// partie en local (DemoPlay.vue) — le mode "Assisté" active les garde-fous.
+const settings = computed(() => resolveSettings(gameSummary.value?.settings))
+const settingsInfo = computed(() => describeSettings(settings.value))
+const isAssistedParty = computed(() => settings.value.party === 'assiste')
+
+// Un journal joué avec d'autres réglages ne peut pas être repris ici : les
+// réglages d'une partie en ligne sont fixés pour tous les joueurs.
+const replayWarning = ref('')
+function onRestartWith() {
+  replayWarning.value = "Cette sauvegarde a été jouée avec d'autres réglages que cette partie en ligne : impossible de la reprendre ici."
+}
+
+// Libellé lisible d'un camp (ex. "german" -> "Allemands", cf. module
+// turnTrack.sides) ; à défaut, la clé du camp telle quelle.
+const sideLabel = (side) => moduleData.value?.turnTrack?.sides?.[side]?.label ?? side
 
 const takenSides = computed(() => new Set((room.value?.players ?? gameSummary.value?.players ?? []).map((player) => player.side)))
 const availableSides = computed(() => sides.value.filter((side) => !takenSides.value.has(side)))
@@ -77,6 +101,18 @@ function attachSocketListeners() {
   socket.on('game:turn', ({ turnStep }) => {
     hexMapRef.value?.applyRemoteTurn(turnStep)
   })
+  socket.on('game:phase', ({ phase, step, blitzUsed }) => {
+    hexMapRef.value?.applyRemotePhase(phase, step, blitzUsed)
+  })
+  socket.on('game:over', ({ loser }) => {
+    hexMapRef.value?.applyRemoteGameOver(loser)
+  })
+  socket.on('game:log', ({ entry }) => {
+    hexMapRef.value?.applyRemoteEntry(entry)
+  })
+  socket.on('game:unlog', ({ uid }) => {
+    hexMapRef.value?.removeRemoteEntry(uid)
+  })
   socket.on('connect', () => {
     // Reconnexion (auto par socket.io après coupure réseau) : on rejoint à
     // nouveau avec les mêmes identifiants pour que le serveur nous remarque
@@ -95,6 +131,12 @@ function doJoin({ passcode, name, side, playerId }, silent = false) {
       if (ack.ok) {
         room.value = ack.room
         joined.value = true
+        mySide.value = side
+        // Plateau déjà affiché (reconnexion) : on rattrape les entrées du
+        // journal manquées pendant la coupure. Sinon, le journal sera
+        // rejoué au montage du plateau.
+        if (hexMapRef.value) hexMapRef.value.syncJournal(ack.journal)
+        else sharedJournal.value = ack.journal ?? []
         localStorage.setItem(storageKey, JSON.stringify({ passcode, name, side, playerId: ack.playerId }))
       } else if (!silent) {
         joinError.value = ERROR_MESSAGES[ack.error] ?? ack.error
@@ -110,6 +152,30 @@ async function submitJoin() {
 
 function onLocalMove({ counterId, col, row }) {
   getSocket().emit('game:move', { gameId: props.id, counterId, col, row })
+}
+
+function onLocalPhase({ phase, step, blitzUsed }) {
+  getSocket().emit('game:phase', { gameId: props.id, phase, step, blitzUsed })
+}
+
+function onLocalGameOver({ loser, text, t }) {
+  getSocket().emit('game:over', { gameId: props.id, loser, text, t })
+}
+
+function onLocalLog(entry) {
+  getSocket().emit('game:log', { gameId: props.id, entry })
+}
+
+function onLocalUnlog(uid) {
+  getSocket().emit('game:unlog', { gameId: props.id, uid })
+}
+
+// Déploiement initial proposé par le plateau : celui que le serveur retient
+// (le premier proposé par l'un des joueurs) est appliqué ici.
+function onDeploy(entry) {
+  getSocket().emit('game:deploy', { gameId: props.id, entry }, (ack) => {
+    if (ack?.entry) hexMapRef.value?.applyRemoteEntry(ack.entry)
+  })
 }
 
 function onLocalTurn() {
@@ -139,6 +205,10 @@ onUnmounted(() => {
   socket.off('room:started')
   socket.off('game:move')
   socket.off('game:turn')
+  socket.off('game:phase')
+  socket.off('game:over')
+  socket.off('game:log')
+  socket.off('game:unlog')
   socket.off('connect')
 })
 </script>
@@ -152,7 +222,13 @@ onUnmounted(() => {
       <p v-else-if="loadError" class="error">{{ loadError }}</p>
 
       <template v-else>
-        <h1>{{ gameSummary.moduleId }} — {{ gameSummary.scenarioId }}</h1>
+        <h1>{{ gameSummary.moduleId }} — {{ settingsInfo.scenario }}</h1>
+        <p class="setup-summary">
+          Scénario : {{ settingsInfo.scenario }}<span v-if="settingsInfo.weather"> · Météo activée</span>
+          · Partie {{ settingsInfo.party }} · Timing {{ settingsInfo.timing
+          }}<span v-if="settingsInfo.timingValue"> ({{ settingsInfo.timingValue }} min)</span>
+        </p>
+        <p v-if="replayWarning" class="error">{{ replayWarning }}</p>
 
         <form v-if="!joined" class="join-form" @submit.prevent="submitJoin">
           <label>
@@ -163,7 +239,7 @@ onUnmounted(() => {
             Camp
             <select v-model="form.side" required>
               <option v-for="side in sides" :key="side" :value="side" :disabled="takenSides.has(side)">
-                {{ side }}{{ takenSides.has(side) ? ' (pris)' : '' }}
+                {{ sideLabel(side) }}{{ takenSides.has(side) ? ' (pris)' : '' }}
               </option>
             </select>
           </label>
@@ -182,9 +258,14 @@ onUnmounted(() => {
           <p v-else class="status started">La partie est lancée !</p>
 
           <ul class="players">
-            <li v-for="player in room.players" :key="player.id">
-              <strong>{{ player.name }}</strong> — {{ player.side }}
-              <span :class="['dot', player.connected ? 'online' : 'offline']" />
+            <li v-for="player in room.players" :key="player.id" :class="{ me: player.side === mySide }">
+              <strong>{{ player.name }}</strong>
+              <span class="side">{{ sideLabel(player.side) }}</span>
+              <span v-if="player.side === mySide" class="you">(vous)</span>
+              <span class="presence" :class="player.connected ? 'online' : 'offline'">
+                <span class="dot" />
+                {{ player.connected ? 'en ligne' : 'hors ligne' }}
+              </span>
             </li>
           </ul>
         </div>
@@ -199,8 +280,23 @@ onUnmounted(() => {
       :module-id="gameSummary.moduleId"
       :initial-positions="room.boardState"
       :initial-turn-step="room.turnStep ?? 0"
+      :initial-phase="room.phase ?? null"
+      :initial-phase-elapsed-ms="room.phaseElapsedMs ?? 0"
+      :initial-blitz-used-ms="room.blitzUsedMs ?? {}"
+      :initial-blitz-loser="room.blitzLoser ?? null"
+      :local-side="mySide"
+      online
+      :initial-journal="sharedJournal"
+      :assisted="isAssistedParty"
+      :settings="settings"
       @move="onLocalMove"
       @turn="onLocalTurn"
+      @phase="onLocalPhase"
+      @game-over="onLocalGameOver"
+      @log="onLocalLog"
+      @unlog="onLocalUnlog"
+      @deploy="onDeploy"
+      @restart-with="onRestartWith"
     />
   </div>
 </template>
@@ -215,6 +311,10 @@ onUnmounted(() => {
 }
 .board {
   margin-top: 24px;
+}
+.setup-summary {
+  color: #444;
+  font-size: 0.9em;
 }
 .back-link {
   color: #2563eb;
@@ -282,16 +382,39 @@ onUnmounted(() => {
   border-radius: 6px;
   padding: 8px 12px;
 }
+.players li.me {
+  border-color: #2563eb;
+}
+.side {
+  color: #444;
+}
+.you {
+  color: #2563eb;
+  font-size: 0.85em;
+}
+.presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+.presence.online {
+  color: #047857;
+}
+.presence.offline {
+  color: #6b7280;
+}
 .dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  margin-left: auto;
 }
-.dot.online {
+.presence.online .dot {
   background: #10b981;
 }
-.dot.offline {
+.presence.offline .dot {
   background: #d1d5db;
 }
 </style>

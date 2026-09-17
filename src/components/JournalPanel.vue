@@ -25,6 +25,12 @@ const props = defineProps({
   // sont pas connus (partie multijoueur). Enregistrés avec le journal : il
   // ne se rejoue correctement qu'avec eux.
   settings: { type: Object, default: null },
+  // Partie en ligne : journal PARTAGÉ entre les joueurs et conservé par le
+  // serveur (cf. HexMap.vue::log / applyRemoteEntry). Pas de sauvegarde
+  // auto ni de reprise (elles appartiennent aux parties locales), ni de
+  // chargement de fichier ou de "Vider le journal" (le journal ne serait
+  // plus le même que celui des autres joueurs). L'export reste possible.
+  shared: { type: Boolean, default: false },
 })
 
 // `loaded` : journal à rejouer sur la carte (cf. HexMap.vue::onJournalLoaded).
@@ -71,13 +77,39 @@ const displayEntries = computed(() => (order.value === 'asc' ? [...entries.value
  *  toucher aux entrées ajoutées entre-temps (ex. un changement de tour).
  *  `data` (optionnel) porte tout ce qu'il faut pour rejouer l'action sur la
  *  carte (cf. HexMap.vue::applyReplayEntry) — pas juste le texte affiché. */
-function log(kind, text, data) {
+function log(kind, text, data, uid) {
   const id = nextId++
   // Pas de limite de taille : le journal SERT de sauvegarde, le rejeu part du
   // déploiement initial et a besoin de TOUTES les entrées (une limite qui
   // supprimait les plus anciennes faisait rejouer la partie de travers).
-  entries.value.unshift({ id, t: new Date().toLocaleTimeString('fr-FR'), kind, text, data })
+  // `uid` : identifiant commun à tous les joueurs (journal partagé
+  // uniquement, cf. `shared`) — absent en partie locale.
+  entries.value.unshift({ id, t: new Date().toLocaleTimeString('fr-FR'), kind, text, data, ...(uid ? { uid } : {}) })
   return id
+}
+function getEntry(id) {
+  return entries.value.find((entry) => entry.id === id) ?? null
+}
+
+// --- Journal partagé (partie en ligne, cf. `shared`).
+
+/** Ajoute une entrée reçue d'un autre joueur. Renvoie `false` si elle est
+ *  déjà présente (même `uid`) — elle ne doit alors pas être réappliquée. */
+function appendRemote(entry) {
+  if (entry.uid && entries.value.some((existing) => existing.uid === entry.uid)) return false
+  entries.value.unshift({ id: nextId++, t: entry.t, kind: entry.kind, text: entry.text, data: entry.data, uid: entry.uid })
+  return true
+}
+function removeByUid(uid) {
+  const entryIndex = entries.value.findIndex((entry) => entry.uid === uid)
+  if (entryIndex !== -1) entries.value.splice(entryIndex, 1)
+}
+/** Journal partagé déjà enregistré par le serveur : rejoué comme un journal
+ *  chargé (cf. `loaded`), sans modale de confirmation. */
+function loadShared(list) {
+  entries.value = []
+  replayTail = [...list]
+  emit('loaded', list)
 }
 function clear() {
   entries.value = []
@@ -146,6 +178,7 @@ function autosaveNow() {
 // Débounce léger : un tour qui change peut journaliser plusieurs lignes
 // coup sur coup (ex. régénération du soutien) — un seul write suffit.
 watch(entries, () => {
+  if (props.shared) return
   clearTimeout(autosaveTimer)
   autosaveTimer = setTimeout(autosaveNow, 300)
 }, { deep: true })
@@ -162,7 +195,7 @@ const pendingAutosave = ref(null) // { label, savedAt, settings, entries } | nul
 onMounted(() => {
   // Partie relancée pour reprendre un journal (cf. `resumePending`) : la
   // reprise est déjà décidée, inutile de proposer l'auto-save.
-  if (hasPendingReplay()) return
+  if (hasPendingReplay() || props.shared) return
   try {
     const raw = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) ?? 'null')
     if (raw?.entries?.length && raw.label?.startsWith(slugify(props.moduleId) + '_')) {
@@ -272,10 +305,11 @@ function revealEntry(entry) {
   // HexMap.vue rejoue dans l'ordre : l'entrée révélée est la tête de
   // `replayTail`, qui passe donc dans `entries`.
   replayTail.shift()
-  entries.value.unshift({ id: nextId++, t: entry.t, kind: entry.kind, text: entry.text, data: entry.data })
+  entries.value.unshift({ id: nextId++, t: entry.t, kind: entry.kind, text: entry.text, data: entry.data,
+    ...(entry.uid ? { uid: entry.uid } : {}) })
 }
 
-defineExpose({ log, clear, remove, revealEntry, resumePending })
+defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendRemote, removeByUid, loadShared })
 </script>
 
 <template>
@@ -287,11 +321,12 @@ defineExpose({ log, clear, remove, revealEntry, resumePending })
       </div>
       <div class="jn-io">
         <button class="jn-btn" @click="exportJournal" :disabled="!entries.length">Enregistrer (JSON)</button>
-        <button class="jn-btn" @click="triggerImport">Charger un journal</button>
-        <input ref="fileInput" type="file" accept="application/json,.json" class="jn-file-input"
+        <button v-if="!shared" class="jn-btn" @click="triggerImport">Charger un journal</button>
+        <input v-if="!shared" ref="fileInput" type="file" accept="application/json,.json" class="jn-file-input"
           @change="onFileChosen">
       </div>
       <p v-if="lastAutosaveLabel" class="jn-autosave">Sauvegarde auto : {{ lastAutosaveLabel }}</p>
+      <p v-if="shared" class="jn-autosave">Journal partagé entre les joueurs, enregistré sur le serveur.</p>
     </div>
 
     <div v-if="pendingAutosave" class="jn-resume">
@@ -309,7 +344,7 @@ defineExpose({ log, clear, remove, revealEntry, resumePending })
     <div v-for="entry in displayEntries" :key="entry.id" class="jn-row" :class="'jn-' + entry.kind">
       <span class="jn-t">{{ entry.t }}</span><span class="jn-txt">{{ entry.text }}</span>
     </div>
-    <button v-if="entries.length" class="jn-clear" @click="clear">Vider le journal</button>
+    <button v-if="entries.length && !shared" class="jn-clear" @click="clear">Vider le journal</button>
 
     <div v-if="loadResult" class="jn-modal-backdrop">
       <div class="jn-modal" :class="'jn-modal-' + loadResult.type" role="alertdialog" aria-modal="true">

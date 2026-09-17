@@ -12,10 +12,10 @@ async function request(path, options) {
   return res.json()
 }
 
-export function createGame({ moduleId, scenarioId, variants, maxPlayers }) {
+export function createGame({ moduleId, scenarioId, variants, settings, maxPlayers }) {
   return request('/api/games', {
     method: 'POST',
-    body: JSON.stringify({ moduleId, scenarioId, variants, maxPlayers }),
+    body: JSON.stringify({ moduleId, scenarioId, variants, settings, maxPlayers }),
   })
 }
 

@@ -4,7 +4,7 @@ import { createGame, listGames, getGame, toSummary, toPublic } from '../rooms.js
 export const gamesRouter = Router()
 
 gamesRouter.post('/', (req, res) => {
-  const { moduleId, scenarioId, variants, maxPlayers } = req.body ?? {}
+  const { moduleId, scenarioId, variants, settings, maxPlayers } = req.body ?? {}
 
   if (typeof moduleId !== 'string' || !moduleId) {
     return res.status(400).json({ error: 'moduleId is required' })
@@ -16,7 +16,7 @@ gamesRouter.post('/', (req, res) => {
     return res.status(400).json({ error: 'maxPlayers must be an integer between 1 and 8' })
   }
 
-  const game = createGame({ moduleId, scenarioId, variants, maxPlayers })
+  const game = createGame({ moduleId, scenarioId, variants, settings, maxPlayers })
 
   // Passcode is only ever returned here, right after creation, so the
   // creator can share it with the other players.

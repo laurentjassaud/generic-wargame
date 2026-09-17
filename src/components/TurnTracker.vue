@@ -44,9 +44,11 @@ const props = defineProps({
   // Pas courant déjà en cours (partie multijoueur reprise en route). Absent
   // (0) en solo/démo.
   initialStep: { type: Number, default: 0 },
-  // Vrai pendant un rejeu de journal (cf. HexMap.vue::replayLocked) — bloque
-  // le bouton "tour suivant", le pas courant n'avance alors que via
-  // applyRemoteTurn (piloté par le lecteur de rejeu).
+  // Vrai pendant un rejeu de journal (cf. HexMap.vue::replayLocked), ou, en
+  // ligne, quand ce n'est pas au joueur de ce navigateur de jouer (cf.
+  // HexMap.vue::isLocalTurn) — bloque le bouton "tour suivant"/"phase
+  // suivante", le pas courant n'avance alors que via applyRemoteTurn (piloté
+  // par le lecteur de rejeu ou par le serveur).
   disabled: { type: Boolean, default: false },
   // Phase active (index dans `phaseLabels` ci-dessous : 0 = Mouvement,
   // 1 = Combat, 2 = Fin de tour pour le dernier camp de l'ordre), ou `null`

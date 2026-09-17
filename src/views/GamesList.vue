@@ -2,6 +2,9 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { listGames } from '../lib/api.js'
+import { resolveSettings, describeSettings } from '../lib/gameSettings.js'
+
+const infoOf = (game) => describeSettings(resolveSettings(game.settings ?? { scenario: game.scenarioId }))
 
 const route = useRoute()
 const games = ref([])
@@ -51,9 +54,14 @@ onMounted(refresh)
     <ul v-if="!loading && games.length" class="cards">
       <li v-for="game in games" :key="game.id">
         <router-link :to="{ name: 'room-lobby', params: { id: game.id } }" class="card">
-          <div class="card-title">{{ game.moduleId }} — {{ game.scenarioId }}</div>
+          <div class="card-title">{{ game.moduleId }} — {{ infoOf(game).scenario }}</div>
           <div class="card-meta">
             {{ game.playerCount }} / {{ game.maxPlayers }} joueurs · {{ game.status }}
+          </div>
+          <div class="card-variants">
+            Partie {{ infoOf(game).party }} · Timing {{ infoOf(game).timing
+            }}<template v-if="infoOf(game).timingValue"> ({{ infoOf(game).timingValue }} min)</template><template
+              v-if="infoOf(game).weather"> · Météo</template>
           </div>
           <div v-if="game.variants.length" class="card-variants">
             Variantes : {{ game.variants.join(', ') }}

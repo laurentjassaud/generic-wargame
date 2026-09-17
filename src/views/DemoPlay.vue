@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import HexMap from '../components/HexMap.vue'
 import { stashPendingReplay } from '../lib/journalStorage.js'
+import { resolveSettings, describeSettings } from '../lib/gameSettings.js'
 
 // Chargement direct d'un module en local, sans passer par le lobby
 // multijoueur — pratique pour tester le moteur de jeu (HexMap) seul.
@@ -14,31 +15,15 @@ const router = useRouter()
 const module = ref(null)
 const moduleId = ref('')
 
-const scenarioLabels = { historique: 'Historique', 'placement-libre': 'Placement libre' }
-const partyLabels = { libre: 'Libre', assiste: 'Assisté' }
-const timingLabels = { libre: 'Libre', limite: 'Limité', blitz: 'Blitz' }
-
 // Réglages de la partie, lus dans l'URL. COMPUTED (et non figés au
 // chargement) : reprendre une sauvegarde faite avec d'autres réglages
 // change l'URL sans recréer cette page (cf. `restartWith`).
-const settings = computed(() => ({
-  scenario: route.query.scenario || 'historique',
-  weather: route.query.weather === '1' ? '1' : '0',
-  party: route.query.party || 'libre',
-  timing: route.query.timing || 'libre',
-  timingValue: route.query.timingValue || '',
-}))
-
-const scenarioLabel = computed(() => scenarioLabels[settings.value.scenario] ?? scenarioLabels.historique)
-const hasWeather = computed(() => settings.value.weather === '1')
-const partyLabel = computed(() => partyLabels[settings.value.party] ?? partyLabels.libre)
+const settings = computed(() => resolveSettings(route.query))
+const settingsInfo = computed(() => describeSettings(settings.value))
 // "Assisté" est le seul mode qui active les garde-fous (grille, sélection au
 // clic, restriction de tour — cf. lib/useAssisted.js) ; toute autre valeur
-// (dont l'absence, cf. fallback de partyLabel ci-dessus) reste "Libre", le
-// comportement par défaut de HexMap.vue.
+// (dont l'absence) reste "Libre", le comportement par défaut de HexMap.vue.
 const isAssistedParty = computed(() => settings.value.party === 'assiste')
-const timingLabel = computed(() => timingLabels[settings.value.timing] ?? timingLabels.libre)
-const timingValue = computed(() => settings.value.timingValue)
 
 // Clé de la carte : change avec les réglages, ce qui la REMONTE à neuf —
 // une partie ne change jamais de mode en cours de route (les règles du mode
@@ -76,9 +61,9 @@ onMounted(async () => {
 <template>
   <div class="app">
     <p v-if="module" class="setup-banner">
-      Scénario : {{ scenarioLabel }}<span v-if="hasWeather"> · Météo activée</span>
-      · Partie {{ partyLabel }} · Timing {{ timingLabel
-      }}<span v-if="timingValue"> ({{ timingValue }} min)</span>
+      Scénario : {{ settingsInfo.scenario }}<span v-if="settingsInfo.weather"> · Météo activée</span>
+      · Partie {{ settingsInfo.party }} · Timing {{ settingsInfo.timing
+      }}<span v-if="settingsInfo.timingValue"> ({{ settingsInfo.timingValue }} min)</span>
     </p>
     <HexMap v-if="module" :key="mapKey" :module="module" :module-id="moduleId" :assisted="isAssistedParty"
       :settings="settings" @restart-with="restartWith" />

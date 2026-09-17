@@ -1,69 +1,51 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { createGame } from '../lib/api.js'
+import GameSetupSteps from '../components/GameSetupSteps.vue'
+import { defaultSettings, timingNeedsValue } from '../lib/gameSettings.js'
 
 const router = useRouter()
 
+// Mêmes étapes que la partie en local (cf. GameSetupSteps.vue), plus le
+// nombre de joueurs de la room.
 const step = ref(1)
-const totalSteps = 4
+const totalSteps = 5
 
-const modules = ref([])
-const selectedModule = ref(null) // full module JSON, fetched once chosen
 const selectedModuleId = ref('')
-
-const selectedScenarioId = ref('')
-const selectedVariantIds = ref([])
+const selectedModule = ref(null) // full module JSON, fetched once chosen
+const settings = ref(defaultSettings())
 const maxPlayers = ref(2)
 
 const loadingModule = ref(false)
 const submitting = ref(false)
 const error = ref('')
 
-onMounted(async () => {
-  const res = await fetch('/modules/index.json', { cache: 'no-store' })
-  modules.value = await res.json()
-})
-
-// Le module peut déclarer ses propres scénarios/variantes ; sinon on retombe
-// sur un scénario par défaut et aucune variante, pour rester compatible avec
-// les modules qui n'ont pas encore ce schéma (ex: arnhem.json actuel).
-const scenarios = computed(() => {
-  if (selectedModule.value?.scenarios?.length) return selectedModule.value.scenarios
-  return [{ id: 'default', name: 'Scénario standard' }]
-})
-const variants = computed(() => selectedModule.value?.variants ?? [])
 const playerRange = computed(() => ({
   min: selectedModule.value?.minPlayers ?? 2,
   max: selectedModule.value?.maxPlayers ?? 2,
 }))
 
-async function chooseModule(mod) {
-  selectedModuleId.value = mod.id
+// Le module complet n'est chargé que pour connaître sa plage de joueurs.
+watch(selectedModuleId, async (id) => {
   loadingModule.value = true
   error.value = ''
   try {
-    const res = await fetch(mod.path, { cache: 'no-store' })
-    selectedModule.value = await res.json()
-    selectedScenarioId.value = scenarios.value[0].id
+    const index = await fetch('/modules/index.json', { cache: 'no-store' }).then((res) => res.json())
+    const entry = index.find((moduleEntry) => moduleEntry.id === id)
+    selectedModule.value = await fetch(entry.path, { cache: 'no-store' }).then((res) => res.json())
     maxPlayers.value = playerRange.value.min
   } catch {
     error.value = "Impossible de charger ce module."
   } finally {
     loadingModule.value = false
   }
-}
-
-function toggleVariant(id) {
-  const variantIndex = selectedVariantIds.value.indexOf(id)
-  if (variantIndex === -1) selectedVariantIds.value.push(id)
-  else selectedVariantIds.value.splice(variantIndex, 1)
-}
+})
 
 const canNext = computed(() => {
-  if (step.value === 1) return !!selectedModuleId.value && !loadingModule.value
-  if (step.value === 2) return !!selectedScenarioId.value
-  if (step.value === 4) return maxPlayers.value >= playerRange.value.min && maxPlayers.value <= playerRange.value.max
+  if (step.value === 1) return !!selectedModule.value && !loadingModule.value
+  if (step.value === 4 && timingNeedsValue(settings.value.timing)) return !!settings.value.timingValue
+  if (step.value === 5) return maxPlayers.value >= playerRange.value.min && maxPlayers.value <= playerRange.value.max
   return true
 })
 
@@ -80,8 +62,8 @@ async function submit() {
   try {
     const game = await createGame({
       moduleId: selectedModuleId.value,
-      scenarioId: selectedScenarioId.value,
-      variants: selectedVariantIds.value,
+      scenarioId: settings.value.scenario,
+      settings: settings.value,
       maxPlayers: maxPlayers.value,
     })
     router.push({ name: 'games-list', query: { created: game.id, passcode: game.passcode } })
@@ -95,61 +77,17 @@ async function submit() {
 
 <template>
   <div class="wizard">
-    <h1>Créer une partie</h1>
+    <h1>Créer une partie en ligne</h1>
     <p class="step-indicator">Étape {{ step }} / {{ totalSteps }}</p>
 
-    <section v-if="step === 1">
-      <h2>1. Choisir le module</h2>
-      <ul class="choice-list">
-        <li v-for="mod in modules" :key="mod.id">
-          <button
-            type="button"
-            :class="{ selected: selectedModuleId === mod.id }"
-            :disabled="mod.active === false"
-            @click="chooseModule(mod)"
-          >
-            {{ mod.name }}
-            <span v-if="mod.active === false" class="badge">Bientôt disponible</span>
-          </button>
-        </li>
-      </ul>
-      <p v-if="loadingModule">Chargement du module…</p>
-    </section>
+    <GameSetupSteps v-model:module-id="selectedModuleId" v-model:settings="settings" :step="step">
+      <template #module-status>
+        <p v-if="loadingModule">Chargement du module…</p>
+      </template>
+    </GameSetupSteps>
 
-    <section v-else-if="step === 2">
-      <h2>2. Choisir le scénario</h2>
-      <ul class="choice-list">
-        <li v-for="sc in scenarios" :key="sc.id">
-          <button
-            type="button"
-            :class="{ selected: selectedScenarioId === sc.id }"
-            @click="selectedScenarioId = sc.id"
-          >
-            {{ sc.name }}
-          </button>
-        </li>
-      </ul>
-    </section>
-
-    <section v-else-if="step === 3">
-      <h2>3. Variantes et règles spéciales</h2>
-      <ul v-if="variants.length" class="choice-list">
-        <li v-for="variant in variants" :key="variant.id">
-          <label class="checkbox-choice">
-            <input
-              type="checkbox"
-              :checked="selectedVariantIds.includes(variant.id)"
-              @change="toggleVariant(variant.id)"
-            />
-            {{ variant.name }}
-          </label>
-        </li>
-      </ul>
-      <p v-else>Ce module ne propose pas de variante — passe à l'étape suivante.</p>
-    </section>
-
-    <section v-else-if="step === 4">
-      <h2>4. Nombre de joueurs</h2>
+    <section v-if="step === 5">
+      <h2>5. Nombre de joueurs</h2>
       <input
         type="number"
         v-model.number="maxPlayers"
@@ -180,40 +118,6 @@ async function submit() {
 .step-indicator {
   color: #666;
   margin-top: -8px;
-}
-.choice-list {
-  list-style: none;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.choice-list button {
-  width: 100%;
-  text-align: left;
-  padding: 10px 12px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: white;
-  cursor: pointer;
-}
-.choice-list button.selected {
-  border-color: #2563eb;
-  background: #eff6ff;
-}
-.choice-list button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-.badge {
-  margin-left: 8px;
-  font-size: 0.75em;
-  color: #666;
-}
-.checkbox-choice {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 .hint {
   color: #666;

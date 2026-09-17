@@ -14,6 +14,9 @@
 // `stackMessage`) quand on veut quitter une unité en overstack pour en
 // sélectionner une autre.
 //
+// Et par HexMap.vue pour le timing "Limité" (cf. MoveTimer.vue) : `title` et
+// un message libre passé dans le slot par défaut, sans liste.
+//
 // Contrairement à CombatModal.vue, elle est BLOQUANTE (overlay) : c'est un
 // simple message à acquitter, il n'y a rien à cliquer sur la carte pendant
 // qu'elle est ouverte.
@@ -46,6 +49,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   <div class="pb-overlay" @click.self="emit('close')">
     <div class="pb-modal" role="alertdialog" aria-labelledby="pb-title">
       <h3 id="pb-title">{{ title }}</h3>
+      <p v-if="$slots.default"><slot /></p>
       <template v-if="stacks.length">
         <p>{{ stackMessage }}</p>
         <ul class="pb-list">
