@@ -8,15 +8,15 @@
 import { onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
-  x: { type: Number, required: true },
-  y: { type: Number, required: true },
+  leftPx: { type: Number, required: true },
+  topPx: { type: Number, required: true },
   items: { type: Array, required: true }, // [{ label, action }]
 })
 
 const emit = defineEmits(['choose', 'close'])
 
 function onWindowClick() { emit('close') }
-function onKeydown(e) { if (e.key === 'Escape') emit('close') }
+function onKeydown(event) { if (event.key === 'Escape') emit('close') }
 
 onMounted(() => {
   window.addEventListener('click', onWindowClick)
@@ -30,7 +30,7 @@ onUnmounted(() => {
 
 <template>
   <Teleport to="body">
-    <div class="ctx-menu" :style="{ left: x + 'px', top: y + 'px' }" @click.stop @contextmenu.prevent>
+    <div class="ctx-menu" :style="{ left: leftPx + 'px', top: topPx + 'px' }" @click.stop @contextmenu.prevent>
       <button v-for="item in items" :key="item.label" class="ctx-item" @click="emit('choose', item.action)">
         {{ item.label }}
       </button>

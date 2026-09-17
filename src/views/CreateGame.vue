@@ -55,9 +55,9 @@ async function chooseModule(mod) {
 }
 
 function toggleVariant(id) {
-  const i = selectedVariantIds.value.indexOf(id)
-  if (i === -1) selectedVariantIds.value.push(id)
-  else selectedVariantIds.value.splice(i, 1)
+  const variantIndex = selectedVariantIds.value.indexOf(id)
+  if (variantIndex === -1) selectedVariantIds.value.push(id)
+  else selectedVariantIds.value.splice(variantIndex, 1)
 }
 
 const canNext = computed(() => {
@@ -85,8 +85,8 @@ async function submit() {
       maxPlayers: maxPlayers.value,
     })
     router.push({ name: 'games-list', query: { created: game.id, passcode: game.passcode } })
-  } catch (e) {
-    error.value = e.message
+  } catch (requestError) {
+    error.value = requestError.message
   } finally {
     submitting.value = false
   }
@@ -134,14 +134,14 @@ async function submit() {
     <section v-else-if="step === 3">
       <h2>3. Variantes et règles spéciales</h2>
       <ul v-if="variants.length" class="choice-list">
-        <li v-for="v in variants" :key="v.id">
+        <li v-for="variant in variants" :key="variant.id">
           <label class="checkbox-choice">
             <input
               type="checkbox"
-              :checked="selectedVariantIds.includes(v.id)"
-              @change="toggleVariant(v.id)"
+              :checked="selectedVariantIds.includes(variant.id)"
+              @change="toggleVariant(variant.id)"
             />
-            {{ v.name }}
+            {{ variant.name }}
           </label>
         </li>
       </ul>

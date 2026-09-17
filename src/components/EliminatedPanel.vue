@@ -17,26 +17,26 @@ const FACTION_LABELS = { german: 'Allemands', commonwealth: 'Commonwealth', us: 
 /** Groupes { faction, items }, triés par nom de faction affiché. */
 const groups = computed(() => {
   const byFaction = new Map()
-  for (const c of props.units) {
-    const f = c.faction ?? '?'
-    if (!byFaction.has(f)) byFaction.set(f, [])
-    byFaction.get(f).push(c)
+  for (const counter of props.units) {
+    const faction = counter.faction ?? '?'
+    if (!byFaction.has(faction)) byFaction.set(faction, [])
+    byFaction.get(faction).push(counter)
   }
   return [...byFaction.entries()]
     .map(([faction, items]) => ({ faction, label: FACTION_LABELS[faction] ?? faction, items }))
-    .sort((a, b) => a.label.localeCompare(b.label))
+    .sort((counterA, counterB) => counterA.label.localeCompare(counterB.label))
 })
 </script>
 
 <template>
   <div class="el-list">
     <p v-if="!units.length" class="el-empty">Aucune unité éliminée.</p>
-    <section v-for="g in groups" :key="g.faction" class="el-group">
-      <h3 class="el-group-title">{{ g.label }}</h3>
+    <section v-for="group in groups" :key="group.faction" class="el-group">
+      <h3 class="el-group-title">{{ group.label }}</h3>
       <div class="el-grid">
-        <figure v-for="c in g.items" :key="c.id" class="el-piece">
-          <img :src="c.src" :alt="c.name" width="48" height="48" draggable="false"
-            @contextmenu.prevent="emit('contextmenu', c.id, $event)" />
+        <figure v-for="counter in group.items" :key="counter.id" class="el-piece">
+          <img :src="counter.src" :alt="counter.name" width="48" height="48" draggable="false"
+            @contextmenu.prevent="emit('contextmenu', counter.id, $event)" />
         </figure>
       </div>
     </section>

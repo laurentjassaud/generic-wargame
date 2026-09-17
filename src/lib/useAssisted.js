@@ -142,9 +142,9 @@ import { neighborsOf } from './hex.js'
 function buildEdgeSet(list) {
   const set = new Set()
   for (const edge of list ?? []) {
-    const [a, b] = edge.split('-')
-    set.add(a + '-' + b)
-    set.add(b + '-' + a)
+    const [hexIdA, hexIdB] = edge.split('-')
+    set.add(hexIdA + '-' + hexIdB)
+    set.add(hexIdB + '-' + hexIdA)
   }
   return set
 }
@@ -204,8 +204,8 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // demander "quelle est la nature de l'arête from->h" comme le fait
   // `terrainCost` pour un déplacement classique — on demande juste "cet hex
   // est-il DESSERVI par une route/piste, peu importe par où".
-  const roadTouchedHexes = new Set([...roadEdges].map((k) => k.split('-')[0]))
-  const trailTouchedHexes = new Set([...trailEdges].map((k) => k.split('-')[0]))
+  const roadTouchedHexes = new Set([...roadEdges].map((edgeKey) => edgeKey.split('-')[0]))
+  const trailTouchedHexes = new Set([...trailEdges].map((edgeKey) => edgeKey.split('-')[0]))
 
   // --- Affichage de la grille hexagonale -----------------------------------
   // `showGridPref` mémorise la PRÉFÉRENCE de l'utilisateur (case cochée ou
@@ -228,7 +228,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     // on n'est pas en mode Assisté. Concrètement, HexMap.vue désactive déjà
     // la case à cocher (`:disabled="!assisted"`) hors mode Assisté, donc ce
     // garde-fou est une sécurité supplémentaire plutôt qu'un chemin normal.
-    set: (v) => { if (assisted.value) showGridPref.value = v },
+    set: (visible) => { if (assisted.value) showGridPref.value = visible },
   })
 
   // --- Sélection des pions au clic ------------------------------------------
@@ -264,7 +264,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   //
   // Cette fonction est appelée par HexMap.vue à chaque tentative de
   // sélection ou de déplacement (clic, début de glisser-déposer, drop).
-  function canControl(c) {
+  function canControl(counter) {
     // Hors mode Assisté (mode Libre), aucune restriction : tout pion est
     // contrôlable par n'importe qui, à tout moment.
     if (!assisted.value) return true
@@ -275,7 +275,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     // n'est pas encore monté (ex. tout premier rendu) : par défaut, on
     // n'empêche rien plutôt que de bloquer l'interface sur une ref pas
     // encore prête.
-    return turnTrackerRef.value?.canControl(c) ?? true
+    return turnTrackerRef.value?.canControl(counter) ?? true
   }
 
   // --- Phases Mouvement / Combat / Fin de tour --------------------------------
@@ -352,8 +352,8 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   /** `c` est-il une unité AÉROPORTÉE ? Même critère que partout ailleurs
    *  (cf. HexMap.vue::onHex, coût d'entrée) : son `setup` se termine par
    *  "+adj" — il entre en jeu sur sa DZ ou l'un des 6 hex voisins. */
-  function isAirborne(c) {
-    return !!c?.setup?.endsWith('+adj')
+  function isAirborne(counter) {
+    return !!counter?.setup?.endsWith('+adj')
   }
 
   /** Le camp actif a-t-il au moins un aéroporté à poser ? Il faut qu'il ne
@@ -365,7 +365,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   function airbornePending() {
     if (!assisted.value) return false
     const turn = turnTrackerRef.value?.currentTurn ?? 1
-    return (getReinforcements?.() ?? []).some((c) => isAirborne(c) && canControl(c) && (c.turn ?? 1) <= turn)
+    return (getReinforcements?.() ?? []).some((counter) => isAirborne(counter) && canControl(counter) && (counter.turn ?? 1) <= turn)
   }
 
   /** Début du tour d'un camp : phase Airborne s'il a des aéroportés à poser
@@ -386,9 +386,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  uniquement les NON aéroportés (cf. règle ci-dessus). Le tour d'arrivée
    *  et le camp sont vérifiés à part (cf. HexMap.vue::canEnterThisTurn/
    *  `canControl`). Toujours vrai hors mode Assisté. */
-  function canPlaceReinforcementNow(c) {
+  function canPlaceReinforcementNow(counter) {
     if (!assisted.value) return true
-    return phaseStep.value === PHASE_AIRBORNE ? isAirborne(c) : !isAirborne(c)
+    return phaseStep.value === PHASE_AIRBORNE ? isAirborne(counter) : !isAirborne(counter)
   }
 
   // MP déjà dépensés ce tour-ci, par unité : Map id -> nombre de MP
@@ -599,9 +599,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  `canEnterTerrain` plus bas (route/piste/pont = exception au terrain —
    *  et, pour les véhicules, au ruisseau/à la rivière — autrement
    *  infranchissable). */
-  function edgeKind(from, h) {
+  function edgeKind(from, hex) {
     if (!from) return null
-    const edgeKey = hexId(from.c + 1, from.r) + '-' + hexId(h.c + 1, h.r)
+    const edgeKey = hexId(from.c + 1, from.r) + '-' + hexId(hex.c + 1, hex.r)
     if (roadEdges.has(edgeKey)) return 'road'
     if (trailEdges.has(edgeKey)) return 'trail'
     if (isBridgeEdge(edgeKey)) return 'bridge'
@@ -628,9 +628,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *     table de combat si TOUS les attaquants le franchissent ;
    *   - `null` sinon (hexside ordinaire, sans particularité).
    *  Exportée (cf. `return` plus bas) pour lib/useCombat.js. */
-  function combatEdgeKind(from, h) {
+  function combatEdgeKind(from, hex) {
     if (!from) return null
-    const edgeKey = hexId(from.c + 1, from.r) + '-' + hexId(h.c + 1, h.r)
+    const edgeKey = hexId(from.c + 1, from.r) + '-' + hexId(hex.c + 1, hex.r)
     if (isBridgeEdge(edgeKey)) return 'bridge'
     if (riverEdges.has(edgeKey)) return 'river'
     if (roadEdges.has(edgeKey) || trailEdges.has(edgeKey)) return null
@@ -662,21 +662,21 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  lib/useDebug.js (affichage du COT des hex adjacents et calcul de la
    *  portée de déplacement en mode debug) — seule source de vérité pour un
    *  coût de terrain, à ne jamais dupliquer ailleurs. */
-  function terrainCost(h, from) {
-    const kind = edgeKind(from, h)
-    if (kind === 'road') return terrain?.types?.road?.mp ?? terrainAreaCost(h)
-    if (kind === 'trail') return terrain?.types?.trail?.mp ?? terrainAreaCost(h)
-    if (kind === 'bridge') return terrainAreaCost(h)
-    if (kind === 'ferry' || kind === 'stream') return terrainAreaCost(h) + WATER_CROSSING_PENALTY
-    return terrainAreaCost(h)
+  function terrainCost(hex, from) {
+    const kind = edgeKind(from, hex)
+    if (kind === 'road') return terrain?.types?.road?.mp ?? terrainAreaCost(hex)
+    if (kind === 'trail') return terrain?.types?.trail?.mp ?? terrainAreaCost(hex)
+    if (kind === 'bridge') return terrainAreaCost(hex)
+    if (kind === 'ferry' || kind === 'stream') return terrainAreaCost(hex) + WATER_CROSSING_PENALTY
+    return terrainAreaCost(hex)
   }
 
   /** Coût "de zone" de `h`, sans tenir compte d'une éventuelle route/piste
    *  empruntée pour y entrer — cf. `terrainCost` ci-dessus, qui applique
    *  cette valeur par défaut et en cas de fallback (route/piste sans coût
    *  déclaré dans `terrain.types`). */
-  function terrainAreaCost(h) {
-    const type = terrain?.grid?.[hexId(h.c + 1, h.r)]
+  function terrainAreaCost(hex) {
+    const type = terrain?.grid?.[hexId(hex.c + 1, hex.r)]
     return terrain?.types?.[type]?.mp ?? 1
   }
 
@@ -688,9 +688,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  `return` plus bas) pour être réutilisée par lib/useDebug.js (portée de
    *  déplacement en mode debug — jusqu'où `c` peut aller avec ce qu'il lui
    *  reste de MP), en plus de son usage interne par `canEnterHex`. */
-  function remainingMp(c) {
-    if (c?.mov == null) return null
-    return c.mov - (spentMp.value.get(String(c.id)) ?? 0)
+  function remainingMp(counter) {
+    if (counter?.mov == null) return null
+    return counter.mov - (spentMp.value.get(String(counter.id)) ?? 0)
   }
 
   // --- Zone de Contrôle (ZOC) -------------------------------------------------
@@ -742,11 +742,11 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  HexMap.vue (repli d'entrée en jeu d'un renfort — cf.
    *  entryHexSet/isEntryHexBlocked : un hex d'entrée occupé par un ennemi,
    *  ou par un ami figé dans une ZOC ennemie, redirige vers un hex voisin). */
-  function isEnemyOf(a, b) {
-    const sa = sideOfFaction(a?.faction)
-    const sb = sideOfFaction(b?.faction)
+  function isEnemyOf(counterA, counterB) {
+    const sa = sideOfFaction(counterA?.faction)
+    const sb = sideOfFaction(counterB?.faction)
     if (sa != null && sb != null) return sa !== sb
-    return a?.faction !== b?.faction
+    return counterA?.faction !== counterB?.faction
   }
 
   /** Le hexside précis entre `a` et `b` ({ col, row } 0-based/1-based, ex.
@@ -759,8 +759,8 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  données du module, seuls ses ponts `canalBridges` le sont) n'est PAS
    *  concerné : la ZOC s'étend normalement à travers eux, seule la rivière
    *  est une vraie coupure. */
-  function riverBlocksZoc(a, b) {
-    const edgeKey = hexId(a.col + 1, a.row) + '-' + hexId(b.col + 1, b.row)
+  function riverBlocksZoc(counterA, counterB) {
+    const edgeKey = hexId(counterA.col + 1, counterA.row) + '-' + hexId(counterB.col + 1, counterB.row)
     return riverEdges.has(edgeKey) && !isBridgeEdge(edgeKey)
   }
 
@@ -779,15 +779,15 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  de portée : un hex sous ZOC ennemie ne laisse plus continuer le
    *  chemin au-delà de lui) — calculée UNE SEULE FOIS par ces appelants
    *  plutôt qu'à chaque hex testé individuellement. */
-  function enemyZocSet(c) {
+  function enemyZocSet(counter) {
     const set = new Set()
-    if (!c) return set
+    if (!counter) return set
     for (const other of counters.value) {
       if (other.type === 'marker' || other.kind === 'support') continue
-      if (!isEnemyOf(c, other)) continue
-      for (const n of neighborsOf(other.col, other.row)) {
-        if (riverBlocksZoc(other, n)) continue
-        set.add(n.col + ',' + n.row)
+      if (!isEnemyOf(counter, other)) continue
+      for (const neighbor of neighborsOf(other.col, other.row)) {
+        if (riverBlocksZoc(other, neighbor)) continue
+        set.add(neighbor.col + ',' + neighbor.row)
       }
     }
     return set
@@ -810,9 +810,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  `return` plus bas) pour être réutilisée par HexMap.vue (surlignage vert
    *  du premier pas et clic de mouvement) et lib/useDebug.js (portée
    *  complète en mode debug) — même définition partout. */
-  function hasFriendlyOccupant(c, h) {
+  function hasFriendlyOccupant(counter, hex) {
     return counters.value.some(
-      (other) => other.col === h.c && other.row === h.r && other.type !== 'marker' && other.kind !== 'support' && !isEnemyOf(c, other)
+      (other) => other.col === hex.c && other.row === hex.r && other.type !== 'marker' && other.kind !== 'support' && !isEnemyOf(counter, other)
     )
   }
 
@@ -829,10 +829,10 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *      peu importe si CE voisin est lui-même libre ou pas (on ne vérifie
    *      qu'UN pas en avant, pas tout un chemin jusqu'à la fin du tour).
    *  Exportée (cf. `return` plus bas), même raison que `hasFriendlyOccupant`. */
-  function canLeaveAfterEntering(c, h, from) {
-    const remaining = remainingMp(c)
+  function canLeaveAfterEntering(counter, hex, from) {
+    const remaining = remainingMp(counter)
     if (remaining == null) return true
-    return canLeaveWithMp(c, h, remaining - terrainCost(h, from))
+    return canLeaveWithMp(counter, hex, remaining - terrainCost(hex, from))
   }
 
   /** Même question que `canLeaveAfterEntering`, mais pour un RENFORT qui
@@ -847,23 +847,23 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  ne pourrait pas en repartir ensuite — sinon il y resterait coincé avec
    *  lui, ce que la fin de phase refuserait de toute façon (cf.
    *  `stackedHexes`). Toujours vrai hors mode Assisté. */
-  function canLeaveAfterReinforcementEntry(c, h, paysEntry) {
+  function canLeaveAfterReinforcementEntry(counter, hex, paysEntry) {
     if (!assisted.value) return true
-    const remaining = remainingMp(c)
+    const remaining = remainingMp(counter)
     if (remaining == null) return true
-    return canLeaveWithMp(c, h, remaining - (paysEntry ? entryCost(h) : 0))
+    return canLeaveWithMp(counter, hex, remaining - (paysEntry ? entryCost(hex) : 0))
   }
 
   /** Brique commune aux deux fonctions ci-dessus : `c`, posé sur `h` avec
    *  `afterEntry` MP restants, peut-il faire au moins un pas de plus ? Ce
    *  sont les étapes 1 à 3 décrites sur `canLeaveAfterEntering`. */
-  function canLeaveWithMp(c, h, afterEntry) {
+  function canLeaveWithMp(counter, hex, afterEntry) {
     if (afterEntry <= 0) return false
-    if (enemyZocSet(c).has(h.c + ',' + h.r)) return false
-    return neighborsOf(h.c, h.r).some((n) => {
-      if (!hexOnMap(n.col, n.row)) return false
-      const nh = { c: n.col, r: n.row }
-      return canEnterTerrain(c, nh, h) && afterEntry >= terrainCost(nh, h)
+    if (enemyZocSet(counter).has(hex.c + ',' + hex.r)) return false
+    return neighborsOf(hex.c, hex.r).some((neighbor) => {
+      if (!hexOnMap(neighbor.col, neighbor.row)) return false
+      const nh = { c: neighbor.col, r: neighbor.row }
+      return canEnterTerrain(counter, nh, hex) && afterEntry >= terrainCost(nh, hex)
     })
   }
 
@@ -881,11 +881,11 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  déplacer ailleurs (ou annuler son mouvement). Marqueurs et pions de
    *  soutien ne comptent jamais (ni amis ni ennemis, cf.
    *  `hasFriendlyOccupant`). Toujours faux hors mode Assisté. */
-  function isOverstacked(c) {
-    if (!assisted.value || !c || c.type === 'marker' || c.kind === 'support') return false
-    return counters.value.some((o) =>
-      o.id !== c.id && o.col === c.col && o.row === c.row
-      && o.type !== 'marker' && o.kind !== 'support' && !isEnemyOf(c, o))
+  function isOverstacked(counter) {
+    if (!assisted.value || !counter || counter.type === 'marker' || counter.kind === 'support') return false
+    return counters.value.some((otherCounter) =>
+      otherCounter.id !== counter.id && otherCounter.col === counter.col && otherCounter.row === counter.row
+      && otherCounter.type !== 'marker' && otherCounter.kind !== 'support' && !isEnemyOf(counter, otherCounter))
   }
 
   /** EMPILEMENTS EN ATTENTE — filet de sécurité de la même règle, vérifié
@@ -915,21 +915,21 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     if (!assisted.value || phaseStep.value !== 0) return []
     // Regroupement des unités du camp actif par hex ("col,row" -> pions).
     const byHex = new Map()
-    for (const c of counters.value) {
-      if (c.type === 'marker' || c.kind === 'support' || !canControl(c)) continue
-      const key = c.col + ',' + c.row
+    for (const counter of counters.value) {
+      if (counter.type === 'marker' || counter.kind === 'support' || !canControl(counter)) continue
+      const key = counter.col + ',' + counter.row
       if (!byHex.has(key)) byHex.set(key, [])
-      byHex.get(key).push(c)
+      byHex.get(key).push(counter)
     }
     const list = []
     for (const [key, units] of byHex) {
       if (units.length < 2) continue
       // Au moins une paire AMIE dans l'hex (sans `sides` configurés, deux
       // pions "contrôlables" pourraient en théorie être de camps opposés).
-      const friendly = units.some((a, i) => units.slice(i + 1).some((b) => !isEnemyOf(a, b)))
+      const friendly = units.some((unitA, unitIndex) => units.slice(unitIndex + 1).some((unitB) => !isEnemyOf(unitA, unitB)))
       if (!friendly) continue
       const [col, row] = key.split(',').map(Number)
-      list.push({ key, hex: hexId(col + 1, row), units: units.map((u) => u.name) })
+      list.push({ key, hex: hexId(col + 1, row), units: units.map((unit) => unit.name) })
     }
     return list
   })
@@ -962,12 +962,12 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  lib/useDebug.js (portée de déplacement en mode debug : un hex/une
    *  arête interdit(e) ne doit pas apparaître comme "traversable", véhicule
    *  ou pas selon le cas, même en passant au travers sans s'y arrêter). */
-  function canEnterTerrain(c, h, from) {
-    const kind = edgeKind(from, h)
+  function canEnterTerrain(counter, hex, from) {
+    const kind = edgeKind(from, hex)
     if (kind === 'river') return false
-    if (!VEHICLE_TYPES.has(c?.type)) return true
+    if (!VEHICLE_TYPES.has(counter?.type)) return true
     if (kind === 'stream' || kind === 'ferry') return false
-    if (IMPASSABLE_FOR_VEHICLES.has(terrain?.grid?.[hexId(h.c + 1, h.r)])) return kind != null
+    if (IMPASSABLE_FOR_VEHICLES.has(terrain?.grid?.[hexId(hex.c + 1, hex.r)])) return kind != null
     return true
   }
 
@@ -985,13 +985,13 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *   3. sinon vrai si `c` ne déclare pas de MP (cf. `remainingMp`), sinon
    *      seulement s'il lui en reste au moins autant que le COT de `h`
    *      (route/piste/ruisseau compris). */
-  function canEnterHex(c, h, from) {
+  function canEnterHex(counter, hex, from) {
     if (!assisted.value) return true
-    if (from && enemyZocSet(c).has(from.c + ',' + from.r)) return false
-    if (!canEnterTerrain(c, h, from)) return false
-    const remaining = remainingMp(c)
+    if (from && enemyZocSet(counter).has(from.c + ',' + from.r)) return false
+    if (!canEnterTerrain(counter, hex, from)) return false
+    const remaining = remainingMp(counter)
     if (remaining == null) return true
-    return remaining >= terrainCost(h, from)
+    return remaining >= terrainCost(hex, from)
   }
 
   /** Déduit de `c` le COT de `h` EN VENANT de `from` (mêmes paramètres et
@@ -1003,10 +1003,10 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  Ne fait rien hors mode Assisté ni pour un pion sans `mov` déclaré (cf.
    *  `remainingMp`), pour rester cohérent avec ce que `canEnterHex` a
    *  autorisé. */
-  function spendMp(c, h, from) {
-    if (!assisted.value || c?.mov == null) return
-    const spent = (spentMp.value.get(String(c.id)) ?? 0) + terrainCost(h, from)
-    spentMp.value = new Map(spentMp.value).set(String(c.id), spent)
+  function spendMp(counter, hex, from) {
+    if (!assisted.value || counter?.mov == null) return
+    const spent = (spentMp.value.get(String(counter.id)) ?? 0) + terrainCost(hex, from)
+    spentMp.value = new Map(spentMp.value).set(String(counter.id), spent)
   }
 
   /** Inverse EXACT de `spendMp` : recrédite `c` du COT de `h` en venant de
@@ -1023,10 +1023,10 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  `Math.max(0, …)` par sécurité (ne devrait jamais aller sous zéro en
    *  usage normal, cf. `spendMp` toujours appelée après un `canEnterHex` qui
    *  a validé le coût). */
-  function refundMp(c, h, from) {
-    if (!assisted.value || c?.mov == null) return
-    const spent = Math.max(0, (spentMp.value.get(String(c.id)) ?? 0) - terrainCost(h, from))
-    spentMp.value = new Map(spentMp.value).set(String(c.id), spent)
+  function refundMp(counter, hex, from) {
+    if (!assisted.value || counter?.mov == null) return
+    const spent = Math.max(0, (spentMp.value.get(String(counter.id)) ?? 0) - terrainCost(hex, from))
+    spentMp.value = new Map(spentMp.value).set(String(counter.id), spent)
   }
 
   /** Redonne à `c` la TOTALITÉ de ses MP pour ce tour-ci (par opposition à
@@ -1040,10 +1040,10 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *      prochaine fois qu'il entrera en jeu, pas avec ce qu'il lui restait
    *      au moment où il a quitté la carte.
    *  Même garde-fous que `spendMp`/`refundMp`. */
-  function resetMp(c) {
-    if (!assisted.value || c?.mov == null) return
+  function resetMp(counter) {
+    if (!assisted.value || counter?.mov == null) return
     const next = new Map(spentMp.value)
-    next.delete(String(c.id))
+    next.delete(String(counter.id))
     spentMp.value = next
   }
 
@@ -1064,8 +1064,8 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   /** Rejeu : place la phase en cours (0 Mouvement, 1 Combat, 2 Fin de tour).
    *  Le changement de TOUR, lui, passe par TurnTracker.vue (entrée `turn`)
    *  et remet de lui-même la phase à 0 (cf. watcher de `currentStep`). */
-  function setPhase(p) {
-    phaseStep.value = p
+  function setPhase(newPhase) {
+    phaseStep.value = newPhase
   }
 
   /** Rejeu : fixe à `value` le total de MP déjà dépensés par l'unité `id`
@@ -1104,19 +1104,19 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  par au moins un de ses côtés (cf. `roadTouchedHexes`) ; sinon celui de
    *  la piste si `h` en touche une (cf. `trailTouchedHexes`) ; sinon le coût
    *  de terrain normal de `h`. */
-  function entryBaseCost(h) {
-    const hId = hexId(h.c + 1, h.r)
-    if (roadTouchedHexes.has(hId)) return terrain?.types?.road?.mp ?? terrainAreaCost(h)
-    if (trailTouchedHexes.has(hId)) return terrain?.types?.trail?.mp ?? terrainAreaCost(h)
-    return terrainAreaCost(h)
+  function entryBaseCost(hex) {
+    const hId = hexId(hex.c + 1, hex.r)
+    if (roadTouchedHexes.has(hId)) return terrain?.types?.road?.mp ?? terrainAreaCost(hex)
+    if (trailTouchedHexes.has(hId)) return terrain?.types?.trail?.mp ?? terrainAreaCost(hex)
+    return terrainAreaCost(hex)
   }
 
   /** Coût RÉEL pour que la PROCHAINE unité entre en jeu sur `h` ce tour-ci :
    *  coût de base (cf. `entryBaseCost`) × (nombre d'unités déjà entrées par
    *  ce hex ce tour-ci, cf. `entryCounts`, + 1 pour celle-ci). */
-  function entryCost(h) {
-    const already = entryCounts.value.get(h.c + ',' + h.r) ?? 0
-    return entryBaseCost(h) * (already + 1)
+  function entryCost(hex) {
+    const already = entryCounts.value.get(hex.c + ',' + hex.r) ?? 0
+    return entryBaseCost(hex) * (already + 1)
   }
 
   /** Surcoût déjà accumulé sur `h` ce tour-ci (0 si personne n'y est encore
@@ -1124,9 +1124,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  la prochaine entrée. Exportée (cf. `return` plus bas) pour l'affichage
    *  debug ("+X" sur l'hex, cf. lib/useDebug.js) — ne modifie rien,
    *  contrairement à `spendEntryCost`. */
-  function entrySurcharge(h) {
-    const already = entryCounts.value.get(h.c + ',' + h.r) ?? 0
-    return entryBaseCost(h) * already
+  function entrySurcharge(hex) {
+    const already = entryCounts.value.get(hex.c + ',' + hex.r) ?? 0
+    return entryBaseCost(hex) * already
   }
 
   /** Déduit `entryCost(h)` des MP de `c` ET incrémente le compteur de
@@ -1146,20 +1146,20 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  tour-ci (1 = première), `baseCost` = coût de base de `h` (cf.
    *  `entryBaseCost`), `cost` = coût réellement payé (`baseCost × rank`).
    *  `null` hors mode Assisté (rien n'est payé ni compté). */
-  function spendEntryCost(c, h) {
+  function spendEntryCost(counter, hex) {
     if (!assisted.value) return null
     // Lus AVANT d'incrémenter le compteur : `entryCost` donne le coût de
     // CETTE entrée-ci, pas de la suivante.
-    const baseCost = entryBaseCost(h)
-    const cost = entryCost(h)
-    if (c?.mov != null) {
-      const spent = (spentMp.value.get(String(c.id)) ?? 0) + cost
-      spentMp.value = new Map(spentMp.value).set(String(c.id), spent)
+    const baseCost = entryBaseCost(hex)
+    const cost = entryCost(hex)
+    if (counter?.mov != null) {
+      const spent = (spentMp.value.get(String(counter.id)) ?? 0) + cost
+      spentMp.value = new Map(spentMp.value).set(String(counter.id), spent)
     }
-    const key = h.c + ',' + h.r
+    const key = hex.c + ',' + hex.r
     const count = (entryCounts.value.get(key) ?? 0) + 1
     entryCounts.value = new Map(entryCounts.value).set(key, count)
-    entryHexByUnit.value = new Map(entryHexByUnit.value).set(String(c.id), key)
+    entryHexByUnit.value = new Map(entryHexByUnit.value).set(String(counter.id), key)
     return { rank: count, baseCost, cost }
   }
 
@@ -1173,11 +1173,11 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  (jamais entré via `spendEntryCost` CE TOUR-CI, cf. `entryHexByUnit` —
    *  en particulier, un pion replacé un tour après son entrée ne touche à
    *  rien : sa congestion d'alors a de toute façon déjà été remise à zéro). */
-  function unspendEntryCost(c) {
-    const key = entryHexByUnit.value.get(String(c?.id))
+  function unspendEntryCost(counter) {
+    const key = entryHexByUnit.value.get(String(counter?.id))
     if (key == null) return
     const nextByUnit = new Map(entryHexByUnit.value)
-    nextByUnit.delete(String(c.id))
+    nextByUnit.delete(String(counter.id))
     entryHexByUnit.value = nextByUnit
     const count = Math.max(0, (entryCounts.value.get(key) ?? 0) - 1)
     entryCounts.value = new Map(entryCounts.value).set(key, count)

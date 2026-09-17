@@ -35,9 +35,9 @@ watch(
   () => {
     const track = props.config
     if (!track) { tokens.value = []; return }
-    const n = track.byTurn[props.turn - 1] ?? 0
-    tokens.value = Array.from({ length: n }, (_, i) => ({
-      id: `support-t${props.turn}-${i}`, type: 'marker', kind: 'support', faction: null, name: track.label, src: track.marker,
+    const tokenCount = track.byTurn[props.turn - 1] ?? 0
+    tokens.value = Array.from({ length: tokenCount }, (_, tokenIndex) => ({
+      id: `support-t${props.turn}-${tokenIndex}`, type: 'marker', kind: 'support', faction: null, name: track.label, src: track.marker,
     }))
   },
   { immediate: true },
@@ -46,15 +46,15 @@ watch(
 /** Lecture seule — utilisé par HexMap.vue::onCounterDragStart pour résoudre
  *  l'id glissé (avant de savoir si c'est un pion de la tablette ou non). */
 function findToken(id) {
-  return tokens.value.find((t) => String(t.id) === String(id)) ?? null
+  return tokens.value.find((token) => String(token.id) === String(id)) ?? null
 }
 
 /** Retire un pion de la tablette une fois posé sur la carte (cf.
  *  HexMap.vue::onMapDrop) — retourne le pion retiré, ou null s'il n'y est pas. */
 function removeToken(id) {
-  const i = tokens.value.findIndex((t) => String(t.id) === String(id))
-  if (i === -1) return null
-  return tokens.value.splice(i, 1)[0]
+  const tokenIndex = tokens.value.findIndex((token) => String(token.id) === String(id))
+  if (tokenIndex === -1) return null
+  return tokens.value.splice(tokenIndex, 1)[0]
 }
 
 defineExpose({ findToken, removeToken })

@@ -22,8 +22,8 @@ const joining = ref(false)
 
 const form = ref({ name: '', side: '', passcode: '' })
 
-const takenSides = computed(() => new Set((room.value?.players ?? gameSummary.value?.players ?? []).map((p) => p.side)))
-const availableSides = computed(() => sides.value.filter((s) => !takenSides.value.has(s)))
+const takenSides = computed(() => new Set((room.value?.players ?? gameSummary.value?.players ?? []).map((player) => player.side)))
+const availableSides = computed(() => sides.value.filter((side) => !takenSides.value.has(side)))
 
 const ERROR_MESSAGES = {
   'not-found': "Cette partie n'existe pas (ou plus).",
@@ -40,7 +40,7 @@ async function loadGame() {
     gameSummary.value = await getGame(props.id)
     const modulesRes = await fetch('/modules/index.json', { cache: 'no-store' })
     const modules = await modulesRes.json()
-    const modEntry = modules.find((m) => m.id === gameSummary.value.moduleId)
+    const modEntry = modules.find((moduleEntry) => moduleEntry.id === gameSummary.value.moduleId)
     if (modEntry) {
       const modRes = await fetch(modEntry.path, { cache: 'no-store' })
       const mod = await modRes.json()
@@ -53,11 +53,11 @@ async function loadGame() {
       const factions = Object.keys(mod.counters ?? {})
       const campNames = mod.sides ? Object.keys(mod.sides) : factions
       const missing = Math.max(0, gameSummary.value.maxPlayers - campNames.length)
-      sides.value = [...campNames, ...Array.from({ length: missing }, (_, i) => `Camp ${campNames.length + i + 1}`)]
+      sides.value = [...campNames, ...Array.from({ length: missing }, (_, campIndex) => `Camp ${campNames.length + campIndex + 1}`)]
     }
     form.value.side = availableSides.value[0] ?? ''
-  } catch (e) {
-    loadError.value = e.message
+  } catch (error) {
+    loadError.value = error.message
   } finally {
     loadingGame.value = false
   }
@@ -65,11 +65,11 @@ async function loadGame() {
 
 function attachSocketListeners() {
   const socket = getSocket()
-  socket.on('room:update', (r) => {
-    if (r.id === props.id) room.value = r
+  socket.on('room:update', (roomState) => {
+    if (roomState.id === props.id) room.value = roomState
   })
-  socket.on('room:started', (r) => {
-    if (r.id === props.id) room.value = r
+  socket.on('room:started', (roomState) => {
+    if (roomState.id === props.id) room.value = roomState
   })
   socket.on('game:move', ({ counterId, col, row }) => {
     hexMapRef.value?.applyRemoteMove(counterId, col, row)
@@ -162,8 +162,8 @@ onUnmounted(() => {
           <label>
             Camp
             <select v-model="form.side" required>
-              <option v-for="s in sides" :key="s" :value="s" :disabled="takenSides.has(s)">
-                {{ s }}{{ takenSides.has(s) ? ' (pris)' : '' }}
+              <option v-for="side in sides" :key="side" :value="side" :disabled="takenSides.has(side)">
+                {{ side }}{{ takenSides.has(side) ? ' (pris)' : '' }}
               </option>
             </select>
           </label>
@@ -182,9 +182,9 @@ onUnmounted(() => {
           <p v-else class="status started">La partie est lancée !</p>
 
           <ul class="players">
-            <li v-for="p in room.players" :key="p.id">
-              <strong>{{ p.name }}</strong> — {{ p.side }}
-              <span :class="['dot', p.connected ? 'online' : 'offline']" />
+            <li v-for="player in room.players" :key="player.id">
+              <strong>{{ player.name }}</strong> — {{ player.side }}
+              <span :class="['dot', player.connected ? 'online' : 'offline']" />
             </li>
           </ul>
         </div>

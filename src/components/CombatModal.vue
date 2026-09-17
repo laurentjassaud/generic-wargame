@@ -9,7 +9,7 @@
 // unités attaquantes — un overlay modal classique l'en empêcherait. Elle est
 // déplaçable pour la même raison : elle ne doit jamais masquer
 // définitivement l'hex qu'on veut cliquer.
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
   // Numéros des hex cibles ("0512"...) — cf. useCombat.js::targetHexLabels.
@@ -40,9 +40,21 @@ const props = defineProps({
   crtRows: { type: Array, default: () => [] },
   // Les 6 lignes de résultats (une par face du dé) — cf. useCombat.js::crtResults.
   crtResults: { type: Array, default: () => [] },
+  // Retraite EN COURS après le jet (cf. useRetreat.js::info) — `{ name,
+  // side, step, total, waiting }`, ou `null` s'il n'y en a pas (ou plus).
+  retreat: { type: Object, default: null },
+  // Ce qui s'est passé en appliquant le résultat (éliminations, retraites
+  // terminées) — cf. useRetreat.js::notes.
+  retreatNotes: { type: Array, default: () => [] },
+  // Avance après combat EN COURS (cf. useRetreat.js::advanceInfo) — `{ name,
+  // count }` (unité choisie ou `null`, nombre d'unités pouvant avancer), ou
+  // `null` hors avance.
+  advance: { type: Object, default: null },
 })
 
-const emit = defineEmits(['close', 'fight'])
+// `end-advance` : bouton "Terminer l'avance" (cf. useRetreat.js::endAdvance).
+// `reduce-retreat` : bouton de réduction de retraite (cf. useRetreat.js::reduce).
+const emit = defineEmits(['close', 'fight', 'end-advance', 'reduce-retreat'])
 
 const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
 
@@ -57,9 +69,9 @@ let interval = null, timer = null, closeTimer = null
 // ferme d'elle-même (le résultat reste consultable dans le journal).
 const RESULT_DISPLAY_MS = 2500
 
-/** Un combat ne se joue qu'UNE fois : pas de relance possible, la modale se
- *  ferme peu après le jet (cf. useCombat.js, qui fige alors le combat et
- *  marque les unités participantes). */
+/** Un combat ne se joue qu'UNE fois : pas de relance possible (cf.
+ *  useCombat.js, qui fige alors le combat et marque les unités
+ *  participantes). La fermeture automatique est gérée plus bas. */
 function fight() {
   if (rolling.value || !props.canResolve || props.combatResult) return
   rolling.value = true
@@ -68,27 +80,36 @@ function fight() {
     clearInterval(interval); interval = null
     rolling.value = false
     emit('fight')
-    closeTimer = setTimeout(() => emit('close'), RESULT_DISPLAY_MS)
   }, 900)
 }
+
+// Fermeture automatique : peu après que le résultat est connu ET que toutes
+// les retraites et l'avance qu'il entraîne sont faites (cf. props `retreat`
+// et `advance`). Surveillé plutôt que programmé juste après `emit('fight')`,
+// parce que les props ne sont mises à jour par le parent qu'au rendu
+// suivant.
+watch([() => props.combatResult, () => props.retreat, () => props.advance], () => {
+  if (!props.combatResult || rolling.value || props.retreat || props.advance || closeTimer) return
+  closeTimer = setTimeout(() => emit('close'), RESULT_DISPLAY_MS)
+})
 
 // --- Position flottante + glisser-déposer (repris de RollModal.vue) ---------
 const pos = ref({ x: 0, y: 90 })
 const dragging = ref(false)
 let drag = null
 
-function onDragStart(e) {
-  if (e.target.closest('button')) return
+function onDragStart(event) {
+  if (event.target.closest('button')) return
   dragging.value = true
-  drag = { mx: e.clientX, my: e.clientY, x: pos.value.x, y: pos.value.y }
+  drag = { mx: event.clientX, my: event.clientY, x: pos.value.x, y: pos.value.y }
   window.addEventListener('pointermove', onDragMove)
   window.addEventListener('pointerup', onDragEnd)
-  e.preventDefault()
+  event.preventDefault()
 }
-function onDragMove(e) {
+function onDragMove(event) {
   if (!dragging.value) return
-  const nx = drag.x + (e.clientX - drag.mx)
-  const ny = drag.y + (e.clientY - drag.my)
+  const nx = drag.x + (event.clientX - drag.mx)
+  const ny = drag.y + (event.clientY - drag.my)
   pos.value = {
     x: Math.min(Math.max(-400, nx), (window.innerWidth || 1200) - 120),
     y: Math.min(Math.max(0, ny), (window.innerHeight || 800) - 90),
@@ -118,7 +139,9 @@ onUnmounted(() => {
     @pointerdown="onDragStart">
     <header class="cm-head">
       <span class="cm-title">Combat</span>
-      <button class="cm-close" title="Annuler le combat" @click="$emit('close')">&times;</button>
+      <!-- Pas de fermeture pendant une retraite ou une avance : elles doivent
+           aller à leur terme (l'avance se termine par son propre bouton). -->
+      <button class="cm-close" title="Annuler le combat" :disabled="!!retreat || !!advance" @click="$emit('close')">&times;</button>
     </header>
 
     <div class="cm-forces">
@@ -128,10 +151,10 @@ onUnmounted(() => {
       <section class="cm-side cm-defender">
         <h4>Défenseurs <span class="cm-hexes">{{ targetHexes.join(', ') }}</span></h4>
         <div class="cm-units">
-          <figure v-for="d in defenders" :key="d.id" class="cm-unit">
-            <img :src="d.src" :alt="d.name" />
-            <span class="cm-factor" title="Facteur de défense">{{ d.def ?? 0 }}</span>
-            <figcaption>{{ d.name }}</figcaption>
+          <figure v-for="defender in defenders" :key="defender.id" class="cm-unit">
+            <img :src="defender.src" :alt="defender.name" />
+            <span class="cm-factor" title="Facteur de défense">{{ defender.def ?? 0 }}</span>
+            <figcaption>{{ defender.name }}</figcaption>
           </figure>
         </div>
         <p class="cm-total">Défense <b>{{ defenseStrength }}</b></p>
@@ -142,10 +165,10 @@ onUnmounted(() => {
       <section class="cm-side cm-attackers">
         <h4>Attaquants</h4>
         <div class="cm-units">
-          <figure v-for="a in attackers" :key="a.id" class="cm-unit">
-            <img :src="a.src" :alt="a.name" />
-            <span class="cm-factor" title="Facteur d'attaque">{{ a.atk ?? 0 }}</span>
-            <figcaption>{{ a.name }}</figcaption>
+          <figure v-for="attacker in attackers" :key="attacker.id" class="cm-unit">
+            <img :src="attacker.src" :alt="attacker.name" />
+            <span class="cm-factor" title="Facteur d'attaque">{{ attacker.atk ?? 0 }}</span>
+            <figcaption>{{ attacker.name }}</figcaption>
           </figure>
           <p v-if="attackers.length === 0" class="cm-hint">
             Cliquez sur vos unités adjacentes à toutes les cibles.
@@ -165,9 +188,9 @@ onUnmounted(() => {
     <div v-if="strandedUnits.length" class="cm-stranded">
       <p>Combat impossible, il laisserait sans adversaire :</p>
       <ul>
-        <li v-for="u in strandedUnits" :key="u.id">
-          <b>{{ u.name }}</b> ({{ u.hex }}) —
-          {{ u.side === 'friendly' ? 'ne pourrait plus attaquer personne' : 'ne pourrait plus être attaqué par personne' }}
+        <li v-for="unit in strandedUnits" :key="unit.id">
+          <b>{{ unit.name }}</b> ({{ unit.hex }}) —
+          {{ unit.side === 'friendly' ? 'ne pourrait plus attaquer personne' : 'ne pourrait plus être attaqué par personne' }}
         </li>
       </ul>
       <p>Modifiez les attaquants ou les cibles.</p>
@@ -187,12 +210,12 @@ onUnmounted(() => {
       <tbody>
         <tr v-for="row in crtRows" :key="row.key" :class="{ 'row-on': terrainRow && row.key === terrainRow.row.key }">
           <th>{{ row.label }}</th>
-          <td v-for="i in 12" :key="i" :class="{ 'col-on': i === column }">{{ row.cells[i - 1] ?? '' }}</td>
+          <td v-for="columnNumber in 12" :key="columnNumber" :class="{ 'col-on': columnNumber === column }">{{ row.cells[columnNumber - 1] ?? '' }}</td>
         </tr>
-        <tr v-for="(line, d) in crtResults" :key="'d' + d" class="crt-die">
-          <th>Dé {{ d + 1 }}</th>
-          <td v-for="(cell, i) in line" :key="i"
-            :class="{ 'col-on': i + 1 === column, hit: combatResult && combatResult.die === d + 1 && combatResult.column === i + 1 }">
+        <tr v-for="(line, dieIndex) in crtResults" :key="'d' + dieIndex" class="crt-die">
+          <th>Dé {{ dieIndex + 1 }}</th>
+          <td v-for="(cell, columnIndex) in line" :key="columnIndex"
+            :class="{ 'col-on': columnIndex + 1 === column, hit: combatResult && combatResult.die === dieIndex + 1 && combatResult.column === columnIndex + 1 }">
             {{ cell }}
           </td>
         </tr>
@@ -212,6 +235,40 @@ onUnmounted(() => {
         {{ combatResult && !rolling ? 'Combat résolu' : 'Combattre' }}
       </button>
     </footer>
+
+    <!-- Application du résultat (cf. useRetreat.js) : unité qui retraite
+         maintenant, et ce qui s'est déjà passé. -->
+    <section v-if="combatResult && !rolling && (retreat || advance || retreatNotes.length)" class="cm-retreat">
+      <p v-if="retreat" class="cm-retreat-now">
+        Retraite de <b>{{ retreat.name }}</b> ({{ retreat.side === 'defender' ? 'défenseur' : 'attaquant' }}) —
+        hex {{ retreat.step }}/{{ retreat.total }} : cliquez sur un hex <span class="cm-red">rouge</span>.
+        <span v-if="retreat.waiting" class="cm-retreat-wait">
+          Ensuite : {{ retreat.waiting }} autre{{ retreat.waiting > 1 ? 's' : '' }} unité{{ retreat.waiting > 1 ? 's' : '' }}.
+        </span>
+      </p>
+      <!-- Réduction facultative offerte par le module dans l'hex actuel
+           (ex. hex City à Arnhem, cf. useArnhem.js::cityRetreatReduction). -->
+      <button v-if="retreat?.reduction" class="cm-end-advance" @click="$emit('reduce-retreat')">
+        {{ retreat.reduction.total < retreat.step ? `S'arrêter ici` : `Réduire la retraite à ${retreat.reduction.total} hex` }}
+        ({{ retreat.reduction.reason }})
+      </button>
+      <ul v-if="retreatNotes.length">
+        <li v-for="(note, noteIndex) in retreatNotes" :key="noteIndex">{{ note }}</li>
+      </ul>
+      <!-- Avance après combat (cf. useRetreat.js) : le chemin de retraite est
+           en vert sur la carte. -->
+      <div v-if="advance" class="cm-advance">
+        <p v-if="advance.name">
+          Avance de <b>{{ advance.name }}</b> : cliquez sur un hex <span class="cm-green">vert vif</span>,
+          ou sur une autre unité victorieuse pour terminer la sienne.
+        </p>
+        <p v-else>
+          Avance après combat : cliquez sur une unité victorieuse (contour <span class="cm-green">vert</span>),
+          puis sur un hex du chemin de retraite.
+        </p>
+        <button class="cm-end-advance" @click="$emit('end-advance')">Terminer l'avance</button>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -259,8 +316,76 @@ onUnmounted(() => {
   padding: 0 4px;
 }
 
-.cm-close:hover {
+.cm-close:hover:not(:disabled) {
   color: #fff;
+}
+
+.cm-close:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.cm-retreat {
+  margin-top: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border-left: 3px solid #e02828;
+  background: rgba(224, 40, 40, 0.12);
+  font-size: 0.78rem;
+}
+
+.cm-retreat p,
+.cm-retreat ul {
+  margin: 0;
+}
+
+.cm-retreat ul {
+  margin-top: 4px;
+  padding-left: 16px;
+  color: #cac9ae;
+}
+
+.cm-red {
+  color: #ff6b5b;
+  font-weight: 700;
+}
+
+.cm-advance {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(46, 160, 67, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cm-advance p {
+  flex: 1;
+}
+
+.cm-green {
+  color: #5fd37a;
+  font-weight: 700;
+}
+
+.cm-end-advance {
+  border: none;
+  background: #2ea043;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cm-end-advance:hover {
+  filter: brightness(1.1);
+}
+
+.cm-retreat-wait {
+  color: #8f8b7a;
 }
 
 .cm-forces {

@@ -44,13 +44,13 @@ const center = computed(() => {
   if (props.dragPx) return props.dragPx
   const { x0, y0, colStep, rowStep } = props.calibration
   const yoff = props.col % 2 === 1 ? rowStep / 2 : 0
-  const w = rowStep * props.size
+  const counterSizePx = rowStep * props.size
   return {
-    x: x0 + props.col * colStep + props.offset.dx * w,
-    y: y0 + (props.row - 1) * rowStep + yoff + props.offset.dy * w,
+    x: x0 + props.col * colStep + props.offset.dx * counterSizePx,
+    y: y0 + (props.row - 1) * rowStep + yoff + props.offset.dy * counterSizePx,
   }
 })
-const w = computed(() => props.calibration.rowStep * props.size)
+const counterSizePx = computed(() => props.calibration.rowStep * props.size)
 
 function onClick() {
   if (props.selectable) emit('select', props.id)
@@ -69,12 +69,12 @@ function onMouseDown(ev) {
 
 <template>
   <g class="counter" :class="{ selected, spent }">
-    <image :href="src" :x="center.x - w / 2" :y="center.y - w / 2" :width="w" :height="w" class="counter-img"
+    <image :href="src" :x="center.x - counterSizePx / 2" :y="center.y - counterSizePx / 2" :width="counterSizePx" :height="counterSizePx" class="counter-img"
       @mousedown="onMouseDown" @click.stop="onClick"
       @contextmenu.prevent.stop="emit('contextmenu', id, $event)" />
-    <rect v-if="selected" class="counter-ring" :x="center.x - w / 2 - 3" :y="center.y - w / 2 - 3" :width="w + 6"
-      :height="w + 6" rx="5" ry="5" />
-    <rect v-if="moved" class="counter-moved-ring" :x="center.x - w / 2" :y="center.y - w / 2" :width="w" :height="w"
+    <rect v-if="selected" class="counter-ring" :x="center.x - counterSizePx / 2 - 3" :y="center.y - counterSizePx / 2 - 3" :width="counterSizePx + 6"
+      :height="counterSizePx + 6" rx="5" ry="5" />
+    <rect v-if="moved" class="counter-moved-ring" :x="center.x - counterSizePx / 2" :y="center.y - counterSizePx / 2" :width="counterSizePx" :height="counterSizePx"
       rx="3" ry="3" />
   </g>
 </template>

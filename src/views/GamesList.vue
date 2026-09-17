@@ -20,8 +20,8 @@ async function refresh() {
   error.value = ''
   try {
     games.value = await listGames()
-  } catch (e) {
-    error.value = e.message
+  } catch (requestError) {
+    error.value = requestError.message
   } finally {
     loading.value = false
   }

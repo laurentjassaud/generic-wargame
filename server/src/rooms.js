@@ -58,11 +58,11 @@ export function toSummary(game) {
 export function toPublic(game) {
   return {
     ...toSummary(game),
-    players: [...game.players.values()].map((p) => ({
-      id: p.id,
-      name: p.name,
-      side: p.side,
-      connected: p.connected,
+    players: [...game.players.values()].map((player) => ({
+      id: player.id,
+      name: player.name,
+      side: player.side,
+      connected: player.connected,
     })),
     boardState: Object.fromEntries(game.boardState),
     turnStep: game.turnStep,
@@ -79,7 +79,7 @@ export function joinGame(id, { passcode: code, playerId: existingPlayerId, name,
   if (!reconnecting) {
     if (game.status !== 'lobby') throw new RoomError('already-started')
     if (game.players.size >= game.maxPlayers) throw new RoomError('room-full')
-    const sideTaken = [...game.players.values()].some((p) => p.side === side)
+    const sideTaken = [...game.players.values()].some((otherPlayer) => otherPlayer.side === side)
     if (sideTaken) throw new RoomError('side-taken')
   }
 

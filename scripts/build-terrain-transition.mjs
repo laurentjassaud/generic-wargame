@@ -14,9 +14,9 @@ const live = readFileSync(liveHtmlPath, 'utf8')
 const mod = JSON.parse(readFileSync('public/modules/arnhem/arnhem.json', 'utf8'))
 
 function extractJsonTag(id) {
-  const m = live.match(new RegExp(`<script id="${id}" type="application/json">([^<]*)</script>`))
-  if (!m) throw new Error('missing data tag: ' + id)
-  return JSON.parse(m[1])
+  const tagMatch = live.match(new RegExp(`<script id="${id}" type="application/json">([^<]*)</script>`))
+  if (!tagMatch) throw new Error('missing data tag: ' + id)
+  return JSON.parse(tagMatch[1])
 }
 
 const removedHexes = extractJsonTag('removed-data')
@@ -53,4 +53,4 @@ console.log('removedHexes:', removedHexes.length, 'hex(es)')
 console.log('roads:', roads.length, 'segment(s)')
 console.log('trails:', trails.length, 'segment(s)')
 console.log('terrain changes:', terrainChanges.length)
-for (const c of terrainChanges) console.log('  ', c.id, c.from, '->', c.to)
+for (const terrainChange of terrainChanges) console.log('  ', terrainChange.id, terrainChange.from, '->', terrainChange.to)

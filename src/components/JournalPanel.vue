@@ -11,6 +11,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { ref, computed, watch, onMounted } from 'vue'
+import { AUTOSAVE_KEY, normalizeSettings, sameSettings, hasPendingReplay, takePendingReplay } from '../lib/journalStorage.js'
 
 const props = defineProps({
   // Identifiant/nom du module en cours (cf. HexMap.vue) et tour courant —
@@ -19,9 +20,22 @@ const props = defineProps({
   // "nomDuModule_save_date_turn" pour l'auto-save.
   moduleId: { type: String, default: 'module' },
   turn: { type: Number, default: 1 },
+  // Réglages de la partie ouverte (mode Libre/Assisté, scénario, météo,
+  // timing — cf. lib/journalStorage.js::SETTING_KEYS), ou `null` s'ils ne
+  // sont pas connus (partie multijoueur). Enregistrés avec le journal : il
+  // ne se rejoue correctement qu'avec eux.
+  settings: { type: Object, default: null },
 })
 
-const emit = defineEmits(['loaded'])
+// `loaded` : journal à rejouer sur la carte (cf. HexMap.vue::onJournalLoaded).
+// `settings-mismatch` : `{ settings, entries }` — le journal a été joué avec
+// d'AUTRES réglages que la partie ouverte ; c'est à la page de relancer la
+// partie avec ces réglages (cf. DemoPlay.vue::restartWith), le journal est
+// alors rejoué après la relance (cf. `resumePending`).
+const emit = defineEmits(['loaded', 'settings-mismatch'])
+
+const PARTY_LABELS = { libre: 'Libre', assiste: 'Assisté' }
+const partyLabel = (settings) => PARTY_LABELS[settings?.party] ?? null
 
 const entries = ref([]) // { id, t: "14:32:05", kind, text, data } — plus récent en tête
 let nextId = 1
@@ -29,8 +43,8 @@ let nextId = 1
 /** "Arnhem: Op. Market-Garden" -> "arnhem-op-market-garden" — pour un index
  *  de sauvegarde utilisable comme nom de fichier ou clé de stockage. */
 const DIACRITICS_RE = new RegExp('[\\u0300-\\u036f]', 'g') // marques diacritiques combinantes (accents) après normalize('NFD')
-function slugify(s) {
-  return (s || 'module')
+function slugify(text) {
+  return (text || 'module')
     .normalize('NFD').replace(DIACRITICS_RE, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -59,36 +73,51 @@ const displayEntries = computed(() => (order.value === 'asc' ? [...entries.value
  *  carte (cf. HexMap.vue::applyReplayEntry) — pas juste le texte affiché. */
 function log(kind, text, data) {
   const id = nextId++
+  // Pas de limite de taille : le journal SERT de sauvegarde, le rejeu part du
+  // déploiement initial et a besoin de TOUTES les entrées (une limite qui
+  // supprimait les plus anciennes faisait rejouer la partie de travers).
   entries.value.unshift({ id, t: new Date().toLocaleTimeString('fr-FR'), kind, text, data })
-  if (entries.value.length > 300) entries.value.pop()
   return id
 }
 function clear() {
   entries.value = []
+  replayTail = []
 }
 /** Retire une entrée précise par id (cf. `log`), sans effet si déjà purgée. */
 function remove(id) {
-  const i = entries.value.findIndex((e) => e.id === id)
-  if (i !== -1) entries.value.splice(i, 1)
+  const entryIndex = entries.value.findIndex((entry) => entry.id === id)
+  if (entryIndex !== -1) entries.value.splice(entryIndex, 1)
 }
+
+// Entrées d'un journal chargé PAS ENCORE rejouées (ordre chronologique) —
+// elles ne sont pas encore dans `entries` (cf. `revealEntry`), mais font
+// bien partie de la partie : sans elles, l'auto-save écrite pendant un rejeu
+// pas à pas ne contiendrait que le début de la partie (et un rechargement de
+// la page à ce moment-là perdait le reste).
+let replayTail = []
 
 /** Ordre chronologique (du plus ancien au plus récent) — plus lisible/
  *  portable qu'un export "à l'envers" propre au stockage interne. Partagé
- *  par l'export manuel et l'auto-save. */
+ *  par l'export manuel et l'auto-save. Inclut les entrées d'un rejeu en
+ *  cours pas encore rejouées (cf. `replayTail`). */
 function toChronological() {
-  return [...entries.value].reverse().map(({ t, kind, text, data }) => ({ t, kind, text, data }))
+  const shown = [...entries.value].reverse().map(({ t: time, kind, text, data }) => ({ t: time, kind, text, data }))
+  return [...shown, ...replayTail]
 }
 
 /** Enregistre le journal au format JSON — nommé "nomDuModule_date_turn.json"
  *  (cf. `saveLabel`), un fichier téléchargé à chaque appel (contrairement à
- *  l'auto-save, qui n'en garde toujours qu'un seul — cf. plus bas). */
+ *  l'auto-save, qui n'en garde toujours qu'un seul — cf. plus bas). Format :
+ *  `{ module, settings, entries }` (les anciens fichiers, simple liste
+ *  d'entrées, restent lisibles — cf. `onFileChosen`). */
 function exportJournal() {
-  const blob = new Blob([JSON.stringify(toChronological(), null, 2)], { type: 'application/json' })
+  const content = { module: props.moduleId, settings: normalizeSettings(props.settings), entries: toChronological() }
+  const blob = new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${saveLabel(false)}.json`
-  a.click()
+  const downloadLink = document.createElement('a')
+  downloadLink.href = url
+  downloadLink.download = `${saveLabel(false)}.json`
+  downloadLink.click()
   URL.revokeObjectURL(url)
 }
 
@@ -98,14 +127,13 @@ function exportJournal() {
 // comme `label` DANS le contenu sauvegardé (affiché dans la toolbar,
 // cf. template), pas comme clé de stockage — une clé qui changerait à
 // chaque tour créerait justement les entrées multiples qu'on veut éviter.
-const AUTOSAVE_KEY = 'generic-wargame:journal-autosave'
 const lastAutosaveLabel = ref('')
 let autosaveTimer = null
 function autosaveNow() {
   const label = saveLabel(true)
   try {
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
-      label, savedAt: new Date().toISOString(), entries: toChronological(),
+      label, savedAt: new Date().toISOString(), settings: normalizeSettings(props.settings), entries: toChronological(),
     }))
     lastAutosaveLabel.value = label
   } catch {
@@ -130,8 +158,11 @@ watch(entries, () => {
 // jamais automatique, pour ne pas écraser une partie qu'on voulait
 // justement recommencer à zéro. Le rejeu lui-même passe par le même circuit
 // qu'un import manuel (`emit('loaded', ...)`, cf. `onFileChosen`).
-const pendingAutosave = ref(null) // { label, savedAt, entries } | null
+const pendingAutosave = ref(null) // { label, savedAt, settings, entries } | null
 onMounted(() => {
+  // Partie relancée pour reprendre un journal (cf. `resumePending`) : la
+  // reprise est déjà décidée, inutile de proposer l'auto-save.
+  if (hasPendingReplay()) return
   try {
     const raw = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) ?? 'null')
     if (raw?.entries?.length && raw.label?.startsWith(slugify(props.moduleId) + '_')) {
@@ -141,14 +172,47 @@ onMounted(() => {
     // Stockage indisponible/corrompu — pas d'auto-save à proposer.
   }
 })
+
+/** Point de passage UNIQUE pour rejouer un journal (auto-save ou fichier).
+ *  Si le journal a été joué avec d'autres réglages que la partie ouverte (le
+ *  mode Libre/Assisté surtout), on ne le rejoue PAS ici : la page relance la
+ *  partie avec ses réglages (évènement `settings-mismatch`), puis le rejoue
+ *  (cf. `resumePending`). Sinon, rejeu immédiat. */
+function startReplay(list, settings, message) {
+  if (!sameSettings(settings, props.settings)) {
+    const mode = partyLabel(settings)
+    emit('settings-mismatch', {
+      settings: normalizeSettings(settings),
+      entries: list,
+      message: `${message}${mode ? ` La partie a été relancée en mode ${mode}, celui de la sauvegarde.` : ''}`,
+    })
+    return
+  }
+  entries.value = []
+  replayTail = [...list]
+  emit('loaded', list)
+  loadResult.value = { type: 'success', message }
+}
+
+const countText = (count) => `${count} évènement${count > 1 ? 's' : ''}`
+
 function resumeAutosave() {
   const save = pendingAutosave.value
   if (!save) return
-  entries.value = []
-  emit('loaded', save.entries)
-  const count = save.entries.length
-  loadResult.value = { type: 'success', message: `Sauvegarde auto reprise : ${count} évènement${count > 1 ? 's' : ''}.` }
   pendingAutosave.value = null
+  startReplay(save.entries, save.settings, `Sauvegarde auto reprise : ${countText(save.entries.length)}.`)
+}
+
+/** Appelé par HexMap.vue une fois la carte montée : rejoue le journal mis de
+ *  côté avant une relance de la partie (cf. lib/journalStorage.js), s'il y
+ *  en a un. */
+function resumePending() {
+  const pending = takePendingReplay()
+  if (!pending?.entries) return
+  entries.value = []
+  replayTail = [...pending.entries]
+  emit('loaded', pending.entries)
+  loadResult.value = { type: 'success', message: pending.message ?? `Journal chargé : ${countText(pending.entries.length)}.` }
 }
 function dismissAutosave() {
   pendingAutosave.value = null
@@ -183,14 +247,19 @@ async function onFileChosen(ev) {
   try {
     const text = await file.text()
     const parsed = JSON.parse(text)
-    if (!Array.isArray(parsed)) throw new Error('le fichier ne contient pas une liste d\'évènements')
-    const chronological = parsed.map((e) => ({
-      t: e.t ?? '', kind: e.kind ?? 'info', text: e.text ?? '', data: e.data ?? null,
+    // Deux formats : l'actuel `{ module, settings, entries }`, ou l'ancien
+    // (simple liste d'entrées, sans réglages — rejoué tel quel dans la
+    // partie ouverte).
+    const list = Array.isArray(parsed) ? parsed : parsed?.entries
+    if (!Array.isArray(list)) throw new Error('le fichier ne contient pas une liste d\'évènements')
+    if (!Array.isArray(parsed) && parsed.module && parsed.module !== props.moduleId) {
+      throw new Error(`ce journal appartient à un autre module (${parsed.module})`)
+    }
+    const chronological = list.map((entry) => ({
+      t: entry.t ?? '', kind: entry.kind ?? 'info', text: entry.text ?? '', data: entry.data ?? null,
     }))
-    entries.value = []
-    emit('loaded', chronological)
-    const count = chronological.length
-    loadResult.value = { type: 'success', message: `Journal chargé : ${count} évènement${count > 1 ? 's' : ''}.` }
+    startReplay(chronological, Array.isArray(parsed) ? null : parsed.settings,
+      `Journal chargé : ${countText(chronological.length)}.`)
   } catch (err) {
     loadResult.value = { type: 'error', message: 'Impossible de charger ce journal : ' + err.message }
   }
@@ -200,10 +269,13 @@ async function onFileChosen(ev) {
  *  fastForwardReplay) — conserve son horodatage d'origine plutôt que
  *  l'heure courante, contrairement à `log()`. */
 function revealEntry(entry) {
+  // HexMap.vue rejoue dans l'ordre : l'entrée révélée est la tête de
+  // `replayTail`, qui passe donc dans `entries`.
+  replayTail.shift()
   entries.value.unshift({ id: nextId++, t: entry.t, kind: entry.kind, text: entry.text, data: entry.data })
 }
 
-defineExpose({ log, clear, remove, revealEntry })
+defineExpose({ log, clear, remove, revealEntry, resumePending })
 </script>
 
 <template>
@@ -223,7 +295,10 @@ defineExpose({ log, clear, remove, revealEntry })
     </div>
 
     <div v-if="pendingAutosave" class="jn-resume">
-      <p class="jn-resume-msg">Une partie en cours a été trouvée ({{ pendingAutosave.label }}).</p>
+      <p class="jn-resume-msg">
+        Une partie en cours a été trouvée ({{ pendingAutosave.label
+        }}<template v-if="partyLabel(pendingAutosave.settings)">, mode {{ partyLabel(pendingAutosave.settings) }}</template>).
+      </p>
       <div class="jn-resume-btns">
         <button class="jn-btn" @click="resumeAutosave">Reprendre</button>
         <button class="jn-btn" @click="dismissAutosave">Ignorer</button>
@@ -231,8 +306,8 @@ defineExpose({ log, clear, remove, revealEntry })
     </div>
 
     <p v-if="!entries.length" class="jn-empty">Aucun évènement pour l'instant.</p>
-    <div v-for="e in displayEntries" :key="e.id" class="jn-row" :class="'jn-' + e.kind">
-      <span class="jn-t">{{ e.t }}</span><span class="jn-txt">{{ e.text }}</span>
+    <div v-for="entry in displayEntries" :key="entry.id" class="jn-row" :class="'jn-' + entry.kind">
+      <span class="jn-t">{{ entry.t }}</span><span class="jn-txt">{{ entry.text }}</span>
     </div>
     <button v-if="entries.length" class="jn-clear" @click="clear">Vider le journal</button>
 

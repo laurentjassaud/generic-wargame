@@ -31,9 +31,9 @@ const TONES = [
 ]
 
 const TAB_TOPS = [220, 346, 444, 560]
-function tabTop(i) {
-  if (i < TAB_TOPS.length) return TAB_TOPS[i] + 'px'
-  return (TAB_TOPS[TAB_TOPS.length - 1] + 110 * (i - TAB_TOPS.length + 1)) + 'px'
+function tabTop(tabIndex) {
+  if (tabIndex < TAB_TOPS.length) return TAB_TOPS[tabIndex] + 'px'
+  return (TAB_TOPS[TAB_TOPS.length - 1] + 110 * (tabIndex - TAB_TOPS.length + 1)) + 'px'
 }
 
 function select(key) {
@@ -53,8 +53,8 @@ function close() {
   openTab.value = null
 }
 
-function rowVars(tab, i) {
-  const tone = TONES[i % TONES.length]
+function rowVars(tab, tabIndex) {
+  const tone = TONES[tabIndex % TONES.length]
   const isOpen = openTab.value === tab.key
   const isPeeking = !isOpen && hoverKey.value === tab.key
   const isFading = fadingKeys.value.has(tab.key)
@@ -66,7 +66,7 @@ function rowVars(tab, i) {
     '--tone-rule': tone.rule,
     '--tone-hover': tone.hover,
     '--tone-label': tone.label,
-    '--tab-top': tabTop(i),
+    '--tab-top': tabTop(tabIndex),
     '--content-w': tab.wide ? '30vw' : '22vw',
     '--content-x': isOpen ? '0%' : isPeeking ? `calc(100% - ${HOVER_PEEK}px)` : '100%',
     '--content-slide': isOpen ? '0px' : '16px',
@@ -80,7 +80,7 @@ function rowVars(tab, i) {
 
 <template>
   <div class="dc-root">
-    <div v-for="(tab, i) in tabs" :key="tab.key" class="dc-row" :style="rowVars(tab, i)">
+    <div v-for="(tab, tabIndex) in tabs" :key="tab.key" class="dc-row" :style="rowVars(tab, tabIndex)">
       <div class="dc-tab-shadow" aria-hidden="true">
         <span class="dc-tab-label">{{ tab.label }}</span>
       </div>

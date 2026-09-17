@@ -9,7 +9,7 @@ import { hexId } from './calibration.js'
 export function removedHexSet(map) {
   const raw = map && map.removedHexes
   if (!raw) return new Set()
-  return new Set(String(raw).split(',').map((s) => s.trim()).filter(Boolean))
+  return new Set(String(raw).split(',').map((idText) => idText.trim()).filter(Boolean))
 }
 
 /** Dernière ligne valide (1-based) pour une colonne 0-based donnée : les

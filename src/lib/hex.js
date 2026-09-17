@@ -3,16 +3,16 @@
 // col : 0-based (0 = première colonne). row : 1-based (cohérent avec hexId).
 
 function offsetToCube(col, row) {
-  const q = col
-  const r = row - (col - (col & 1)) / 2
-  return { q, r, s: -q - r }
+  const axialQ = col
+  const axialR = row - (col - (col & 1)) / 2
+  return { q: axialQ, r: axialR, s: -axialQ - axialR }
 }
 
 /** Distance en nombre d'hexs entre deux cases {col,row}. */
-export function hexDistance(a, b) {
-  const A = offsetToCube(a.col, a.row)
-  const B = offsetToCube(b.col, b.row)
-  return (Math.abs(A.q - B.q) + Math.abs(A.r - B.r) + Math.abs(A.s - B.s)) / 2
+export function hexDistance(hexA, hexB) {
+  const cubeA = offsetToCube(hexA.col, hexA.row)
+  const cubeB = offsetToCube(hexB.col, hexB.row)
+  return (Math.abs(cubeA.q - cubeB.q) + Math.abs(cubeA.r - cubeB.r) + Math.abs(cubeA.s - cubeB.s)) / 2
 }
 
 const AXIAL_DIRS = [
@@ -21,15 +21,15 @@ const AXIAL_DIRS = [
 ]
 
 function toAxial(col, row) {
-  const { q, r } = offsetToCube(col, row)
-  return { q, r }
+  const { q: axialQ, r: axialR } = offsetToCube(col, row)
+  return { q: axialQ, r: axialR }
 }
-function fromAxial(q, r) {
-  return { col: q, row: r + (q - (q & 1)) / 2 }
+function fromAxial(axialQ, axialR) {
+  return { col: axialQ, row: axialR + (axialQ - (axialQ & 1)) / 2 }
 }
 
 /** Les 6 hexs voisins de (col,row). */
 export function neighborsOf(col, row) {
-  const { q, r } = toAxial(col, row)
-  return AXIAL_DIRS.map((d) => fromAxial(q + d.dq, r + d.dr))
+  const { q: axialQ, r: axialR } = toAxial(col, row)
+  return AXIAL_DIRS.map((direction) => fromAxial(axialQ + direction.dq, axialR + direction.dr))
 }

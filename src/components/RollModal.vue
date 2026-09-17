@@ -41,18 +41,18 @@ const pos = ref({ x: 16, y: 560 })
 const dragging = ref(false)
 let drag = null
 
-function onDragStart(e) {
-  if (e.target.closest('button')) return
+function onDragStart(event) {
+  if (event.target.closest('button')) return
   dragging.value = true
-  drag = { mx: e.clientX, my: e.clientY, x: pos.value.x, y: pos.value.y }
+  drag = { mx: event.clientX, my: event.clientY, x: pos.value.x, y: pos.value.y }
   window.addEventListener('pointermove', onDragMove)
   window.addEventListener('pointerup', onDragEnd)
-  e.preventDefault()
+  event.preventDefault()
 }
-function onDragMove(e) {
+function onDragMove(event) {
   if (!dragging.value) return
-  const nx = drag.x + (e.clientX - drag.mx)
-  const ny = drag.y + (e.clientY - drag.my)
+  const nx = drag.x + (event.clientX - drag.mx)
+  const ny = drag.y + (event.clientY - drag.my)
   const maxX = (window.innerWidth || 1200) - 90
   const maxY = (window.innerHeight || 800) - 90
   pos.value = { x: Math.min(Math.max(-260, nx), maxX), y: Math.min(Math.max(0, ny), maxY) }

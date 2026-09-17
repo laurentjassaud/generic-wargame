@@ -34,50 +34,50 @@ const emit = defineEmits(['dragstart', 'select'])
 
 /** Un renfort n'est jouable qu'à partir de son tour d'arrivée déclaré, et
  *  seulement dans une phase qui l'autorise (cf. prop `canPlace`). */
-function isAvailable(c) {
-  return (c.turn ?? 1) <= props.currentTurn && (props.canPlace?.(c) ?? true)
+function isAvailable(counter) {
+  return (counter.turn ?? 1) <= props.currentTurn && (props.canPlace?.(counter) ?? true)
 }
 /** Info-bulle d'un renfort grisé : pourquoi il ne peut pas entrer en jeu. */
-function unavailableReason(c) {
-  if ((c.turn ?? 1) > props.currentTurn) return `Arrive au tour ${c.turn}`
-  if (props.canPlace && !props.canPlace(c)) return 'Ne peut pas entrer en jeu pendant cette phase'
+function unavailableReason(counter) {
+  if ((counter.turn ?? 1) > props.currentTurn) return `Arrive au tour ${counter.turn}`
+  if (props.canPlace && !props.canPlace(counter)) return 'Ne peut pas entrer en jeu pendant cette phase'
   return ''
 }
-function onDragStart(c, ev) {
-  if (!isAvailable(c)) { ev.preventDefault(); return }
-  emit('dragstart', c.id, ev)
+function onDragStart(counter, ev) {
+  if (!isAvailable(counter)) { ev.preventDefault(); return }
+  emit('dragstart', counter.id, ev)
 }
-function onSelect(c) {
-  if (!isAvailable(c)) return
-  emit('select', c.id)
+function onSelect(counter) {
+  if (!isAvailable(counter)) return
+  emit('select', counter.id)
 }
 
 /** Groupes { turn, items } triés par tour croissant. */
 const groups = computed(() => {
   const byTurn = new Map()
-  for (const c of props.reinforcements) {
-    const turn = c.turn ?? 1
+  for (const counter of props.reinforcements) {
+    const turn = counter.turn ?? 1
     if (!byTurn.has(turn)) byTurn.set(turn, [])
-    byTurn.get(turn).push(c)
+    byTurn.get(turn).push(counter)
   }
-  return [...byTurn.entries()].sort((a, b) => a[0] - b[0]).map(([turn, items]) => ({ turn, items }))
+  return [...byTurn.entries()].sort((turnEntryA, turnEntryB) => turnEntryA[0] - turnEntryB[0]).map(([turn, items]) => ({ turn, items }))
 })
 </script>
 
 <template>
   <div class="rf-list">
     <p v-if="!reinforcements.length" class="rf-empty">Tous les renforts sont sur la carte.</p>
-    <section v-for="g in groups" :key="g.turn" class="rf-turn">
-      <h3 class="rf-turn-title">Tour {{ g.turn }}</h3>
+    <section v-for="group in groups" :key="group.turn" class="rf-turn">
+      <h3 class="rf-turn-title">Tour {{ group.turn }}</h3>
       <div class="rf-grid">
-        <figure v-for="c in g.items" :key="c.id" class="rf-piece">
-          <img :src="c.src" :alt="c.name" width="48" height="48" :draggable="draggable && isAvailable(c)"
-            :class="{ 'rf-selected': String(c.id) === String(selectedId), 'rf-unavailable': !isAvailable(c) }"
-            :title="unavailableReason(c)"
-            @dragstart="onDragStart(c, $event)" @click="onSelect(c)" />
+        <figure v-for="counter in group.items" :key="counter.id" class="rf-piece">
+          <img :src="counter.src" :alt="counter.name" width="48" height="48" :draggable="draggable && isAvailable(counter)"
+            :class="{ 'rf-selected': String(counter.id) === String(selectedId), 'rf-unavailable': !isAvailable(counter) }"
+            :title="unavailableReason(counter)"
+            @dragstart="onDragStart(counter, $event)" @click="onSelect(counter)" />
           <!-- Indication d'hex : pure information, pas de drag & drop (seule
                l'image ci-dessus déclenche dragstart/select). -->
-          <figcaption class="rf-hex">{{ c.setup }}</figcaption>
+          <figcaption class="rf-hex">{{ counter.setup }}</figcaption>
         </figure>
       </div>
     </section>

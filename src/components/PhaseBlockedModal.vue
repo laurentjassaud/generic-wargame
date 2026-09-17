@@ -35,8 +35,8 @@ defineProps({
 
 const emit = defineEmits(['close'])
 
-function onKey(e) {
-  if (e.key === 'Escape' || e.key === 'Enter') emit('close')
+function onKey(event) {
+  if (event.key === 'Escape' || event.key === 'Enter') emit('close')
 }
 onMounted(() => window.addEventListener('keydown', onKey))
 onUnmounted(() => window.removeEventListener('keydown', onKey))
@@ -49,10 +49,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       <template v-if="stacks.length">
         <p>{{ stackMessage }}</p>
         <ul class="pb-list">
-          <li v-for="s in stacks" :key="s.key">
-            <span class="pb-hex">{{ s.hex }}</span>
+          <li v-for="stack in stacks" :key="stack.key">
+            <span class="pb-hex">{{ stack.hex }}</span>
             <span class="pb-vs">—</span>
-            <b>{{ s.units.join(', ') }}</b>
+            <b>{{ stack.units.join(', ') }}</b>
           </li>
         </ul>
       </template>
@@ -61,10 +61,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         avant de terminer la phase Combat :
       </p>
       <ul v-if="engagements.length" class="pb-list">
-        <li v-for="e in engagements" :key="e.key">
-          <b>{{ e.friendly }}</b> <span class="pb-hex">{{ e.friendlyHex }}</span>
+        <li v-for="engagement in engagements" :key="engagement.key">
+          <b>{{ engagement.friendly }}</b> <span class="pb-hex">{{ engagement.friendlyHex }}</span>
           <span class="pb-vs">↔</span>
-          <b>{{ e.enemy }}</b> <span class="pb-hex">{{ e.enemyHex }}</span>
+          <b>{{ engagement.enemy }}</b> <span class="pb-hex">{{ engagement.enemyHex }}</span>
         </li>
       </ul>
       <footer class="pb-foot">

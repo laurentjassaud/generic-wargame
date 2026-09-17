@@ -18,8 +18,8 @@ const outDir = 'public/modules/arnhem/images/counters/german'
 mkdirSync(outDir, { recursive: true })
 
 // Nettoyage des anciens placeholders SVG générés précédemment.
-for (const f of readdirSync(outDir)) {
-  if (f.endsWith('.svg')) unlinkSync(join(outDir, f))
+for (const fileName of readdirSync(outDir)) {
+  if (fileName.endsWith('.svg')) unlinkSync(join(outDir, fileName))
 }
 
 // Unités combat (infanterie/reco) — attaque-défense-mouvement. img = ordre de collage.
@@ -70,20 +70,20 @@ const ARTY = [
 
 function nameFromCode(code) {
   if (!code.includes('/')) return code
-  const [a, b] = code.split('/')
-  return `${b}-${a}`
+  const [beforeSlash, afterSlash] = code.split('/')
+  return `${afterSlash}-${beforeSlash}`
 }
 
 const counters = []
-for (const u of [...UNITS, ...ARTY]) {
-  const id = 'de-' + String(u.img).padStart(2, '0')
+for (const unit of [...UNITS, ...ARTY]) {
+  const id = 'de-' + String(unit.img).padStart(2, '0')
   const file = id + '.png'
-  copyFileSync(join(srcDir, `img-${String(u.img).padStart(2, '0')}.png`), join(outDir, file))
-  const isArty = u.bar != null
+  copyFileSync(join(srcDir, `img-${String(unit.img).padStart(2, '0')}.png`), join(outDir, file))
+  const isArty = unit.bar != null
   counters.push({
-    id, name: nameFromCode(u.code), code: u.code, type: isArty ? 'arty' : 'infantry', faction: 'german',
-    ...(isArty ? { bar: u.bar, fpf: u.fpf, range: u.range } : { atk: u.atk }),
-    def: u.def, mov: u.mov, ss: !!u.ss, src: `/modules/arnhem/images/counters/german/${file}`,
+    id, name: nameFromCode(unit.code), code: unit.code, type: isArty ? 'arty' : 'infantry', faction: 'german',
+    ...(isArty ? { bar: unit.bar, fpf: unit.fpf, range: unit.range } : { atk: unit.atk }),
+    def: unit.def, mov: unit.mov, ss: !!unit.ss, src: `/modules/arnhem/images/counters/german/${file}`,
   })
 }
 

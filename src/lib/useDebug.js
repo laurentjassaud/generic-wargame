@@ -122,8 +122,8 @@ function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terra
   for (;;) {
     let currentKey = null
     let currentDist = Infinity
-    for (const [key, d] of dist) {
-      if (!visited.has(key) && d < currentDist) { currentKey = key; currentDist = d }
+    for (const [key, distance] of dist) {
+      if (!visited.has(key) && distance < currentDist) { currentKey = key; currentDist = distance }
     }
     if (currentKey == null) break // plus aucun nœud à traiter : exploration terminée
     visited.add(currentKey)
@@ -131,9 +131,9 @@ function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terra
     // — il reste dans le résultat (atteint), mais on n'explore RIEN depuis
     // lui, cf. useAssisted.js::canEnterHex pour la même règle au clic.
     if (zocSet.has(currentKey)) continue
-    const [c, r] = currentKey.split(',').map(Number)
-    for (const n of neighborsOf(c, r)) {
-      if (!hexOnMap(n.col, n.row)) continue
+    const [hexCol, hexRow] = currentKey.split(',').map(Number)
+    for (const neighbor of neighborsOf(hexCol, hexRow)) {
+      if (!hexOnMap(neighbor.col, neighbor.row)) continue
       // `from: { c, r }` (le nœud qu'on est en train d'étendre) est ce qui
       // permet à `terrainCost`/`canEnterTerrain` de détecter une arête
       // route/piste PRÉCISE entre ce nœud et son voisin `n` — sans lui, on
@@ -141,10 +141,10 @@ function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terra
       // piste au terrain interdit (cf. useAssisted.js::terrainCost/
       // canEnterTerrain : une route reste praticable même à travers un
       // terrain autrement infranchissable pour un véhicule).
-      if (!canEnterTerrain(unit, { c: n.col, r: n.row }, { c, r })) continue // infranchissable pour ce type de pion
-      const next = currentDist + terrainCost({ c: n.col, r: n.row }, { c, r })
+      if (!canEnterTerrain(unit, { c: neighbor.col, r: neighbor.row }, { c: hexCol, r: hexRow })) continue // infranchissable pour ce type de pion
+      const next = currentDist + terrainCost({ c: neighbor.col, r: neighbor.row }, { c: hexCol, r: hexRow })
       if (next > budget) continue // trop cher pour arriver jusque-là : hors de portée
-      const key = n.col + ',' + n.row
+      const key = neighbor.col + ',' + neighbor.row
       if (next < (dist.get(key) ?? Infinity)) dist.set(key, next)
     }
   }
@@ -157,14 +157,14 @@ function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terra
   // rejoindre au moins un voisin libre). On ne l'exclut du RÉSULTAT que si
   // c'est un cul-de-sac : rien n'empêche de le TRAVERSER pour atteindre plus
   // loin (déjà géré ci-dessus, l'exploration continue au travers).
-  for (const [key, d] of dist) {
-    const [c, r] = key.split(',').map(Number)
-    if (!hasFriendlyOccupant(unit, { c, r })) continue
-    const remaining = budget - d
-    const canDepart = remaining > 0 && !zocSet.has(key) && neighborsOf(c, r).some((n) => {
-      if (!hexOnMap(n.col, n.row)) return false
-      const nh = { c: n.col, r: n.row }
-      return canEnterTerrain(unit, nh, { c, r }) && remaining >= terrainCost(nh, { c, r })
+  for (const [key, distance] of dist) {
+    const [hexCol, hexRow] = key.split(',').map(Number)
+    if (!hasFriendlyOccupant(unit, { c: hexCol, r: hexRow })) continue
+    const remaining = budget - distance
+    const canDepart = remaining > 0 && !zocSet.has(key) && neighborsOf(hexCol, hexRow).some((neighbor) => {
+      if (!hexOnMap(neighbor.col, neighbor.row)) return false
+      const nh = { c: neighbor.col, r: neighbor.row }
+      return canEnterTerrain(unit, nh, { c: hexCol, r: hexRow }) && remaining >= terrainCost(nh, { c: hexCol, r: hexRow })
     })
     if (!canDepart) dist.delete(key)
   }
@@ -189,12 +189,12 @@ export function useDebug(
   // lib/useAssisted.js::terrainCost) — pas juste le coût de zone brut.
   const adjacentCotLabels = computed(() => {
     if (!debug.value) return []
-    const c = selectedCounter.value
-    if (!c) return []
-    const from = { c: c.col, r: c.row }
+    const counter = selectedCounter.value
+    if (!counter) return []
+    const from = { c: counter.col, r: counter.row }
     return hexes.value
-      .filter((h) => isAdjacent(h))
-      .map((h) => ({ id: h.id, cx: h.cx, cy: h.cy, cot: terrainCost({ c: h.c, r: h.r }, from) }))
+      .filter((hex) => isAdjacent(hex))
+      .map((hex) => ({ id: hex.id, cx: hex.cx, cy: hex.cy, cot: terrainCost({ c: hex.c, r: hex.r }, from) }))
   })
 
   // Ensemble des hex ("col,row") que le pion sélectionné peut atteindre avec
@@ -205,16 +205,16 @@ export function useDebug(
   // alors rien non plus.
   const inRangeSet = computed(() => {
     if (!debug.value) return new Set()
-    const c = selectedCounter.value
-    if (!c) return new Set()
-    const budget = remainingMp(c)
+    const counter = selectedCounter.value
+    if (!counter) return new Set()
+    const budget = remainingMp(counter)
     return reachableHexes(
-      c, { col: c.col, row: c.row },
+      counter, { col: counter.col, row: counter.row },
       budget == null ? Infinity : budget,
       neighborsOf, hexOnMap, terrainCost, canEnterTerrain, zocSet.value, hasFriendlyOccupant,
     )
   })
-  const isInRange = (h) => inRangeSet.value.has(h.c + ',' + h.r)
+  const isInRange = (hex) => inRangeSet.value.has(hex.c + ',' + hex.r)
 
   // Un objet `{ id, cx, cy, surcharge }` par hex d'entrée actuellement
   // surligné (cf. HexMap.vue::entryHexSet) dont le surcoût de congestion
@@ -225,9 +225,9 @@ export function useDebug(
   const entrySurchargeLabels = computed(() => {
     if (!debug.value) return []
     return hexes.value
-      .filter((h) => entryHexSet.value.has(h.c + ',' + h.r))
-      .map((h) => ({ id: h.id, cx: h.cx, cy: h.cy, surcharge: entrySurcharge({ c: h.c, r: h.r }) }))
-      .filter((d) => d.surcharge > 0)
+      .filter((hex) => entryHexSet.value.has(hex.c + ',' + hex.r))
+      .map((hex) => ({ id: hex.id, cx: hex.cx, cy: hex.cy, surcharge: entrySurcharge({ c: hex.c, r: hex.r }) }))
+      .filter((label) => label.surcharge > 0)
   })
 
   return { debug, adjacentCotLabels, isInRange, entrySurchargeLabels }

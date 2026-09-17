@@ -9,10 +9,10 @@ const mod = JSON.parse(readFileSync('public/modules/arnhem/arnhem.json', 'utf8')
 const { imageWidth, imageHeight, cols, rows, evenColMinus } = mod.map
 const removedSet = removedHexSet(mod.map)
 const mapShapeCfg = { cols, rows, evenColMinus }
-const hexOnMap = (c, r) => hexExists(c, r, mapShapeCfg, removedSet)
+const hexOnMap = (col, row) => hexExists(col, row, mapShapeCfg, removedSet)
 const initialRemoved = [...removedSet].sort()
-const { x0, y0, colStep, a, rowStep } = DEFAULT_CALIBRATION
-const b = rowStep / 2
+const { x0, y0, colStep, a: hexRadius, rowStep } = DEFAULT_CALIBRATION
+const halfRowStep = rowStep / 2
 const grid = mod.terrain.grid
 const TYPES = mod.terrain.types
 
@@ -24,31 +24,31 @@ const AXIAL_DIRS = [
   { dq: -1, dr: 0 }, { dq: -1, dr: 1 }, { dq: 0, dr: 1 },
 ]
 function offsetToCube(col, row) {
-  const q = col
-  const r = row - (col - (col & 1)) / 2
-  return { q, r }
+  const axialQ = col
+  const axialR = row - (col - (col & 1)) / 2
+  return { q: axialQ, r: axialR }
 }
-function fromAxial(q, r) {
-  return { col: q, row: r + (q - (q & 1)) / 2 }
+function fromAxial(axialQ, axialR) {
+  return { col: axialQ, row: axialR + (axialQ - (axialQ & 1)) / 2 }
 }
 function neighborsOf(col, row) {
-  const { q, r } = offsetToCube(col, row)
-  return AXIAL_DIRS.map((d) => fromAxial(q + d.dq, r + d.dr))
+  const { q: axialQ, r: axialR } = offsetToCube(col, row)
+  return AXIAL_DIRS.map((direction) => fromAxial(axialQ + direction.dq, axialR + direction.dr))
 }
 
-const centerOf = (c, r) => {
-  const yoff = c % 2 === 1 ? rowStep / 2 : 0
-  return { x: x0 + c * colStep, y: y0 + (r - 1) * rowStep + yoff }
+const centerOf = (col, row) => {
+  const yoff = col % 2 === 1 ? rowStep / 2 : 0
+  return { x: x0 + col * colStep, y: y0 + (row - 1) * rowStep + yoff }
 }
-const idOf = (c, r) => String(c + 1).padStart(2, '0') + String(r).padStart(2, '0')
+const idOf = (col, row) => String(col + 1).padStart(2, '0') + String(row).padStart(2, '0')
 
 // Les 6 sommets de l'hexagone centré en (cx, cy), dans le même ordre que le
 // polygone tracé plus bas (pts) — réutilisé pour retrouver le côté partagé
 // entre 2 hex voisins (cf. sharedSide juste après).
 function hexVertices(cx, cy) {
   return [
-    { x: cx - a, y: cy }, { x: cx - a / 2, y: cy - b }, { x: cx + a / 2, y: cy - b },
-    { x: cx + a, y: cy }, { x: cx + a / 2, y: cy + b }, { x: cx - a / 2, y: cy + b },
+    { x: cx - hexRadius, y: cy }, { x: cx - hexRadius / 2, y: cy - halfRowStep }, { x: cx + hexRadius / 2, y: cy - halfRowStep },
+    { x: cx + hexRadius, y: cy }, { x: cx + hexRadius / 2, y: cy + halfRowStep }, { x: cx - hexRadius / 2, y: cy + halfRowStep },
   ]
 }
 
@@ -67,13 +67,13 @@ function sharedSide(cx, cy, dx, dy) {
   const verts = hexVertices(cx, cy)
   let best = 0
   let bestScore = -Infinity
-  for (let i = 0; i < 6; i++) {
-    const p1 = verts[i]
-    const p2 = verts[(i + 1) % 6]
+  for (let vertexIndex = 0; vertexIndex < 6; vertexIndex++) {
+    const p1 = verts[vertexIndex]
+    const p2 = verts[(vertexIndex + 1) % 6]
     const mx = (p1.x + p2.x) / 2 - cx
     const my = (p1.y + p2.y) / 2 - cy
     const score = mx * dx + my * dy
-    if (score > bestScore) { bestScore = score; best = i }
+    if (score > bestScore) { bestScore = score; best = vertexIndex }
   }
   const p1 = verts[best]
   const p2 = verts[(best + 1) % 6]
@@ -81,15 +81,15 @@ function sharedSide(cx, cy, dx, dy) {
 }
 
 const hexes = []
-for (let c = 0; c < cols; c++) {
-  for (let r = 1; r <= rows; r++) {
-    if (!hexOnMap(c, r)) continue
-    const { x: cx0, y: cy } = centerOf(c, r)
+for (let col = 0; col < cols; col++) {
+  for (let row = 1; row <= rows; row++) {
+    if (!hexOnMap(col, row)) continue
+    const { x: cx0, y: cy } = centerOf(col, row)
     const pts = [
-      [cx0 - a, cy], [cx0 - a / 2, cy - b], [cx0 + a / 2, cy - b],
-      [cx0 + a, cy], [cx0 + a / 2, cy + b], [cx0 - a / 2, cy + b],
-    ].map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')
-    const hexId = idOf(c, r)
+      [cx0 - hexRadius, cy], [cx0 - hexRadius / 2, cy - halfRowStep], [cx0 + hexRadius / 2, cy - halfRowStep],
+      [cx0 + hexRadius, cy], [cx0 + hexRadius / 2, cy + halfRowStep], [cx0 - hexRadius / 2, cy + halfRowStep],
+    ].map((point) => point[0].toFixed(1) + ',' + point[1].toFixed(1)).join(' ')
+    const hexId = idOf(col, row)
     const terrain = grid[hexId] || 'mixed'
     hexes.push({ id: hexId, cx: cx0, cy, pts, terrain, mp: TYPES[terrain].mp })
   }
@@ -103,20 +103,20 @@ for (let c = 0; c < cols; c++) {
 //     ci-dessus), pour le tracé rivière/ruisseau (qui longe la bordure entre
 //     les 2 hex, pas leurs centres).
 const edgeMap = new Map()
-for (let c = 0; c < cols; c++) {
-  for (let r = 1; r <= rows; r++) {
-    if (!hexOnMap(c, r)) continue
-    const aId = idOf(c, r)
-    const A = centerOf(c, r)
-    for (const n of neighborsOf(c, r)) {
-      if (!hexOnMap(n.col, n.row)) continue
-      const bId = idOf(n.col, n.row)
+for (let col = 0; col < cols; col++) {
+  for (let row = 1; row <= rows; row++) {
+    if (!hexOnMap(col, row)) continue
+    const aId = idOf(col, row)
+    const centerA = centerOf(col, row)
+    for (const neighbor of neighborsOf(col, row)) {
+      if (!hexOnMap(neighbor.col, neighbor.row)) continue
+      const bId = idOf(neighbor.col, neighbor.row)
       const key = aId < bId ? aId + '-' + bId : bId + '-' + aId
       if (edgeMap.has(key)) continue
-      const B = centerOf(n.col, n.row)
-      const side = sharedSide(A.x, A.y, B.x - A.x, B.y - A.y)
+      const centerB = centerOf(neighbor.col, neighbor.row)
+      const side = sharedSide(centerA.x, centerA.y, centerB.x - centerA.x, centerB.y - centerA.y)
       edgeMap.set(key, {
-        key, ax: A.x, ay: A.y, bx: B.x, by: B.y,
+        key, ax: centerA.x, ay: centerA.y, bx: centerB.x, by: centerB.y,
         sx1: side.x1, sy1: side.y1, sx2: side.x2, sy2: side.y2,
       })
     }
@@ -555,23 +555,23 @@ footer .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block
   <svg id="svg" width="${imageWidth}" height="${imageHeight}" viewBox="0 0 ${imageWidth} ${imageHeight}">
     <image href="data:image/jpeg;base64,${imgB64}" x="0" y="0" width="${imageWidth}" height="${imageHeight}" />
     <g id="hexLayer">
-${hexes.map((h) => `      <polygon class="hex hex-${h.terrain}" points="${h.pts}" data-id="${h.id}" data-terrain="${h.terrain}" data-mp="${h.mp}" />`).join('\n')}
+${hexes.map((hex) => `      <polygon class="hex hex-${hex.terrain}" points="${hex.pts}" data-id="${hex.id}" data-terrain="${hex.terrain}" data-mp="${hex.mp}" />`).join('\n')}
     </g>
     <g id="edgeLayer">
-${edges.map((e) => {
-  const center = (cls) => `<line class="${cls}" x1="${e.ax.toFixed(1)}" y1="${e.ay.toFixed(1)}" x2="${e.bx.toFixed(1)}" y2="${e.by.toFixed(1)}" />`
-  const side = (cls) => `<line class="${cls}" x1="${e.sx1.toFixed(1)}" y1="${e.sy1.toFixed(1)}" x2="${e.sx2.toFixed(1)}" y2="${e.sy2.toFixed(1)}" />`
+${edges.map((edge) => {
+  const center = (cls) => `<line class="${cls}" x1="${edge.ax.toFixed(1)}" y1="${edge.ay.toFixed(1)}" x2="${edge.bx.toFixed(1)}" y2="${edge.by.toFixed(1)}" />`
+  const side = (cls) => `<line class="${cls}" x1="${edge.sx1.toFixed(1)}" y1="${edge.sy1.toFixed(1)}" x2="${edge.sx2.toFixed(1)}" y2="${edge.sy2.toFixed(1)}" />`
   // Centre-à-centre : route/sentier ET ponts/bac (cf. sharedSide plus haut —
   // ces derniers franchissent l'obstacle en ligne droite, ils ne longent
   // pas sa rive comme rivière/ruisseau, qui restent tracés côté hexside).
-  return `      <g class="edge" data-key="${e.key}">${center('hit')}${center('road')}${center('trail')}${side('river')}${side('stream')}${center('canal-bridge')}${center('railroad-bridge')}${center('highway-bridge')}${center('ferry')}</g>`
+  return `      <g class="edge" data-key="${edge.key}">${center('hit')}${center('road')}${center('trail')}${side('river')}${side('stream')}${center('canal-bridge')}${center('railroad-bridge')}${center('highway-bridge')}${center('ferry')}</g>`
 }).join('\n')}
     </g>
     <g id="labelLayer">
-${hexes.map((h) => `      <text class="mp" data-id="${h.id}" x="${h.cx.toFixed(1)}" y="${(h.cy + a * 0.15).toFixed(1)}" font-size="${(a * 0.5).toFixed(1)}">${h.mp}</text><text class="hexid" x="${h.cx.toFixed(1)}" y="${(h.cy - a * 0.32).toFixed(1)}" font-size="${(a * 0.28).toFixed(1)}">${h.id}</text>`).join('\n')}
+${hexes.map((hex) => `      <text class="mp" data-id="${hex.id}" x="${hex.cx.toFixed(1)}" y="${(hex.cy + hexRadius * 0.15).toFixed(1)}" font-size="${(hexRadius * 0.5).toFixed(1)}">${hex.mp}</text><text class="hexid" x="${hex.cx.toFixed(1)}" y="${(hex.cy - hexRadius * 0.32).toFixed(1)}" font-size="${(hexRadius * 0.28).toFixed(1)}">${hex.id}</text>`).join('\n')}
     </g>
     <g id="removedLayer">
-${hexes.map((h) => `      <text class="remx" data-id="${h.id}" x="${h.cx.toFixed(1)}" y="${(h.cy + a * 0.32).toFixed(1)}" font-size="${(a * 0.9).toFixed(1)}">&times;</text>`).join('\n')}
+${hexes.map((hex) => `      <text class="remx" data-id="${hex.id}" x="${hex.cx.toFixed(1)}" y="${(hex.cy + hexRadius * 0.32).toFixed(1)}" font-size="${(hexRadius * 0.9).toFixed(1)}">&times;</text>`).join('\n')}
     </g>
   </svg>
 </main>

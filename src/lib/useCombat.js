@@ -44,15 +44,18 @@
 //      cible ni d'attaquant) : toutes les unités PARTICIPANTES — attaquants
 //      ET défenseurs — ont "combattu" (cf. `foughtIds`). Elles apparaissent
 //      désaturées (cf. Counter.vue::spent) et ne peuvent plus être engagées
-//      dans un autre combat jusqu'à la PROCHAINE PHASE. La modale se ferme
-//      d'elle-même peu après avoir affiché le résultat (cf. CombatModal.vue).
+//      dans un autre combat jusqu'à la PROCHAINE PHASE. Le résultat est
+//      alors appliqué (retraites au clic, éliminations, puis avance après
+//      combat des vainqueurs — cf. lib/useRetreat.js) ; la modale reste
+//      ouverte pendant ce temps et se ferme d'elle-même peu après (cf.
+//      CombatModal.vue).
 //   6. La croix de la modale annule tout (surlignages et modale
 //      disparaissent) — sans rien marquer si le dé n'a pas été lancé.
 //
-// NOTE IMPORTANTE sur ce qu'il ne fait PAS (encore) : le résultat obtenu
-// (retraite, élimination) est AFFICHÉ, jamais APPLIQUÉ automatiquement —
-// aucun pion n'est déplacé ni retiré par ce composable. C'est volontaire :
-// la demande s'arrête à "on lance un dé, on affiche le dé et le résultat".
+// NOTE IMPORTANTE : ce composable ne fait qu'OBTENIR le résultat (retraite,
+// élimination) — aucun pion n'est déplacé ni retiré ici. C'est
+// lib/useRetreat.js qui l'APPLIQUE ensuite sur la carte (branché par
+// HexMap.vue::onCombatFight).
 //
 // Paramètres reçus :
 //   - `assisted` : ref/computed booléen — le combat n'existe qu'en mode
@@ -183,8 +186,8 @@ const RESULT_LABELS = {
 const keyOf = (col, row) => `${col},${row}`
 
 /** `a` et `b` (tous deux `{ col, row }`) sont-ils voisins immédiats ? */
-function isAdjacent(a, b) {
-  return neighborsOf(a.col, a.row).some((n) => n.col === b.col && n.row === b.row)
+function isAdjacent(positionA, positionB) {
+  return neighborsOf(positionA.col, positionA.row).some((neighbor) => neighbor.col === positionB.col && neighbor.row === positionB.row)
 }
 
 export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind) {
@@ -207,7 +210,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   const foughtIds = ref(new Set())
 
   /** L'unité `c` a-t-elle déjà combattu pendant cette phase ? */
-  const hasFought = (c) => !!c && foughtIds.value.has(c.id)
+  const hasFought = (counter) => !!counter && foughtIds.value.has(counter.id)
 
   // Changement de phase (ou de tour, ou sortie du mode Assisté — `phase`
   // passe alors à `null`) : on repart de zéro. Les unités ayant combattu
@@ -240,29 +243,41 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   // correspondrait plus aux forces affichées juste au-dessus de lui.
   const result = ref(null)
 
+  // Photo du combat PRISE AU MOMENT DU JET (cf. `resolveCombat`) : copies
+  // des attaquants et des défenseurs, ligne de terrain et colonne. Une fois
+  // le dé lancé, c'est elle que lisent `attackers`, `defenders`,
+  // `terrainRow` et `column` — et non plus la carte. Sans elle, les
+  // retraites et éliminations qui suivent (cf. lib/useRetreat.js) videraient
+  // les hex cibles et changeraient, dans la modale encore ouverte, les
+  // forces, le différentiel et la colonne d'un combat déjà joué. Des COPIES
+  // des pions, car les pions eux-mêmes changent de position en retraitant.
+  // `null` tant que le dé n'a pas été lancé.
+  const frozen = ref(null)
+
   /** Seules les vraies unités combattent — ni les marqueurs (DZ...), ni les
    *  pions de soutien (ressource commune sans camp, cf. SupportTracker.vue). */
-  function isFighter(c) {
-    return !!c && c.type !== 'marker' && c.kind !== 'support'
+  function isFighter(counter) {
+    return !!counter && counter.type !== 'marker' && counter.kind !== 'support'
   }
 
   const combatActive = computed(() => targetHexes.value.length > 0)
 
-  const targetKeys = computed(() => new Set(targetHexes.value.map((t) => keyOf(t.col, t.row))))
+  const targetKeys = computed(() => new Set(targetHexes.value.map((targetHex) => keyOf(targetHex.col, targetHex.row))))
 
   /** Numéros imprimés des hex cibles ("0512"...), pour la modale et le
    *  journal — même convention que partout ailleurs (`hexId(col + 1, row)`). */
-  const targetHexLabels = computed(() => targetHexes.value.map((t) => hexId(t.col + 1, t.row)))
+  const targetHexLabels = computed(() => targetHexes.value.map((targetHex) => hexId(targetHex.col + 1, targetHex.row)))
 
   /** DÉFENSEURS : toutes les unités ENNEMIES (non contrôlées par le camp
    *  actif) présentes dans l'un des hex cibles. Recalculé à chaque lecture
    *  depuis `counters` : un hex empilé défend avec TOUS ses pions, et leurs
    *  facteurs de défense s'additionnent (cf. `defenseStrength`). */
-  const defenders = computed(() =>
-    counters.value.filter((c) => isFighter(c) && !canControl(c) && targetKeys.value.has(keyOf(c.col, c.row)))
+  const defenders = computed(() => frozen.value?.defenders
+    ?? counters.value.filter((counter) => isFighter(counter) && !canControl(counter) && targetKeys.value.has(keyOf(counter.col, counter.row)))
   )
 
-  const attackers = computed(() => counters.value.filter((c) => attackerIds.value.has(c.id)))
+  const attackers = computed(() => frozen.value?.attackers
+    ?? counters.value.filter((counter) => attackerIds.value.has(counter.id)))
 
   /** Le combat est-il possible en ce moment ? Mode Assisté ET phase Combat
    *  (cf. useAssisted.js::phase, 1 = Combat) — en phase Mouvement ou Fin de
@@ -279,8 +294,8 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *   4. ne pas avoir déjà combattu pendant cette phase (cf. `hasFought`).
    *  C'est la brique commune aux deux règles d'adjacence du combat : celle
    *  des CIBLES (`canTargetSet`) et celle des ATTAQUANTS (`canBeAttacker`). */
-  function canAttackHex(c, t) {
-    return !hasFought(c) && canReachHex(c, t)
+  function canAttackHex(counter, targetHex) {
+    return !hasFought(counter) && canReachHex(counter, targetHex)
   }
 
   /** Même règle que `canAttackHex`, SANS la condition "n'a pas déjà
@@ -288,17 +303,17 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  Sert à `strandedUnits`, qui simule un état de combat qui n'existe pas
    *  encore — la vérification "a combattu" s'y fait contre un ensemble
    *  simulé, et non contre `foughtIds`. */
-  function canReachHex(c, t) {
-    if (!isFighter(c) || !canControl(c)) return false
-    if (!isAdjacent(c, t)) return false
-    return combatEdgeKind({ c: c.col, r: c.row }, { c: t.col, r: t.row }) !== 'river'
+  function canReachHex(counter, targetHex) {
+    if (!isFighter(counter) || !canControl(counter)) return false
+    if (!isAdjacent(counter, targetHex)) return false
+    return combatEdgeKind({ c: counter.col, r: counter.row }, { c: targetHex.col, r: targetHex.row }) !== 'river'
   }
 
   /** L'unité `c` peut-elle attaquer TOUS les hex de `list` à la fois ?
    *  C'est la RÈGLE STRICTE du combat multi-hex (cf. l'en-tête) : un
    *  attaquant doit être au contact de CHAQUE hex cible, pas d'un seul. */
-  function canAttackAll(c, list) {
-    return list.every((t) => canAttackHex(c, t))
+  function canAttackAll(counter, list) {
+    return list.every((targetHex) => canAttackHex(counter, targetHex))
   }
 
   /** L'ensemble d'hex `list` forme-t-il un groupe de cibles valide ? Oui s'il
@@ -308,7 +323,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  cible : on n'ouvre pas un combat contre un hex que personne ne peut
    *  atteindre. */
   function canTargetSet(list) {
-    return counters.value.some((c) => canAttackAll(c, list))
+    return counters.value.some((counter) => canAttackAll(counter, list))
   }
 
   /** `c` est-il une unité ennemie qu'on peut viser (pour ouvrir un combat ou
@@ -317,24 +332,24 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *     phase (un hex déjà attaqué ne peut pas l'être une seconde fois) ;
    *   - que les cibles actuelles PLUS son hex restent un groupe valide (cf.
    *     `canTargetSet`). */
-  function canBeTarget(c) {
-    if (!combatAllowed.value || !isFighter(c) || canControl(c)) return false
-    const alreadyFought = counters.value.some((o) =>
-      o.col === c.col && o.row === c.row && isFighter(o) && !canControl(o) && hasFought(o))
+  function canBeTarget(counter) {
+    if (!combatAllowed.value || !isFighter(counter) || canControl(counter)) return false
+    const alreadyFought = counters.value.some((otherCounter) =>
+      otherCounter.col === counter.col && otherCounter.row === counter.row && isFighter(otherCounter) && !canControl(otherCounter) && hasFought(otherCounter))
     if (alreadyFought) return false
-    return canTargetSet([...targetHexes.value, { col: c.col, row: c.row }])
+    return canTargetSet([...targetHexes.value, { col: counter.col, row: counter.row }])
   }
 
   /** `c` peut-il être désigné attaquant ? RÈGLE STRICTE : il doit pouvoir
    *  attaquer TOUS les hex cibles (cf. `canAttackAll`). */
-  function canBeAttacker(c) {
-    return canAttackAll(c, targetHexes.value)
+  function canBeAttacker(counter) {
+    return canAttackAll(counter, targetHexes.value)
   }
 
   /** Ne garde, parmi les attaquants désignés, que ceux qui respectent encore
    *  la règle stricte après un changement des cibles. */
   function pruneAttackers() {
-    attackerIds.value = new Set(attackers.value.filter(canBeAttacker).map((a) => a.id))
+    attackerIds.value = new Set(attackers.value.filter(canBeAttacker).map((attacker) => attacker.id))
   }
 
   /** Clic sur une unité ENNEMIE `c` en phase Combat. Son hex :
@@ -347,14 +362,14 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *     modale et sur la carte (leur hex n'est plus jaune).
    *  Renvoie `false` si le clic ne concerne pas le combat (unité amie, hex
    *  hors de portée...), pour laisser l'appelant (HexMap.vue) le traiter. */
-  function toggleTarget(c) {
-    if (!combatAllowed.value || !isFighter(c) || canControl(c)) return false
+  function toggleTarget(counter) {
+    if (!combatAllowed.value || !isFighter(counter) || canControl(counter)) return false
     // Combat déjà résolu (dé lancé, modale en train de se fermer) : il est
     // figé, le clic est "consommé" sans rien changer.
     if (result.value) return true
-    if (targetKeys.value.has(keyOf(c.col, c.row))) return removeTargetHex(c.col, c.row)
-    if (!canBeTarget(c)) return false
-    targetHexes.value = [...targetHexes.value, { col: c.col, row: c.row }]
+    if (targetKeys.value.has(keyOf(counter.col, counter.row))) return removeTargetHex(counter.col, counter.row)
+    if (!canBeTarget(counter)) return false
+    targetHexes.value = [...targetHexes.value, { col: counter.col, row: counter.row }]
     pruneAttackers()
     result.value = null
     return true
@@ -366,7 +381,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   function removeTargetHex(col, row) {
     if (!targetKeys.value.has(keyOf(col, row))) return false
     if (result.value) return true // combat résolu : figé (cf. `toggleTarget`)
-    targetHexes.value = targetHexes.value.filter((t) => t.col !== col || t.row !== row)
+    targetHexes.value = targetHexes.value.filter((targetHex) => targetHex.col !== col || targetHex.row !== row)
     if (targetHexes.value.length === 0) { cancelCombat(); return true }
     result.value = null
     return true
@@ -379,16 +394,17 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     targetHexes.value = []
     attackerIds.value = new Set()
     result.value = null
+    frozen.value = null
   }
 
   /** Ajoute `c` aux attaquants, ou l'en retire s'il y était déjà (recliquer
    *  dessus le désélectionne). Impossible une fois le combat résolu (dé
    *  lancé) : il est figé. */
-  function toggleAttacker(c) {
-    if (!combatActive.value || !c || result.value) return false
+  function toggleAttacker(counter) {
+    if (!combatActive.value || !counter || result.value) return false
     const next = new Set(attackerIds.value)
-    if (next.has(c.id)) next.delete(c.id)
-    else if (canBeAttacker(c)) next.add(c.id)
+    if (next.has(counter.id)) next.delete(counter.id)
+    else if (canBeAttacker(counter)) next.add(counter.id)
     else return false
     attackerIds.value = next
     result.value = null
@@ -397,15 +413,15 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
 
   // Surlignages de la carte (cf. HexMap.vue) : les hex cibles en orange,
   // ceux des attaquants désignés en jaune.
-  const isCombatTargetHex = (h) => targetKeys.value.has(keyOf(h.c, h.r))
-  const isCombatAttackerHex = (h) => attackers.value.some((a) => a.col === h.c && a.row === h.r)
+  const isCombatTargetHex = (hex) => targetKeys.value.has(keyOf(hex.c, hex.r))
+  const isCombatAttackerHex = (hex) => attackers.value.some((attacker) => attacker.col === hex.c && attacker.row === hex.r)
 
   // Forces en présence. `atk`/`def` viennent des données du module (cf.
   // arnhem.json) ; le `?? 0` couvre un pion qui n'en déclarerait pas. La
   // défense est la SOMME des facteurs de tous les défenseurs, tous hex cibles
   // confondus (cf. `defenders`).
-  const attackStrength = computed(() => attackers.value.reduce((sum, a) => sum + (a.atk ?? 0), 0))
-  const defenseStrength = computed(() => defenders.value.reduce((sum, d) => sum + (d.def ?? 0), 0))
+  const attackStrength = computed(() => attackers.value.reduce((sum, attacker) => sum + (attacker.atk ?? 0), 0))
+  const defenseStrength = computed(() => defenders.value.reduce((sum, defender) => sum + (defender.def ?? 0), 0))
   const differential = computed(() => attackStrength.value - defenseStrength.value)
 
   /** COMBATS OBLIGATOIRES EN ATTENTE — règle demandée : on ne peut pas
@@ -434,16 +450,16 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   const pendingEngagements = computed(() => {
     if (!combatAllowed.value) return []
     const list = []
-    const enemies = counters.value.filter((e) => isFighter(e) && !canControl(e) && !hasFought(e))
-    for (const e of enemies) {
-      for (const a of counters.value) {
-        if (!canAttackHex(a, e)) continue
+    const enemies = counters.value.filter((enemy) => isFighter(enemy) && !canControl(enemy) && !hasFought(enemy))
+    for (const enemy of enemies) {
+      for (const attacker of counters.value) {
+        if (!canAttackHex(attacker, enemy)) continue
         list.push({
-          key: `${a.id}-${e.id}`,
-          friendly: a.name,
-          friendlyHex: hexId(a.col + 1, a.row),
-          enemy: e.name,
-          enemyHex: hexId(e.col + 1, e.row),
+          key: `${attacker.id}-${enemy.id}`,
+          friendly: attacker.name,
+          friendlyHex: hexId(attacker.col + 1, attacker.row),
+          enemy: enemy.name,
+          enemyHex: hexId(enemy.col + 1, enemy.row),
         })
       }
     }
@@ -523,39 +539,39 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     const now = foughtIds.value
     const after = new Set([
       ...now,
-      ...attackers.value.map((a) => a.id),
-      ...defenders.value.map((d) => d.id),
+      ...attackers.value.map((attacker) => attacker.id),
+      ...defenders.value.map((defender) => defender.id),
     ])
-    const friendlies = counters.value.filter((f) => isFighter(f) && canControl(f))
-    const enemies = counters.value.filter((e) => isFighter(e) && !canControl(e))
+    const friendlies = counters.value.filter((friendly) => isFighter(friendly) && canControl(friendly))
+    const enemies = counters.value.filter((enemy) => isFighter(enemy) && !canControl(enemy))
     const list = []
 
     // (A) Côté AMI : chaque unité qui devra encore attaquer.
-    for (const f of friendlies) {
-      if (after.has(f.id)) continue
-      const reachable = enemies.filter((e) => canReachHex(f, e))
-      const freshNow = reachable.some((e) => !now.has(e.id))
-      const freshAfter = reachable.some((e) => !after.has(e.id))
-      if (freshNow && !freshAfter) list.push({ id: f.id, side: 'friendly', name: f.name, hex: hexId(f.col + 1, f.row) })
+    for (const friendly of friendlies) {
+      if (after.has(friendly.id)) continue
+      const reachable = enemies.filter((enemy) => canReachHex(friendly, enemy))
+      const freshNow = reachable.some((enemy) => !now.has(enemy.id))
+      const freshAfter = reachable.some((enemy) => !after.has(enemy.id))
+      if (freshNow && !freshAfter) list.push({ id: friendly.id, side: 'friendly', name: friendly.name, hex: hexId(friendly.col + 1, friendly.row) })
     }
 
     // (B) Côté ENNEMI : chaque hex qui devra encore être attaqué. On regroupe
     // d'abord les ennemis par hex, puis on écarte les hex dont un occupant a
     // (ou aura, avec ce combat) déjà combattu : ils sont "soldés".
     const byHex = new Map()
-    for (const e of enemies) {
-      const key = keyOf(e.col, e.row)
+    for (const enemy of enemies) {
+      const key = keyOf(enemy.col, enemy.row)
       if (!byHex.has(key)) byHex.set(key, [])
-      byHex.get(key).push(e)
+      byHex.get(key).push(enemy)
     }
     for (const [key, units] of byHex) {
-      if (units.some((e) => after.has(e.id))) continue
-      const t = units[0] // tous au même hex : n'importe lequel donne sa position
-      const reachers = friendlies.filter((f) => canReachHex(f, t))
-      const freshNow = reachers.some((f) => !now.has(f.id))
-      const freshAfter = reachers.some((f) => !after.has(f.id))
+      if (units.some((enemy) => after.has(enemy.id))) continue
+      const hexRepresentative = units[0] // tous au même hex : n'importe lequel donne sa position
+      const reachers = friendlies.filter((friendly) => canReachHex(friendly, hexRepresentative))
+      const freshNow = reachers.some((friendly) => !now.has(friendly.id))
+      const freshAfter = reachers.some((friendly) => !after.has(friendly.id))
       if (freshNow && !freshAfter) {
-        list.push({ id: `hex:${key}`, side: 'enemy', name: units.map((e) => e.name).join(', '), hex: hexId(t.col + 1, t.row) })
+        list.push({ id: `hex:${key}`, side: 'enemy', name: units.map((enemy) => enemy.name).join(', '), hex: hexId(hexRepresentative.col + 1, hexRepresentative.row) })
       }
     }
     return list
@@ -578,17 +594,17 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  Un hexside franchi par une route/piste n'est pas un obstacle et renvoie
    *  `null` (cf. useAssisted.js::combatEdgeKind) : il ne déclenche donc
    *  jamais de substitution, la règle retombe sur le terrain de l'hex. */
-  function rowForTargetHex(t) {
-    const adjacent = attackers.value.filter((a) => isAdjacent(a, t))
+  function rowForTargetHex(targetHex) {
+    const adjacent = attackers.value.filter((attacker) => isAdjacent(attacker, targetHex))
     if (adjacent.length > 0) {
-      const kinds = adjacent.map((a) => combatEdgeKind({ c: a.col, r: a.row }, { c: t.col, r: t.row }))
+      const kinds = adjacent.map((attacker) => combatEdgeKind({ c: attacker.col, r: attacker.row }, { c: targetHex.col, r: targetHex.row }))
       const first = kinds[0]
-      if (first && kinds.every((k) => k === first)) {
+      if (first && kinds.every((kind) => kind === first)) {
         if (first === 'bridge') return { row: rowByKey('grove'), reason: 'hexside de pont' }
         if (first === 'stream') return { row: rowByKey('broken'), reason: 'hexside de ruisseau' }
       }
     }
-    const type = terrain?.grid?.[hexId(t.col + 1, t.row)]
+    const type = terrain?.grid?.[hexId(targetHex.col + 1, targetHex.row)]
     const label = terrain?.types?.[type]?.label ?? 'Clear'
     return { row: rowForTerrain(type), reason: `terrain de l'hex (${label})` }
   }
@@ -601,32 +617,34 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  position, comme dans la plupart des wargames à hex multiples. À égalité,
    *  le premier hex désigné l'emporte (cf. l'ordre de `targetHexes`). */
   const terrainRow = computed(() => {
+    if (frozen.value) return frozen.value.terrainRow
     const list = targetHexes.value
     if (list.length === 0) return null
     let best = null
-    for (const t of list) {
-      const r = rowForTargetHex(t)
-      if (!best || r.row.shift > best.row.shift) best = { ...r, hex: hexId(t.col + 1, t.row) }
+    for (const targetHex of list) {
+      const targetRow = rowForTargetHex(targetHex)
+      if (!best || targetRow.row.shift > best.row.shift) best = { ...targetRow, hex: hexId(targetHex.col + 1, targetHex.row) }
     }
     if (list.length === 1) return { row: best.row, reason: best.reason }
     return { row: best.row, reason: `${best.hex}, ${best.reason} — la plus favorable au défenseur` }
   })
 
   function rowByKey(key) {
-    return CRT_ROWS.find((r) => r.key === key)
+    return CRT_ROWS.find((crtRow) => crtRow.key === key)
   }
 
   /** Ligne de la table correspondant à un type de terrain de `terrain.grid`
    *  — repli sur "Clear, Mixed" (la ligne la moins protectrice, donc la plus
    *  neutre) pour un type inconnu ou un hex sans terrain déclaré. */
   function rowForTerrain(type) {
-    return CRT_ROWS.find((r) => r.terrains.includes(type)) ?? rowByKey('clear')
+    return CRT_ROWS.find((crtRow) => crtRow.terrains.includes(type)) ?? rowByKey('clear')
   }
 
   /** Colonne finale : celle de la ligne "Clear" pour ce différentiel,
    *  décalée du `shift` du terrain, et jamais en deçà de la colonne 1 (cf.
    *  "Attacks at less than the lowest differential..." en bas de la table). */
   const column = computed(() => {
+    if (frozen.value) return frozen.value.column
     const row = terrainRow.value?.row
     if (!row) return null
     return Math.max(1, clearColumn(differential.value) - row.shift)
@@ -645,9 +663,16 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     // phase (cf. `foughtIds`) — attaquants ET défenseurs.
     foughtIds.value = new Set([
       ...foughtIds.value,
-      ...attackers.value.map((a) => a.id),
-      ...defenders.value.map((d) => d.id),
+      ...attackers.value.map((attacker) => attacker.id),
+      ...defenders.value.map((defender) => defender.id),
     ])
+    // Photo du combat (cf. `frozen`), prise AVANT toute conséquence du jet.
+    frozen.value = {
+      attackers: attackers.value.map((attacker) => ({ ...attacker })),
+      defenders: defenders.value.map((defender) => ({ ...defender })),
+      terrainRow: terrainRow.value,
+      column: column.value,
+    }
     const die = Math.floor(Math.random() * 6) + 1
     const col = column.value
     const code = CRT_RESULTS[die - 1][col - 1]
@@ -672,14 +697,14 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     CRT_ROWS.map((row) => ({
       key: row.key,
       label: row.label,
-      cells: Array.from({ length: 12 - row.shift }, (_, i) =>
-        i === 0 ? FIRST_COLUMN_LABELS[row.shift] : COLUMN_LABELS[i + row.shift]
+      cells: Array.from({ length: 12 - row.shift }, (_, columnIndex) =>
+        columnIndex === 0 ? FIRST_COLUMN_LABELS[row.shift] : COLUMN_LABELS[columnIndex + row.shift]
       ),
     }))
   )
 
   return {
-    combatActive, combatAllowed, targetHexLabels, defenders, attackers, canBeTarget, canBeAttacker,
+    combatActive, combatAllowed, targetHexes, targetHexLabels, defenders, attackers, canBeTarget, canBeAttacker,
     toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought, pendingEngagements,
     isCombatTargetHex, isCombatAttackerHex,
     attackStrength, defenseStrength, differential, canResolve, strandedUnits, terrainRow, column,

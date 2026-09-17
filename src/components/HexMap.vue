@@ -25,6 +25,8 @@ import { hexExists, removedHexSet } from '../lib/mapShape.js'
 import { useAssisted } from '../lib/useAssisted.js'
 import { useDebug } from '../lib/useDebug.js'
 import { useCombat } from '../lib/useCombat.js'
+import { useRetreat } from '../lib/useRetreat.js'
+import { useArnhem } from '../lib/useArnhem.js'
 import CalibrationPanel from './CalibrationPanel.vue'
 import Counter from './Counter.vue'
 import TurnTracker from './TurnTracker.vue'
@@ -58,9 +60,16 @@ const props = defineProps({
   // — cf. lib/useAssisted.js). Comportement PAR DÉFAUT (`false`) : "Libre",
   // bac à sable sans garde-fous.
   assisted: { type: Boolean, default: false },
+  // Réglages de la partie (mode, scénario, météo, timing — cf.
+  // lib/journalStorage.js), enregistrés avec le journal pour qu'une reprise
+  // se rejoue dans les mêmes conditions. `null` si inconnus (multijoueur).
+  settings: { type: Object, default: null },
 })
 
-const emit = defineEmits(['move', 'turn'])
+// `restart-with` : `{ settings, entries, message }` — un journal à reprendre
+// a été joué avec d'autres réglages : la page doit relancer la partie avec
+// eux (cf. DemoPlay.vue, JournalPanel.vue::startReplay).
+const emit = defineEmits(['move', 'turn', 'restart-with'])
 
 const map = computed(() => props.module.map)
 
@@ -69,7 +78,25 @@ const map = computed(() => props.module.map)
 // HexMap.vue se contente d'appeler `log(kind, text)` à chaque évènement de
 // jeu (tour, déplacement, entrée en jeu, élimination...).
 const journalRef = ref(null)
-function log(kind, text, data) { return journalRef.value?.log(kind, text, data) }
+function log(kind, text, data) {
+  logDeploymentOnce()
+  return journalRef.value?.log(kind, text, data)
+}
+
+// --- Déploiement initial dans le journal : le placement de départ tire au
+// hasard l'hex des unités à plage d'entrée (cf. `buildInitialCounters`). Sans
+// trace de ce tirage, le rejeu en refaisait un autre et les unités jamais
+// déplacées depuis changeaient de place. On l'enregistre donc, en PREMIÈRE
+// entrée du journal (entrée `setup`, cf. applyReplayEntry) — au moment du
+// premier évènement de la partie, et pas dès le chargement : écrire au
+// chargement déclencherait l'auto-save et écraserait la sauvegarde qu'on
+// propose justement de reprendre.
+let deploymentLogged = false
+function logDeploymentOnce() {
+  if (deploymentLogged || isReplaying.value || !journalRef.value) return
+  deploymentLogged = true
+  journalRef.value.log('setup', 'Déploiement initial', { positions: initialDeployment })
+}
 
 // --- Retour arrière : annule le dernier déplacement d'un pion déjà posé sur
 // la carte (onHex / onCounterDragEnd ci-dessous) et efface son entrée de
@@ -112,6 +139,11 @@ function clearAllMoved() {
   turnStartPositions.clear()
   movedThisTurnIds.value = new Set()
   lockedFromSelectionIds.value = new Set()
+  // Les règles particulières du module qui ne valent que pour le tour écoulé
+  // s'effacent au même moment (cf. lib/useArnhem.js::clearTurnState — les
+  // aéroportés largués ce tour-ci, dont l'allocation de mouvement est
+  // réduite jusqu'au tour suivant). Sans effet sur les autres modules.
+  arnhem.clearTurnState()
 }
 
 // --- Verrouillage d'une unité après désélection (mouvement normal) --------
@@ -142,10 +174,10 @@ const unitStackBlock = ref(null)
 function setSelectedCounter(id) {
   const previous = selectedCounterId.value
   if (previous != null && previous !== id) {
-    const prev = counters.value.find((c) => String(c.id) === String(previous))
+    const prev = counters.value.find((counter) => String(counter.id) === String(previous))
     if (isOverstacked(prev)) {
-      const units = counters.value.filter((c) => c.col === prev.col && c.row === prev.row && isUnit(c) && c.kind !== 'support')
-      unitStackBlock.value = { key: prev.col + ',' + prev.row, hex: hexId(prev.col + 1, prev.row), units: units.map((u) => u.name) }
+      const units = counters.value.filter((counter) => counter.col === prev.col && counter.row === prev.row && isUnit(counter) && counter.kind !== 'support')
+      unitStackBlock.value = { key: prev.col + ',' + prev.row, hex: hexId(prev.col + 1, prev.row), units: units.map((unit) => unit.name) }
       return false
     }
   }
@@ -161,17 +193,23 @@ function cancelMovement(id) {
   const key = String(id)
   const start = turnStartPositions.get(key)
   if (!start) return
-  const c = counters.value.find((c) => String(c.id) === String(id))
-  if (c) {
+  const counter = counters.value.find((counter) => String(counter.id) === String(id))
+  if (counter) {
     // cf. lib/useAssisted.js::resetMp — annule d'un coup TOUS les
     // déplacements du tour de `c` (pas hex par hex comme `undoLastMove`
     // ci-dessous), donc on lui redonne la TOTALITÉ de ses MP plutôt que de
     // recréditer un seul hex. Ne fait rien hors mode Assisté.
-    resetMp(c)
-    c.col = start.col; c.row = start.row
-    emit('move', { counterId: c.id, col: c.col, row: c.row })
-    log('move', `${c.name} : mouvement annulé, retour en ${hexId(c.col + 1, c.row)}${mpText(c)}`,
-      { counterId: c.id, col: c.col, row: c.row, mp: spentMpOf(c) })
+    resetMp(counter)
+    // ...sauf ce que le module lui compte comme déjà dépensé À SON ARRIVÉE
+    // (cf. lib/useArnhem.js::airborneArrivalSpentMp) : un aéroporté largué
+    // ce tour-ci qui annule son mouvement retrouve ses 3 MP d'atterrissage,
+    // pas les 7 de son allocation imprimée.
+    const arrivalMp = arnhem.airborneArrivalSpentMp(counter)
+    if (arrivalMp !== null) setSpentMp(counter.id, arrivalMp)
+    counter.col = start.col; counter.row = start.row
+    emit('move', { counterId: counter.id, col: counter.col, row: counter.row })
+    log('move', `${counter.name} : mouvement annulé, retour en ${hexId(counter.col + 1, counter.row)}${mpText(counter)}`,
+      { counterId: counter.id, col: counter.col, row: counter.row, mp: spentMpOf(counter) })
   }
   clearMoved(id)
 }
@@ -184,8 +222,8 @@ function undoLastMove() {
   if (!props.assisted || replayLocked.value) return
   const last = moveHistory.value.pop()
   if (!last) return
-  const c = counters.value.find((c) => String(c.id) === String(last.counterId))
-  if (c) {
+  const counter = counters.value.find((counter) => String(counter.id) === String(last.counterId))
+  if (counter) {
     // cf. lib/useAssisted.js::refundMp — recrédite le COT de l'hex QUITTÉ
     // par cette annulation (`last.to`, celui que `c` avait payé pour y
     // entrer EN VENANT de `last.from`), avant même de replacer `c` : l'ordre
@@ -199,13 +237,13 @@ function undoLastMove() {
     // vrai coût. Passer `last.from` ici (le MÊME "from" qu'au `spendMp`
     // d'origine, cf. onHex) est ce qui garantit un remboursement exact,
     // route/piste comprise, même si `c` a depuis quitté cette position.
-    refundMp(c, { c: last.to.col, r: last.to.row }, { c: last.from.col, r: last.from.row })
-    c.col = last.from.col; c.row = last.from.row
-    emit('move', { counterId: c.id, col: c.col, row: c.row })
+    refundMp(counter, { c: last.to.col, r: last.to.row }, { c: last.from.col, r: last.from.row })
+    counter.col = last.from.col; counter.row = last.from.row
+    emit('move', { counterId: counter.id, col: counter.col, row: counter.row })
     // Si l'annulation ramène le pion à sa position de tout début de tour,
     // il n'a plus "bougé ce tour" au sens du liseré orange.
-    const start = turnStartPositions.get(String(c.id))
-    if (start && start.col === c.col && start.row === c.row) clearMoved(c.id)
+    const start = turnStartPositions.get(String(counter.id))
+    if (start && start.col === counter.col && start.row === counter.row) clearMoved(counter.id)
   }
   journalRef.value?.remove(last.journalId)
 }
@@ -275,7 +313,7 @@ function applyRemoteTurn(step) { turnTrackerRef.value?.applyRemoteTurn(step) }
 // Un renfort ne peut entrer en jeu qu'à partir de son tour d'arrivée déclaré
 // (`c.turn`, cf. module JSON) — jamais en avance. Par défaut (pas de `turn`
 // déclaré), l'unité arrive dès le tour 1.
-const canEnterThisTurn = (c) => (c?.turn ?? 1) <= turnInfo.value.turn
+const canEnterThisTurn = (counter) => (counter?.turn ?? 1) <= turnInfo.value.turn
 
 // --- Soutien allié : tablette autonome (cf. SupportTracker.vue, toute la
 // logique — régénération par tour, tablette actuelle — y vit). HexMap.vue ne
@@ -301,24 +339,24 @@ const mapShapeCfg = computed(() => ({
   cols: mapConfig.cols, rows: mapConfig.rows, evenColMinus: map.value.evenColMinus,
 }))
 const removed = computed(() => removedHexSet(map.value))
-const hexOnMap = (c, r) => hexExists(c, r, mapShapeCfg.value, removed.value)
+const hexOnMap = (col, row) => hexExists(col, row, mapShapeCfg.value, removed.value)
 
 /** Liste des hex de la grille avec leur polygone SVG déjà calculé. */
 const hexes = computed(() => {
-  const { x0, y0, colStep, a, rowStep } = calibration
-  const b = rowStep / 2
+  const { x0, y0, colStep, a: hexRadius, rowStep } = calibration
+  const halfRowStep = rowStep / 2
   const out = []
-  for (let c = 0; c < mapConfig.cols; c++) {
-    const cx = x0 + c * colStep
-    const yoff = c % 2 === 1 ? rowStep / 2 : 0
-    for (let r = 1; r <= mapConfig.rows; r++) {
-      if (!hexOnMap(c, r)) continue
-      const cy = y0 + (r - 1) * rowStep + yoff
+  for (let col = 0; col < mapConfig.cols; col++) {
+    const cx = x0 + col * colStep
+    const yoff = col % 2 === 1 ? rowStep / 2 : 0
+    for (let row = 1; row <= mapConfig.rows; row++) {
+      if (!hexOnMap(col, row)) continue
+      const cy = y0 + (row - 1) * rowStep + yoff
       const pts = [
-        [cx - a, cy], [cx - a / 2, cy - b], [cx + a / 2, cy - b],
-        [cx + a, cy], [cx + a / 2, cy + b], [cx - a / 2, cy + b],
-      ].map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')
-      out.push({ id: hexId(c + 1, r), c, r, cx, cy, pts })
+        [cx - hexRadius, cy], [cx - hexRadius / 2, cy - halfRowStep], [cx + hexRadius / 2, cy - halfRowStep],
+        [cx + hexRadius, cy], [cx + hexRadius / 2, cy + halfRowStep], [cx - hexRadius / 2, cy + halfRowStep],
+      ].map((point) => point[0].toFixed(1) + ',' + point[1].toFixed(1)).join(' ')
+      out.push({ id: hexId(col + 1, row), c: col, r: row, cx, cy, pts })
     }
   }
   return out
@@ -337,17 +375,17 @@ const allCounters = computed(() => Object.values(props.module.counters || {}).fl
  *  au surlignage des hex d'entrée choisissables (cf. `entryHexSet`). */
 function enumerateSetupHexes(setup) {
   if (!setup.includes('-')) return [parseHexId(setup)]
-  const [a, b] = setup.split('-').map(parseHexId)
+  const [rangeStart, rangeEnd] = setup.split('-').map(parseHexId)
   const cells = []
-  if (a.row === b.row) {
-    const [lo, hi] = a.col <= b.col ? [a.col, b.col] : [b.col, a.col]
-    for (let c = lo; c <= hi; c++) cells.push({ col: c, row: a.row })
+  if (rangeStart.row === rangeEnd.row) {
+    const [lo, hi] = rangeStart.col <= rangeEnd.col ? [rangeStart.col, rangeEnd.col] : [rangeEnd.col, rangeStart.col]
+    for (let col = lo; col <= hi; col++) cells.push({ col: col, row: rangeStart.row })
   } else {
-    const [lo, hi] = a.row <= b.row ? [a.row, b.row] : [b.row, a.row]
-    for (let r = lo; r <= hi; r++) cells.push({ col: a.col, row: r })
+    const [lo, hi] = rangeStart.row <= rangeEnd.row ? [rangeStart.row, rangeEnd.row] : [rangeEnd.row, rangeStart.row]
+    for (let row = lo; row <= hi; row++) cells.push({ col: rangeStart.col, row: row })
   }
-  const valid = cells.filter((h) => hexOnMap(h.col, h.row))
-  return valid.length ? valid : [a]
+  const valid = cells.filter((cell) => hexOnMap(cell.col, cell.row))
+  return valid.length ? valid : [rangeStart]
 }
 
 /** Un hex cible tiré au hasard dans la plage `setup` — utilisé uniquement
@@ -365,45 +403,51 @@ function resolveEntryTarget(setup) {
  *  cours — mis à jour par l'appelant après chaque choix. Si les 7 emplacements
  *  sont pleins (cas limite), on stack quand même plutôt que de perdre le pion. */
 function pickArrivalHex(col, row, occupied) {
-  const key = (c, r) => c + ',' + r
+  const key = (keyCol, keyRow) => keyCol + ',' + keyRow
   if (hexOnMap(col, row) && !occupied.has(key(col, row))) return { col, row }
-  const free = neighborsOf(col, row).filter((n) => hexOnMap(n.col, n.row) && !occupied.has(key(n.col, n.row)))
+  const free = neighborsOf(col, row).filter((neighbor) => hexOnMap(neighbor.col, neighbor.row) && !occupied.has(key(neighbor.col, neighbor.row)))
   if (free.length) return free[Math.floor(Math.random() * free.length)]
   return { col, row }
 }
+
+// Règles PARTICULIÈRES au module joué (cf. lib/useArnhem.js) : tout ce qui
+// ne vaut QUE pour une boîte de jeu précise et qu'aucun champ du JSON ne
+// sait exprimer. Le composable ne s'active que si `moduleId` est bien celui
+// du module concerné ; sur tout autre module, chacune de ses règles renvoie
+// `null` et le moteur générique ci-dessous s'applique tel quel.
+const arnhem = useArnhem(toRef(props, 'moduleId'), {
+  sides: props.module.sides,
+  isUnit: (counter) => isUnit(counter),
+  assisted: toRef(props, 'assisted'),
+  terrain: props.module.terrain,
+})
 
 // Les marqueurs (ex. zones de largage "DZ", type "marker") ne sont pas des
 // unités : ils n'occupent jamais un hex au sens du jeu, n'importe combien de
 // pions peuvent partager leur case librement, et ils prennent directement
 // leur hex déclaré sans jamais être redirigés vers un voisin.
-const isUnit = (c) => c.type !== 'marker'
+const isUnit = (counter) => counter.type !== 'marker'
 
 // Un pion est posé sur la carte au chargement s'il a un `setup` (hex de
 // départ) ET arrive au tour 1 (ou sans `turn` — rétrocompatible avec les
-// pions sans ce champ, ex. la garnison allemande fixe). Exceptions :
-//  - les renforts ALLEMANDS du tour 1 restent hors carte malgré tout — ils
-//    arrivent bien pendant ce tour mais pas déjà déployés au coup d'envoi
-//    (contrairement au largage aéroporté allié, qui EST le déploiement
-//    initial du scénario) — donc glissables depuis le panneau comme
-//    n'importe quel autre tour ;
-//  - les UNITÉS alliées (tout ce qui n'est pas un marqueur, cf. isUnit) du
-//    tour 1 restent elles aussi hors carte : seuls les marqueurs de zone de
-//    largage ("DZ ...") sont posés au coup d'envoi. Les unités attendent
-//    dans le panneau "Renfort alliés" — l'utilisateur les pose lui-même sur
-//    ou autour de leur DZ (cf. `entryHexSet` plus bas, qui accepte l'hex de
-//    référence ET ses 6 voisins).
+// pions sans ce champ, ex. une garnison fixe). C'est la règle GÉNÉRIQUE,
+// valable pour tout module.
+// Un module peut la restreindre via ses règles particulières (cf.
+// lib/useArnhem.js::autoPlacesAtLoad — Arnhem y retient hors carte les
+// renforts allemands du tour 1 et toutes les UNITÉS alliées, dont seules les
+// zones de largage "DZ" sont posées au coup d'envoi). La règle du module
+// renvoie `null` quand elle ne se prononce pas — y compris, toujours, sur
+// les autres modules — et on retombe alors sur la règle générique.
 // Les renforts restants (tous tours/factions confondus) restent hors carte,
 // glissables depuis le panneau "Renfort ..." (cf. `reinforcements`).
 // Plusieurs pions peuvent partager le même hex d'entrée déclaré (ex. les 3
 // bataillons d'un même régiment) : pickArrivalHex les répartit pour éviter
 // le stacking (les marqueurs, eux, ignorent complètement cette logique — cf.
 // isUnit).
-function autoPlacesAtLoad(c) {
-  if ((c.turn ?? 1) !== 1) return false
-  if (c.faction === 'german' && c.turn === 1) return false
-  const alliedFactions = props.module.sides?.allies ?? []
-  if (isUnit(c) && alliedFactions.includes(c.faction)) return false
-  return true
+function autoPlacesAtLoad(counter) {
+  const special = arnhem.autoPlacesAtLoad(counter)
+  if (special !== null) return special
+  return (counter.turn ?? 1) === 1
 }
 /** Placement initial du module — extrait en fonction pour être rejouable
  *  (cf. `resetBoardForReplay` plus bas), pas seulement au montage. Utilise
@@ -415,16 +459,19 @@ function autoPlacesAtLoad(c) {
 function buildInitialCounters() {
   const occupied = new Set()
   const placed = []
-  for (const c of allCounters.value.filter((c) => c.setup && autoPlacesAtLoad(c))) {
-    const override = props.initialPositions[c.id]
-    const target = resolveEntryTarget(c.setup)
-    const pos = override ?? (isUnit(c) ? pickArrivalHex(target.col, target.row, occupied) : target)
-    if (isUnit(c)) occupied.add(pos.col + ',' + pos.row)
-    placed.push({ ...c, ...pos })
+  for (const counter of allCounters.value.filter((counter) => counter.setup && autoPlacesAtLoad(counter))) {
+    const override = props.initialPositions[counter.id]
+    const target = resolveEntryTarget(counter.setup)
+    const pos = override ?? (isUnit(counter) ? pickArrivalHex(target.col, target.row, occupied) : target)
+    if (isUnit(counter)) occupied.add(pos.col + ',' + pos.row)
+    placed.push({ ...counter, ...pos })
   }
   return placed
 }
 const counters = ref(buildInitialCounters())
+// Positions de départ de CETTE partie (cf. `logDeploymentOnce`), capturées
+// avant tout mouvement.
+const initialDeployment = counters.value.map((counter) => ({ id: counter.id, col: counter.col, row: counter.row }))
 
 // cf. lib/useAssisted.js — toute la logique propre au mode "Assisté"
 // (grille, sélection au clic, restriction de tour, phases Mouvement/Combat,
@@ -443,7 +490,7 @@ const { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIn
 // ne fait que lui brancher les clics (cf. onCounterSelect/onHex plus bas),
 // les surlignages orange/jaune de la carte et la modale (cf. template).
 const {
-  combatActive, combatAllowed, targetHexLabels: combatTargetHexLabels, defenders: combatDefenders,
+  combatActive, combatAllowed, targetHexes: combatTargetHexes, targetHexLabels: combatTargetHexLabels, defenders: combatDefenders,
   attackers: combatAttackers, toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought, pendingEngagements,
   isCombatTargetHex, isCombatAttackerHex,
   attackStrength, defenseStrength, differential, canResolve: combatCanResolve, strandedUnits: combatStrandedUnits,
@@ -451,24 +498,61 @@ const {
   column: combatColumn, resolveCombat, combatResult, crtRows, crtResults,
 } = useCombat(toRef(props, 'assisted'), phase, counters, canControl, props.module.terrain, combatEdgeKind)
 
+// Application du résultat d'un combat (retraites au clic, éliminations — cf.
+// lib/useRetreat.js, qui porte toute la règle). HexMap.vue ne lui fournit que
+// les deux actions concrètes sur la carte : avancer une unité d'un hex, et
+// éliminer une unité.
+const {
+  start: startRetreat, step: stepRetreat, reduce: reduceRetreat, clear: clearRetreat, active: retreatActive,
+  info: retreatInfo, notes: retreatNotes, isRetreatHex, isRetreatingHex,
+  advanceInfo, selectAdvancer, stepAdvance, endAdvance, isPorHex, isAdvanceHex, isAdvancerHex,
+} = useRetreat({
+  phase, counters, hexOnMap, enemyZocSet, canEnterTerrain, isEnemyOf,
+  moveUnit: (unit, hex, { done, total }) => {
+    unit.col = hex.col; unit.row = hex.row
+    emit('move', { counterId: unit.id, col: unit.col, row: unit.row })
+    // Entrée `retreat` (et non `move`) : une retraite n'est ni un mouvement
+    // de la phase (pas de liseré, pas d'annulation possible), ni une
+    // dépense de MP — cf. applyReplayEntry.
+    log('retreat', `${unit.name} retraite en ${hexId(unit.col + 1, unit.row)} (${done}/${total})`,
+      { counterId: unit.id, col: unit.col, row: unit.row })
+  },
+  eliminateUnit: (unit, reason) => eliminateCounter(unit.id, reason),
+  // Réductions de retraite propres au module (cf.
+  // lib/useArnhem.js::cityRetreatReduction) — `null` hors Arnhem.
+  retreatReduction: (unit, hex, task) => arnhem.cityRetreatReduction(unit, hex, task),
+  // Avance après combat : même traitement qu'un pas de retraite, sous une
+  // entrée `advance` (cf. applyReplayEntry).
+  advanceUnit: (unit, hex) => {
+    unit.col = hex.col; unit.row = hex.row
+    emit('move', { counterId: unit.id, col: unit.col, row: unit.row })
+    log('advance', `${unit.name} avance en ${hexId(unit.col + 1, unit.row)} (après combat)`,
+      { counterId: unit.id, col: unit.col, row: unit.row })
+  },
+})
+
 /** Clic sur "Combattre" dans la modale : la règle (dé + lecture de la table)
  *  vit dans lib/useCombat.js, on ne fait ici qu'en journaliser le résultat
- *  (hex cibles et unités défenseuses, qui peuvent être plusieurs). */
+ *  (hex cibles et unités défenseuses, qui peuvent être plusieurs), puis
+ *  lancer son application (cf. lib/useRetreat.js). */
 function onCombatFight() {
-  const r = resolveCombat()
-  if (!r) return
-  const diff = r.diff > 0 ? '+' + r.diff : String(r.diff)
-  const names = combatDefenders.value.map((d) => d.name).join(', ')
+  const combatOutcome = resolveCombat()
+  if (!combatOutcome) return
+  const diff = combatOutcome.diff > 0 ? '+' + combatOutcome.diff : String(combatOutcome.diff)
+  const names = combatDefenders.value.map((defender) => defender.name).join(', ')
   // `data` : de quoi restaurer le combat au rejeu du journal (cf.
   // applyReplayEntry, entrée `combat`) — les unités participantes y sont
   // remarquées "ayant combattu" (cf. lib/useCombat.js::markFought).
   log('combat', `Combat sur ${combatTargetHexLabels.value.join(', ')} (${names}) : `
-    + `différentiel ${diff}, ${r.rowLabel}, dé ${r.die} → ${r.result} (${r.resultLabel})`, {
+    + `différentiel ${diff}, ${combatOutcome.rowLabel}, dé ${combatOutcome.die} → ${combatOutcome.result} (${combatOutcome.resultLabel})`, {
     hexes: combatTargetHexLabels.value,
-    attackerIds: combatAttackers.value.map((a) => a.id),
-    defenderIds: combatDefenders.value.map((d) => d.id),
-    diff: r.diff, row: r.rowKey, die: r.die, result: r.result,
+    attackerIds: combatAttackers.value.map((attacker) => attacker.id),
+    defenderIds: combatDefenders.value.map((defender) => defender.id),
+    diff: combatOutcome.diff, row: combatOutcome.rowKey, die: combatOutcome.die, result: combatOutcome.result,
   })
+  // APRÈS le journal du combat : les éliminations/retraites qui suivent s'y
+  // inscrivent donc bien après lui.
+  startRetreat(combatOutcome.result, [...combatAttackers.value], [...combatDefenders.value], combatTargetHexes.value)
 }
 
 /** Total de MP déjà dépensés par `c` pendant ce tour-ci (cf.
@@ -476,16 +560,16 @@ function onCombatFight() {
  *  de mouvement (ou hors mode Assisté). Enregistré dans le journal (champ
  *  `mp` des entrées `move`/`place`) pour qu'une partie sauvegardée en pleine
  *  phase de Mouvement retrouve ses MP au rejeu (cf. applyReplayEntry). */
-function spentMpOf(c) {
-  const left = remainingMp(c)
-  return left == null ? null : c.mov - left
+function spentMpOf(counter) {
+  const left = remainingMp(counter)
+  return left == null ? null : counter.mov - left
 }
 
 /** Suffixe "(MP 3/6)" ajouté au texte d'un déplacement dans le journal —
  *  vide pour un pion sans potentiel de mouvement. */
-function mpText(c) {
-  const spent = spentMpOf(c)
-  return spent == null ? '' : ` (MP ${spent}/${c.mov})`
+function mpText(counter) {
+  const spent = spentMpOf(counter)
+  return spent == null ? '' : ` (MP ${spent}/${counter.mov})`
 }
 
 const PHASE_NAMES = ['Mouvement', 'Combat', 'Fin de tour']
@@ -503,6 +587,9 @@ const showPhaseBlocked = ref(false)
  *  Sinon, la décision de ce que fait réellement le clic reste à
  *  lib/useAssisted.js::advance. */
 function onPhaseNext() {
+  // Retraite en cours (cf. lib/useRetreat.js) : elle doit être terminée
+  // avant de pouvoir changer de phase.
+  if (retreatActive.value) return
   if (phase.value === 0 && stackedHexes.value.length > 0) {
     showPhaseBlocked.value = true
     return
@@ -533,8 +620,8 @@ const selectedCounterId = ref(null)
 // Mouvement est désélectionné — en phase Combat, une unité amie ne se
 // sélectionne jamais (cf. onCounterSelect), elle ne peut qu'être désignée
 // attaquante.
-watch(phase, (p) => {
-  if (p === 1) selectedCounterId.value = null
+watch(phase, (newPhase) => {
+  if (newPhase === 1) selectedCounterId.value = null
   // Tout changement de phase désélectionne un renfort choisi dans le
   // panneau : il n'est peut-être plus plaçable dans la nouvelle phase (cf.
   // lib/useAssisted.js::canPlaceReinforcementNow — un aéroporté choisi en
@@ -546,7 +633,13 @@ watch(phase, (p) => {
 // des aéroportés à poser, sinon Mouvement (cf. lib/useAssisted.js::
 // startSidePhase). Au montage, et pas plus tôt : TurnTracker.vue (camp
 // actif, tour courant) doit déjà être monté.
-onMounted(() => initPhase())
+onMounted(() => {
+  initPhase()
+  // Partie relancée avec les réglages d'une sauvegarde (cf. DemoPlay.vue) :
+  // on rejoue maintenant le journal mis de côté — APRÈS `initPhase`, que le
+  // rejeu doit pouvoir corriger.
+  journalRef.value?.resumePending()
+})
 
 // Pions retirés de la carte via "Éliminé" (menu contextuel, cf.
 // onCounterContextMenu plus bas) — id -> true. Un pion éliminé n'est ni sur
@@ -554,7 +647,7 @@ onMounted(() => initPhase())
 // "replacé" depuis le panneau "Unités éliminées" (EliminatedPanel.vue).
 const eliminatedIds = ref(new Set())
 const eliminatedCounters = computed(() =>
-  allCounters.value.filter((c) => eliminatedIds.value.has(String(c.id)))
+  allCounters.value.filter((counter) => eliminatedIds.value.has(String(counter.id)))
 )
 
 // --- Renforts : pions du module avec un hex d'entrée mais pas encore posés
@@ -566,9 +659,9 @@ const eliminatedCounters = computed(() =>
 // désactivé pour laisser le clic comme seul chemin). Toujours possible, dans
 // les deux modes, via le menu contextuel "Replacer le pion" (ils y
 // retournent alors).
-const placedIds = computed(() => new Set(counters.value.map((c) => String(c.id))))
+const placedIds = computed(() => new Set(counters.value.map((counter) => String(counter.id))))
 const reinforcements = computed(() =>
-  allCounters.value.filter((c) => c.setup && !placedIds.value.has(String(c.id)) && !eliminatedIds.value.has(String(c.id)))
+  allCounters.value.filter((counter) => counter.setup && !placedIds.value.has(String(counter.id)) && !eliminatedIds.value.has(String(counter.id)))
 )
 
 // Un onglet de renforts par camp déclaré dans module.sides (ex. {"german":
@@ -588,7 +681,7 @@ function reinforcementsForTab(key) {
   const sides = props.module.sides
   if (!sides) return reinforcements.value
   const factions = sides[key] ?? []
-  return reinforcements.value.filter((c) => factions.includes(c.faction))
+  return reinforcements.value.filter((counter) => factions.includes(counter.faction))
 }
 const openTab = ref(null)
 const draggedCounterId = ref(null)
@@ -608,11 +701,11 @@ function closeContextMenu() {
 }
 /** Retire un pion de la carte et le renvoie dans les renforts (sans l'éliminer). */
 function returnCounterToReinforcements(id) {
-  const i = counters.value.findIndex((c) => String(c.id) === String(id))
-  if (i !== -1) counters.value.splice(i, 1)
+  const counterIndex = counters.value.findIndex((counter) => String(counter.id) === String(id))
+  if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
   eliminatedIds.value.delete(String(id))
   eliminatedIds.value = new Set(eliminatedIds.value)
-  const c = allCounters.value.find((c) => String(c.id) === String(id))
+  const counter = allCounters.value.find((counter) => String(counter.id) === String(id))
   // cf. lib/useAssisted.js::resetMp — un pion replacé aux renforts doit
   // repartir avec un plein potentiel de MP la prochaine fois qu'il entrera
   // en jeu, pas avec ce qu'il lui restait au moment où il a quitté la carte.
@@ -620,22 +713,26 @@ function returnCounterToReinforcements(id) {
   // congestion du hex par lequel il était entré ce tour-ci, cette place est
   // maintenant libre : le prochain à entrer par ce même hex ne doit pas
   // payer pour une entrée qui n'a plus lieu.
-  if (c) {
-    resetMp(c)
-    unspendEntryCost(c)
+  if (counter) {
+    resetMp(counter)
+    unspendEntryCost(counter)
   }
-  log('return', `${c?.name ?? id} replacé dans les renforts`, { counterId: id })
+  log('return', `${counter?.name ?? id} replacé dans les renforts`, { counterId: id })
 }
-function eliminateCounter(id) {
-  const i = counters.value.findIndex((c) => String(c.id) === String(id))
-  if (i !== -1) counters.value.splice(i, 1)
+/** Élimine un pion (menu contextuel, ou résultat de combat — cf.
+ *  lib/useRetreat.js, qui précise alors pourquoi dans `reason`). */
+function eliminateCounter(id, reason) {
+  const counterIndex = counters.value.findIndex((counter) => String(counter.id) === String(id))
+  if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
   eliminatedIds.value.add(String(id))
   eliminatedIds.value = new Set(eliminatedIds.value)
-  const c = allCounters.value.find((c) => String(c.id) === String(id))
-  log('eliminate', `${c?.name ?? id} éliminé`, { counterId: id })
+  const counter = allCounters.value.find((counter) => String(counter.id) === String(id))
+  log('eliminate', `${counter?.name ?? id} éliminé${reason ? ` (${reason})` : ''}`, { counterId: id })
 }
 function onCounterContextMenu(id, ev) {
-  if (replayLocked.value) return
+  // Pendant une retraite (cf. lib/useRetreat.js), retirer ou replacer un
+  // pion à la main désynchroniserait la file des retraites : menu désactivé.
+  if (replayLocked.value || retreatActive.value) return
   const items = [
     { label: 'Replacer le pion', action: () => returnCounterToReinforcements(id) },
     { label: 'Éliminé', action: () => eliminateCounter(id) },
@@ -659,18 +756,18 @@ function chooseContextMenuItem(action) {
 /** Le pion actuellement sélectionné (objet complet, pas que son id) — `null`
  *  si aucun. Factorisé ici car réutilisé par `adjacentSet`, `reachableSet`
  *  ci-dessous ET par lib/useDebug.js (portée de déplacement en mode debug). */
-const selectedCounter = computed(() => counters.value.find((c) => c.id === selectedCounterId.value) ?? null)
+const selectedCounter = computed(() => counters.value.find((counter) => counter.id === selectedCounterId.value) ?? null)
 
 /** Hex voisins (0-based col / 1-based row) du pion actuellement sélectionné,
  *  sous forme de clés "col,row" pour un lookup O(1) depuis isAdjacent(). */
 const adjacentSet = computed(() => {
-  const c = selectedCounter.value
-  if (!c) return new Set()
+  const counter = selectedCounter.value
+  if (!counter) return new Set()
   return new Set(
-    neighborsOf(c.col, c.row).filter((n) => hexOnMap(n.col, n.row)).map((n) => n.col + ',' + n.row)
+    neighborsOf(counter.col, counter.row).filter((neighbor) => hexOnMap(neighbor.col, neighbor.row)).map((neighbor) => neighbor.col + ',' + neighbor.row)
   )
 })
-const isAdjacent = (h) => adjacentSet.value.has(h.c + ',' + h.r)
+const isAdjacent = (hex) => adjacentSet.value.has(hex.c + ',' + hex.r)
 
 // Sous-ensemble de `adjacentSet` : uniquement les hex adjacents que le pion
 // sélectionné peut RÉELLEMENT rejoindre, MP suffisants pour en payer le coût
@@ -683,26 +780,26 @@ const isAdjacent = (h) => adjacentSet.value.has(h.c + ',' + h.r)
 // place la portée COMPLÈTE de déplacement (cf. lib/useDebug.js::isInRange),
 // pas que le premier pas.
 const reachableSet = computed(() => {
-  const c = selectedCounter.value
-  if (!c) return new Set()
-  const from = { c: c.col, r: c.row }
+  const counter = selectedCounter.value
+  if (!counter) return new Set()
+  const from = { c: counter.col, r: counter.row }
   const set = new Set()
   for (const key of adjacentSet.value) {
     const [col, row] = key.split(',').map(Number)
-    const h = { c: col, r: row }
-    if (!canEnterHex(c, h, from)) continue
+    const hexCell = { c: col, r: row }
+    if (!canEnterHex(counter, hexCell, from)) continue
     // Règle d'empilement (mouvement normal, cf. lib/useAssisted.js) : un hex
     // déjà occupé par un pion AMI n'est atteignable que si le pion sélectionné
     // pourrait ensuite continuer sa route (MP restants après y être entré) —
     // sinon il resterait "coincé" dessus, ce qui est interdit. On l'exclut
     // donc du surlignage vert pour ne pas laisser croire que ce clic ferait
     // quelque chose.
-    if (hasFriendlyOccupant(c, h) && !canLeaveAfterEntering(c, h, from)) continue
+    if (hasFriendlyOccupant(counter, hexCell) && !canLeaveAfterEntering(counter, hexCell, from)) continue
     set.add(key)
   }
   return set
 })
-const isReachable = (h) => reachableSet.value.has(h.c + ',' + h.r)
+const isReachable = (hex) => reachableSet.value.has(hex.c + ',' + hex.r)
 
 // --- Entrée en jeu d'un renfort : deux systèmes cf. demande utilisateur —
 // 1) glisser-déposer libre (n'importe quel hex, cf. onMapDrop) ;
@@ -715,7 +812,7 @@ const isReachable = (h) => reachableSet.value.has(h.c + ',' + h.r)
 //    `entryHexSet` lui est transmis, pour l'affichage debug du surcoût
 //    d'entrée (cf. lib/useAssisted.js::entrySurcharge).
 const selectedReinforcement = computed(() =>
-  reinforcements.value.find((c) => String(c.id) === String(selectedReinforcementId.value))
+  reinforcements.value.find((counter) => String(counter.id) === String(selectedReinforcementId.value))
 )
 
 // Un hex de BORD DE CARTE : au moins un de ses 6 voisins est hors carte. Les
@@ -724,8 +821,8 @@ const selectedReinforcement = computed(() =>
 // bord (cf. `fallbackEntryHexes`), jamais un hex vers l'intérieur de la
 // carte : un renfort qui débarque au bord de la zone de jeu reste au bord,
 // il ne "saute" pas plus loin à l'intérieur.
-function isEdgeHex(h) {
-  return hexOnMap(h.col, h.row) && neighborsOf(h.col, h.row).some((n) => !hexOnMap(n.col, n.row))
+function isEdgeHex(hex) {
+  return hexOnMap(hex.col, hex.row) && neighborsOf(hex.col, hex.row).some((neighbor) => !hexOnMap(neighbor.col, neighbor.row))
 }
 
 // `hex` (déjà occupé ou non) empêche-t-il `r` (le renfort qu'on cherche à
@@ -742,12 +839,12 @@ function isEdgeHex(h) {
 //    ne bloque PAS l'entrée : le renfort peut traverser son hex.
 // Les marqueurs et pions de soutien ne comptent jamais comme occupants ici
 // (ni ennemis ni amis au sens de cette règle).
-function isEntryHexBlocked(r, hex) {
+function isEntryHexBlocked(reinforcement, hex) {
   const occupants = counters.value.filter(
-    (c) => c.col === hex.col && c.row === hex.row && isUnit(c) && c.kind !== 'support'
+    (counter) => counter.col === hex.col && counter.row === hex.row && isUnit(counter) && counter.kind !== 'support'
   )
-  return occupants.some((c) => isEnemyOf(r, c) || enemyZocSet(c).has(c.col + ',' + c.row))
-    || entryWouldStack(r, hex)
+  return occupants.some((counter) => isEnemyOf(reinforcement, counter) || enemyZocSet(counter).has(counter.col + ',' + counter.row))
+    || entryWouldStack(reinforcement, hex)
 }
 
 // Règle d'empilement appliquée à l'ENTRÉE EN JEU (cf.
@@ -755,9 +852,9 @@ function isEntryHexBlocked(r, hex) {
 // par un ami de `r`, et `r`, une fois entré (coût d'entrée payé, sauf
 // aéroporté "+adj"), n'aurait plus de quoi en repartir. Toujours faux hors
 // mode Assisté.
-function entryWouldStack(r, hex) {
-  const h = { c: hex.col, r: hex.row }
-  return hasFriendlyOccupant(r, h) && !canLeaveAfterReinforcementEntry(r, h, !r.setup.endsWith('+adj'))
+function entryWouldStack(reinforcement, hex) {
+  const entryCell = { c: hex.col, r: hex.row }
+  return hasFriendlyOccupant(reinforcement, entryCell) && !canLeaveAfterReinforcementEntry(reinforcement, entryCell, !reinforcement.setup.endsWith('+adj'))
 }
 
 // Atterrissage d'un AÉROPORTÉ (`setup` "+adj", cf. `entryHexSet`) : règle
@@ -768,7 +865,7 @@ function entryWouldStack(r, hex) {
 // garde-fou.
 function airborneLandingBlocked(hex) {
   if (!props.assisted) return false
-  return counters.value.some((c) => c.col === hex.col && c.row === hex.row && isUnit(c) && c.kind !== 'support')
+  return counters.value.some((counter) => counter.col === hex.col && counter.row === hex.row && isUnit(counter) && counter.kind !== 'support')
 }
 
 // Hex de repli pour un `setup` "ref seule" (cf. `entryHexSet`) dont l'hex de
@@ -784,18 +881,18 @@ function airborneLandingBlocked(hex) {
 // Liste vide si aucun repli n'est possible : cf. `entryHexSet`, qui laisse
 // alors le renfort tout simplement hors de portée ce tour-ci (rien n'est
 // surligné, un clic n'importe où ne fait rien — cf. onHex).
-function fallbackEntryHexes(r, ref) {
+function fallbackEntryHexes(reinforcement, ref) {
   const candidates = neighborsOf(ref.col, ref.row)
-    .filter((n) => isEdgeHex(n) && !isEntryHexBlocked(r, n))
+    .filter((neighbor) => isEdgeHex(neighbor) && !isEntryHexBlocked(reinforcement, neighbor))
   if (!candidates.length) return []
   const friendlies = counters.value.filter(
-    (c) => isUnit(c) && c.kind !== 'support' && !isEnemyOf(r, c)
+    (counter) => isUnit(counter) && counter.kind !== 'support' && !isEnemyOf(reinforcement, counter)
   )
   if (!friendlies.length) return candidates
-  const distanceToFriendlies = (h) => Math.min(...friendlies.map((f) => hexDistance(h, f)))
-  const scored = candidates.map((h) => ({ h, d: distanceToFriendlies(h) }))
-  const minD = Math.min(...scored.map((s) => s.d))
-  return scored.filter((s) => s.d === minD).map((s) => s.h)
+  const distanceToFriendlies = (hex) => Math.min(...friendlies.map((friendly) => hexDistance(hex, friendly)))
+  const scored = candidates.map((candidate) => ({ h: candidate, d: distanceToFriendlies(candidate) }))
+  const minD = Math.min(...scored.map((scoredHex) => scoredHex.d))
+  return scored.filter((scoredHex) => scoredHex.d === minD).map((scoredHex) => scoredHex.h)
 }
 
 // Hex d'entrée valides pour le renfort actuellement sélectionné, selon la
@@ -814,22 +911,22 @@ function fallbackEntryHexes(r, ref) {
 //     place (jamais les deux à la fois : soit la référence, soit son/ses
 //     repli(s), jamais plus d'un choix "normal" en même temps).
 const entryHexSet = computed(() => {
-  const r = selectedReinforcement.value
-  if (!r) return new Set()
-  if (r.setup.includes('-')) {
-    const cells = enumerateSetupHexes(r.setup).filter((h) => !entryWouldStack(r, h))
-    return new Set(cells.map((h) => h.col + ',' + h.row))
+  const reinforcement = selectedReinforcement.value
+  if (!reinforcement) return new Set()
+  if (reinforcement.setup.includes('-')) {
+    const cells = enumerateSetupHexes(reinforcement.setup).filter((hex) => !entryWouldStack(reinforcement, hex))
+    return new Set(cells.map((hex) => hex.col + ',' + hex.row))
   }
-  const ref = parseHexId(r.setup) // tolère un éventuel suffixe "+adj" (ne lit que les 4 premiers caractères)
-  if (r.setup.endsWith('+adj')) {
-    const cells = [ref, ...neighborsOf(ref.col, ref.row).filter((n) => hexOnMap(n.col, n.row))]
-      .filter((h) => !airborneLandingBlocked(h))
-    return new Set(cells.map((h) => h.col + ',' + h.row))
+  const ref = parseHexId(reinforcement.setup) // tolère un éventuel suffixe "+adj" (ne lit que les 4 premiers caractères)
+  if (reinforcement.setup.endsWith('+adj')) {
+    const cells = [ref, ...neighborsOf(ref.col, ref.row).filter((neighbor) => hexOnMap(neighbor.col, neighbor.row))]
+      .filter((hex) => !airborneLandingBlocked(hex))
+    return new Set(cells.map((hex) => hex.col + ',' + hex.row))
   }
-  const cells = isEntryHexBlocked(r, ref) ? fallbackEntryHexes(r, ref) : [ref]
-  return new Set(cells.map((h) => h.col + ',' + h.row))
+  const cells = isEntryHexBlocked(reinforcement, ref) ? fallbackEntryHexes(reinforcement, ref) : [ref]
+  return new Set(cells.map((hex) => hex.col + ',' + hex.row))
 })
-const isEntryHex = (h) => entryHexSet.value.has(h.c + ',' + h.r)
+const isEntryHex = (hex) => entryHexSet.value.has(hex.c + ',' + hex.r)
 
 // cf. lib/useAssisted.js::enemyZocSet — hex sous ZOC ennemie relativement au
 // pion sélectionné (vide si aucun pion sélectionné, ou si l'appli n'est pas
@@ -841,7 +938,7 @@ const isEntryHex = (h) => entryHexSet.value.has(h.c + ',' + h.r)
 // pour ne pas surcharger l'écran par défaut. `zocSet` est aussi transmis à
 // useDebug() ci-dessous pour que le calcul de portée en tienne compte.
 const zocSet = computed(() => enemyZocSet(selectedCounter.value))
-const isZocHex = (h) => zocSet.value.has(h.c + ',' + h.r)
+const isZocHex = (hex) => zocSet.value.has(hex.c + ',' + hex.r)
 
 // cf. lib/useDebug.js — case à cocher "debug" (ci-dessous dans le template)
 // et tous les affichages qu'elle déclenche : le coût de terrain (COT) des
@@ -869,17 +966,17 @@ const { debug, adjacentCotLabels, isInRange, entrySurchargeLabels } = useDebug(
 // marqueurs sont rendus avant les unités, donc toujours dessous).
 const STACK_STEP = 0.1
 const stackOffsets = computed(() => {
-  const markerHexes = new Set(counters.value.filter((c) => !isUnit(c)).map((c) => c.col + ',' + c.row))
+  const markerHexes = new Set(counters.value.filter((counter) => !isUnit(counter)).map((counter) => counter.col + ',' + counter.row))
   const seen = new Map()
   const offsets = new Map()
-  for (const c of counters.value) {
-    if (!isUnit(c)) { offsets.set(c.id, ZERO_OFFSET); continue }
-    const key = c.col + ',' + c.row
+  for (const counter of counters.value) {
+    if (!isUnit(counter)) { offsets.set(counter.id, ZERO_OFFSET); continue }
+    const key = counter.col + ',' + counter.row
     const stackBase = markerHexes.has(key) ? 1 : 0
-    const k = seen.get(key) ?? 0
-    seen.set(key, k + 1)
-    const idx = stackBase + k
-    offsets.set(c.id, { dx: -STACK_STEP * idx, dy: -STACK_STEP * idx })
+    const stackIndex = seen.get(key) ?? 0
+    seen.set(key, stackIndex + 1)
+    const idx = stackBase + stackIndex
+    offsets.set(counter.id, { dx: -STACK_STEP * idx, dy: -STACK_STEP * idx })
   }
   return offsets
 })
@@ -898,16 +995,16 @@ function hexCenterPx(col, row) {
 // seul ne suffit pas à voir combien il y en a) — seulement à partir de 2.
 const supportStackBadges = computed(() => {
   const counts = new Map()
-  for (const c of counters.value) {
-    if (c.kind !== 'support') continue
-    const key = c.col + ',' + c.row
-    const entry = counts.get(key) ?? { col: c.col, row: c.row, count: 0 }
+  for (const counter of counters.value) {
+    if (counter.kind !== 'support') continue
+    const key = counter.col + ',' + counter.row
+    const entry = counts.get(key) ?? { col: counter.col, row: counter.row, count: 0 }
     entry.count += 1
     counts.set(key, entry)
   }
-  return [...counts.values()].filter((b) => b.count >= 2).map((b) => {
-    const center = hexCenterPx(b.col, b.row)
-    return { key: b.col + ',' + b.row, count: b.count, x: center.x + calibration.a * 0.55, y: center.y + calibration.a * 0.5 }
+  return [...counts.values()].filter((supportStack) => supportStack.count >= 2).map((supportStack) => {
+    const center = hexCenterPx(supportStack.col, supportStack.row)
+    return { key: supportStack.col + ',' + supportStack.row, count: supportStack.count, x: center.x + calibration.a * 0.55, y: center.y + calibration.a * 0.5 }
   })
 })
 
@@ -926,8 +1023,17 @@ const supportStackBadges = computed(() => {
  *      a déjà été désélectionné une fois), auquel cas le clic ne fait rien. */
 function onCounterSelect(id) {
   if (replayLocked.value) return
-  const c = counters.value.find((c) => String(c.id) === String(id))
-  if (!c) return
+  const counter = counters.value.find((counter) => String(counter.id) === String(id))
+  if (!counter) return
+  // Résultat de combat en cours d'application (cf. lib/useRetreat.js) :
+  //  - retraite : le seul clic utile est sur un hex rouge — le pion posé sur
+  //    un tel hex (unité amie de celle qui retraite) recouvre son polygone,
+  //    son clic vaut donc clic sur l'hex ;
+  //  - avance : un clic sur une unité victorieuse la choisit pour avancer.
+  if (retreatActive.value) {
+    if (!stepRetreat({ col: counter.col, row: counter.row })) selectAdvancer(counter)
+    return
+  }
   // Phase Airborne : on ne fait que POSER des aéroportés, aucun pion déjà
   // sur la carte ne se sélectionne ni ne bouge (cf. lib/useAssisted.js,
   // section "Phase Airborne").
@@ -946,15 +1052,15 @@ function onCounterSelect(id) {
   // désigné une cible, ni si elle est hors de portée, ni si elle a déjà
   // combattu (cf. lib/useCombat.js::hasFought, qui la rend inéligible).
   if (combatAllowed.value) {
-    if (!toggleTarget(c)) toggleAttacker(c)
+    if (!toggleTarget(counter)) toggleAttacker(counter)
     return
   }
-  if (selectedCounterId.value != null && selectedCounterId.value !== id && isAdjacent({ c: c.col, r: c.row })) {
-    onHex({ c: c.col, r: c.row })
+  if (selectedCounterId.value != null && selectedCounterId.value !== id && isAdjacent({ c: counter.col, r: counter.row })) {
+    onHex({ c: counter.col, r: counter.row })
     return
   }
   if (lockedFromSelectionIds.value.has(String(id))) return
-  if (!canControl(c)) return
+  if (!canControl(counter)) return
   setSelectedCounter(selectedCounterId.value === id ? null : id)
   selectedReinforcementId.value = null
 }
@@ -963,10 +1069,10 @@ const selectedReinforcementId = ref(null)
 
 function onReinforcementSelect(id) {
   if (replayLocked.value) return
-  const c = reinforcements.value.find((c) => String(c.id) === String(id))
+  const counter = reinforcements.value.find((counter) => String(counter.id) === String(id))
   // `canPlaceReinforcementNow` : en phase Airborne, seuls les aéroportés ;
   // dans les autres phases, tout sauf eux (cf. lib/useAssisted.js).
-  if (!canControl(c) || !canEnterThisTurn(c) || !canPlaceReinforcementNow(c)) return
+  if (!canControl(counter) || !canEnterThisTurn(counter) || !canPlaceReinforcementNow(counter)) return
   // Désélection du pion en cours AVANT de choisir le renfort : refusée si ce
   // pion est en overstack (cf. setSelectedCounter), et le renfort n'est
   // alors pas sélectionné non plus.
@@ -1002,25 +1108,42 @@ function onReinforcementSelect(id) {
  *  Aucune action pendant un rejeu en cours (cf. `replayLocked`) — seul le
  *  lecteur (stepReplay/fastForwardReplay) fait bouger la carte tant que le
  *  journal chargé n'est pas entièrement joué. */
-const onHex = (h) => {
+const onHex = (hex) => {
   if (replayLocked.value) return
+  // Résultat de combat en cours d'application (cf. lib/useRetreat.js) :
+  // seul un clic sur un hex rouge (retraite) ou vert vif (avance) fait
+  // quelque chose ; tout le reste est ignoré jusqu'à la fin.
+  if (retreatActive.value) {
+    const position = { col: hex.c, row: hex.r }
+    if (!stepRetreat(position)) stepAdvance(position)
+    return
+  }
   // Clic sur un hex cible pendant un combat : le retire des cibles (et
   // annule le combat si c'était le dernier, cf. lib/useCombat.js) — pendant
   // de la même règle dans onCounterSelect, pour le cas où c'est le POLYGONE
   // de l'hex qui reçoit le clic plutôt que le pion posé dessus.
-  if (isCombatTargetHex(h)) { removeTargetHex(h.c, h.r); return }
+  if (isCombatTargetHex(hex)) { removeTargetHex(hex.c, hex.r); return }
   if (selectedReinforcementId.value != null) {
-    if (isEntryHex(h)) {
-      const r = selectedReinforcement.value
-      if (r && canEnterThisTurn(r)) {
-        const placed = { ...r, col: h.c, row: h.r }
+    if (isEntryHex(hex)) {
+      const reinforcement = selectedReinforcement.value
+      if (reinforcement && canEnterThisTurn(reinforcement)) {
+        const placed = { ...reinforcement, col: hex.c, row: hex.r }
         counters.value.push(placed)
         // "+adj" (aéroporté) n'est jamais un hex de bord de carte au sens de
         // cette règle — cf. lib/useAssisted.js::spendEntryCost, qui ne fait
         // rien hors mode Assisté de toute façon.
-        const paysEntry = !r.setup.endsWith('+adj')
-        const paid = paysEntry ? spendEntryCost(placed, h) : null
-        emit('move', { counterId: placed.id, col: h.c, row: h.r })
+        const paysEntry = !reinforcement.setup.endsWith('+adj')
+        const paid = paysEntry ? spendEntryCost(placed, hex) : null
+        // Règle particulière du module sur l'arrivée (cf.
+        // lib/useArnhem.js::airborneArrivalSpentMp — un aéroporté largué
+        // compte 4 MP déjà dépensés, soit 3 MP pour ce tour-ci). Inscrit
+        // AVANT le `log` ci-dessous, qui journalise les MP du pion (cf.
+        // `mpText`/`spentMpOf`) : la ligne du journal doit montrer, et le
+        // rejeu rétablir, l'état d'APRÈS application de la règle.
+        arnhem.noteAirborneArrival(placed)
+        const arrivalMp = arnhem.airborneArrivalSpentMp(placed)
+        if (arrivalMp !== null) setSpentMp(placed.id, arrivalMp)
+        emit('move', { counterId: placed.id, col: hex.c, row: hex.r })
         // Hex d'entrée CONGESTIONNÉ (au moins une autre entrée par ce même hex
         // ce tour-ci, cf. lib/useAssisted.js::entryCost) : le journal le
         // signale, avec le coût majoré réellement payé.
@@ -1031,8 +1154,8 @@ const onHex = (h) => {
         // rétablir aussi la CONGESTION de cet hex (cf. applyReplayEntry, qui
         // recalcule le coût lui-même : `entryRank`/`entryCost` ne sont là que
         // pour information).
-        log('place', `${r.name} entre en jeu en ${hexId(h.c + 1, h.r)}${mpText(placed)}${congestion}`,
-          { counterId: placed.id, col: h.c, row: h.r, mp: spentMpOf(placed), entry: paysEntry,
+        log('place', `${reinforcement.name} entre en jeu en ${hexId(hex.c + 1, hex.r)}${mpText(placed)}${congestion}`,
+          { counterId: placed.id, col: hex.c, row: hex.r, mp: spentMpOf(placed), entry: paysEntry,
             entryRank: paid?.rank ?? null, entryCost: paid?.cost ?? null })
         // Sélectionné automatiquement après son entrée en jeu, pour pouvoir
         // enchaîner tout de suite sur son mouvement (cf. onHex, branche
@@ -1048,32 +1171,32 @@ const onHex = (h) => {
     }
     return
   }
-  if (selectedCounterId.value != null && isAdjacent(h)) {
-    const c = counters.value.find((c) => c.id === selectedCounterId.value)
+  if (selectedCounterId.value != null && isAdjacent(hex)) {
+    const counter = counters.value.find((counter) => counter.id === selectedCounterId.value)
     // Position de départ capturée AVANT tout déplacement — sert à la fois à
     // l'historique (from ci-dessous) et de paramètre "from" pour
     // canEnterHex/spendMp (cf. useAssisted.js::terrainCost, règle
     // route/piste : le coût dépend de d'où on VIENT, pas seulement de l'hex
     // d'arrivée).
-    const from = c ? { col: c.col, row: c.row } : null
-    const fromHex = c ? { c: from.col, r: from.row } : null
+    const from = counter ? { col: counter.col, row: counter.row } : null
+    const fromHex = counter ? { c: from.col, r: from.row } : null
     // Empilement : `h` est occupé par un ami ET `c` ne pourrait plus repartir
     // ensuite -> comme si l'hex n'était pas une destination valide (cf.
     // `hasFriendlyOccupant`/`canLeaveAfterEntering` plus haut) — une unité ne
     // peut jamais TERMINER sa phase de Mouvement sur un hex ami.
-    const stackingBlocked = c && hasFriendlyOccupant(c, h) && !canLeaveAfterEntering(c, h, fromHex)
+    const stackingBlocked = counter && hasFriendlyOccupant(counter, hex) && !canLeaveAfterEntering(counter, hex, fromHex)
     // Pas assez de MP pour entrer dans cet hex (cf. useAssisted.js) : le
     // pion reste sélectionné et sur place, comme si l'hex n'était pas une
     // destination valide — libre à l'utilisateur d'essayer un autre hex
     // adjacent moins coûteux.
-    if (c && !stackingBlocked && canEnterHex(c, h, fromHex)) {
-      c.col = h.c; c.row = h.r
-      spendMp(c, h, fromHex)
-      emit('move', { counterId: c.id, col: c.col, row: c.row })
-      const journalId = log('move', `${c.name} se déplace vers ${hexId(h.c + 1, h.r)}${mpText(c)}`,
-        { counterId: c.id, col: c.col, row: c.row, mp: spentMpOf(c) })
-      pushMoveHistory(c.id, from, { col: c.col, row: c.row }, journalId)
-      markMoved(c.id, from)
+    if (counter && !stackingBlocked && canEnterHex(counter, hex, fromHex)) {
+      counter.col = hex.c; counter.row = hex.r
+      spendMp(counter, hex, fromHex)
+      emit('move', { counterId: counter.id, col: counter.col, row: counter.row })
+      const journalId = log('move', `${counter.name} se déplace vers ${hexId(hex.c + 1, hex.r)}${mpText(counter)}`,
+        { counterId: counter.id, col: counter.col, row: counter.row, mp: spentMpOf(counter) })
+      pushMoveHistory(counter.id, from, { col: counter.col, row: counter.row }, journalId)
+      markMoved(counter.id, from)
     }
     return
   }
@@ -1100,26 +1223,26 @@ function onCounterDragStart(id, ev) {
   // annule aussi le glisser natif HTML5 (tablette de soutien, panneau de
   // renforts) — un seul guard couvre donc les deux mécanismes de glisser.
   if (replayLocked.value) { ev?.preventDefault(); return }
-  const onMap = counters.value.find((c) => String(c.id) === String(id))
-  const c = onMap
+  const onMap = counters.value.find((counter) => String(counter.id) === String(id))
+  const counter = onMap
     ?? supportTrackerRef.value?.findToken(id)
-    ?? allCounters.value.find((c) => String(c.id) === String(id))
+    ?? allCounters.value.find((counter) => String(counter.id) === String(id))
   // Les pions de soutien (kind: 'support', cf. SupportTracker.vue) sont une
   // ressource commune, pas rattachée à un camp — toujours glissables, que ce
   // soit depuis la tablette ou déjà posés sur la carte, sans passer par
   // canControl (ni par le tour actif).
-  if (c?.kind !== 'support' && !canControl(c)) { ev?.preventDefault(); return }
+  if (counter?.kind !== 'support' && !canControl(counter)) { ev?.preventDefault(); return }
   // cf. lib/useAssisted.js::draggable — en mode Assisté, une UNITÉ (pion déjà
   // sur la carte ou renfort pas encore posé) ne se glisse plus du tout : elle
   // ne peut entrer en jeu ou se déplacer que par clic (sélection, puis clic
   // sur l'hex de destination — cf. onHex/onCounterSelect/onReinforcementSelect
   // plus haut). Les pions de soutien restent exemptés, comme pour canControl
   // ci-dessus : ce ne sont pas des "unités" soumises aux règles de tour/camp.
-  if (c?.kind !== 'support' && !draggable.value) { ev?.preventDefault(); return }
+  if (counter?.kind !== 'support' && !draggable.value) { ev?.preventDefault(); return }
   // Un renfort pas encore posé sur la carte ne peut être glissé qu'à partir
   // de son tour d'arrivée (cf. `canEnterThisTurn`) — un pion déjà sur la
   // carte (mouvement) ou un pion de soutien (tablette) n'est pas concerné.
-  if (!onMap && c?.kind !== 'support' && !canEnterThisTurn(c)) { ev?.preventDefault(); return }
+  if (!onMap && counter?.kind !== 'support' && !canEnterThisTurn(counter)) { ev?.preventDefault(); return }
   draggedCounterId.value = id
   if (ev?.dataTransfer) {
     // Glisser natif HTML5 (pion pas encore sur la carte : <img> de la
@@ -1154,19 +1277,19 @@ function onCounterDragEnd(ev) {
   if (!loc || id == null) return
   const hex = pixelToHex(loc.x, loc.y)
   if (!hex) return
-  const c = counters.value.find((c) => String(c.id) === String(id))
+  const counter = counters.value.find((counter) => String(counter.id) === String(id))
   // Un simple clic (mousedown puis mouseup sans déplacement réel, cf.
   // Counter.vue::onClick pour la sélection) retombe ici aussi — on n'émet
   // `move` que si la case a réellement changé, pour ne pas spammer le réseau
   // à chaque clic de sélection en partie multijoueur.
-  if (c && (c.col !== hex.col || c.row !== hex.row)) {
-    const fromLabel = hexId(c.col + 1, c.row)
-    const from = { col: c.col, row: c.row }
-    c.col = hex.col; c.row = hex.row
-    emit('move', { counterId: c.id, col: c.col, row: c.row })
-    const journalId = log(c.kind === 'support' ? 'support' : 'move', `${c.name} déplacé de ${fromLabel} vers ${hexId(c.col + 1, c.row)}`, { counterId: c.id, col: c.col, row: c.row })
-    pushMoveHistory(c.id, from, { col: c.col, row: c.row }, journalId)
-    if (c.kind !== 'support') markMoved(c.id, from)
+  if (counter && (counter.col !== hex.col || counter.row !== hex.row)) {
+    const fromLabel = hexId(counter.col + 1, counter.row)
+    const from = { col: counter.col, row: counter.row }
+    counter.col = hex.col; counter.row = hex.row
+    emit('move', { counterId: counter.id, col: counter.col, row: counter.row })
+    const journalId = log(counter.kind === 'support' ? 'support' : 'move', `${counter.name} déplacé de ${fromLabel} vers ${hexId(counter.col + 1, counter.row)}`, { counterId: counter.id, col: counter.col, row: counter.row })
+    pushMoveHistory(counter.id, from, { col: counter.col, row: counter.row }, journalId)
+    if (counter.kind !== 'support') markMoved(counter.id, from)
   }
 }
 
@@ -1178,20 +1301,20 @@ onUnmounted(() => {
 /** Convertit un point en coordonnées SVG vers l'hex logique le plus proche —
  *  cherche dans une fenêtre de 3×3 hex autour de l'estimation initiale (la
  *  grille hexagonale n'a pas de correspondance x/y → col/row directe). */
-function pixelToHex(x, y) {
+function pixelToHex(svgX, svgY) {
   const { x0, y0, colStep, rowStep } = calibration
-  const c0 = Math.round((x - x0) / colStep)
+  const c0 = Math.round((svgX - x0) / colStep)
   let best = null, dmin = Infinity
-  for (let c = c0 - 1; c <= c0 + 1; c++) {
-    if (c < 0 || c >= mapConfig.cols) continue
-    const yoff = c % 2 === 1 ? rowStep / 2 : 0
-    const r0 = Math.round((y - y0 - yoff) / rowStep) + 1
-    for (let r = r0 - 1; r <= r0 + 1; r++) {
-      if (!hexOnMap(c, r)) continue
-      const cx = x0 + c * colStep
-      const cy = y0 + (r - 1) * rowStep + yoff
-      const d = Math.hypot(cx - x, cy - y)
-      if (d < dmin) { dmin = d; best = { col: c, row: r } }
+  for (let col = c0 - 1; col <= c0 + 1; col++) {
+    if (col < 0 || col >= mapConfig.cols) continue
+    const yoff = col % 2 === 1 ? rowStep / 2 : 0
+    const r0 = Math.round((svgY - y0 - yoff) / rowStep) + 1
+    for (let row = r0 - 1; row <= r0 + 1; row++) {
+      if (!hexOnMap(col, row)) continue
+      const cx = x0 + col * colStep
+      const cy = y0 + (row - 1) * rowStep + yoff
+      const distance = Math.hypot(cx - svgX, cy - svgY)
+      if (distance < dmin) { dmin = distance; best = { col: col, row: row } }
     }
   }
   return best
@@ -1212,7 +1335,7 @@ function onMapDrop(ev) {
     // glissé depuis le panneau "Renfort ..." (glisser-déposer libre, système
     // 1, cf. entrée en jeu dans le commentaire de `entryHexSet`) ou pion de
     // soutien tiré de la tablette (cf. SupportTracker.vue::removeToken).
-    const reinforcement = allCounters.value.find((c) => String(c.id) === String(draggedCounterId.value))
+    const reinforcement = allCounters.value.find((counter) => String(counter.id) === String(draggedCounterId.value))
     if (reinforcement && canEnterThisTurn(reinforcement)) {
       const placed = { ...reinforcement, ...hex }
       counters.value.push(placed)
@@ -1241,16 +1364,16 @@ function onMapDrop(ev) {
 /** Applique un déplacement reçu d'un autre joueur (WebSocket) — ne réémet
  *  pas `move` pour éviter une boucle avec le serveur. */
 function applyRemoteMove(counterId, col, row) {
-  const c = counters.value.find((c) => String(c.id) === String(counterId))
-  if (c) {
-    const from = { col: c.col, row: c.row }
-    c.col = col; c.row = row
-    if (c.kind !== 'support' && (from.col !== col || from.row !== row)) markMoved(c.id, from)
+  const counter = counters.value.find((counter) => String(counter.id) === String(counterId))
+  if (counter) {
+    const from = { col: counter.col, row: counter.row }
+    counter.col = col; counter.row = row
+    if (counter.kind !== 'support' && (from.col !== col || from.row !== row)) markMoved(counter.id, from)
     return
   }
   // Un autre joueur a posé un renfort pas encore présent localement (glissé
   // depuis son propre panneau "Renfort alliés") : on l'ajoute.
-  const reinforcement = allCounters.value.find((c) => String(c.id) === String(counterId))
+  const reinforcement = allCounters.value.find((counter) => String(counter.id) === String(counterId))
   if (reinforcement) counters.value.push({ ...reinforcement, col, row })
 }
 
@@ -1260,6 +1383,10 @@ defineExpose({ applyRemoteMove, applyRemoteTurn })
  *  ordre chronologique et remet la carte au déploiement initial pour
  *  rejouer depuis la première ligne. */
 function onJournalLoaded(list) {
+  // Le journal chargé porte son propre déploiement (ou n'en a pas, s'il est
+  // antérieur à cet ajout) : celui de la partie ouverte ne doit plus être
+  // ajouté par-dessus.
+  deploymentLogged = true
   replayEntries.value = list
   replayIndex.value = 0
   resetBoardForReplay()
@@ -1273,6 +1400,7 @@ function resetBoardForReplay() {
   selectedReinforcementId.value = null
   moveHistory.value = []
   clearAllMoved()
+  clearRetreat()
   turnTrackerRef.value?.applyRemoteTurn(0)
   // Phase Mouvement, aucun MP dépensé, aucune congestion d'entrée — et, par
   // le retour en phase 0, plus aucune unité "ayant combattu" ni combat
@@ -1297,18 +1425,26 @@ function resetBoardForReplay() {
  *   - `combat` : unités ayant combattu (cf. lib/useCombat.js::markFought).
  *  Les champs absents (journaux enregistrés avant cet ajout) sont ignorés. */
 function applyReplayEntry(entry) {
-  const d = entry.data
-  if (!d) return
-  if (entry.kind === 'move' || entry.kind === 'place') {
-    applyRemoteMove(d.counterId, d.col, d.row)
+  const entryData = entry.data
+  if (!entryData) return
+  if (entry.kind === 'setup') {
+    // Déploiement initial (cf. `logDeploymentOnce`) : on remet chaque pion
+    // de départ exactement où il était, à la place du nouveau tirage fait
+    // par resetBoardForReplay.
+    for (const position of entryData.positions ?? []) {
+      const counter = counters.value.find((counter) => String(counter.id) === String(position.id))
+      if (counter) { counter.col = position.col; counter.row = position.row }
+    }
+  } else if (entry.kind === 'move' || entry.kind === 'place') {
+    applyRemoteMove(entryData.counterId, entryData.col, entryData.row)
     // Journal enregistré AVANT l'ajout de la phase Airborne (pas d'entrée
     // `phase` Airborne -> Mouvement) : un déplacement prouve qu'on était en
     // Mouvement.
     if (entry.kind === 'move' && phase.value === PHASE_AIRBORNE) setPhase(0)
     if (entry.kind === 'move') {
-      const key = String(d.counterId)
+      const key = String(entryData.counterId)
       const start = turnStartPositions.get(key)
-      if (start && start.col === d.col && start.row === d.row) {
+      if (start && start.col === entryData.col && start.row === entryData.row) {
         // Revenu à sa position de début de tour ("Annuler le mouvement", cf.
         // cancelMovement) : comme en jeu, il n'a de fait plus bougé.
         clearMoved(key)
@@ -1320,35 +1456,50 @@ function applyReplayEntry(entry) {
         lockedFromSelectionIds.value = new Set(lockedFromSelectionIds.value).add(key)
       }
     }
-    if (entry.kind === 'place' && d.entry) {
-      const placed = counters.value.find((c) => String(c.id) === String(d.counterId))
-      if (placed) spendEntryCost(placed, { c: d.col, r: d.row })
+    if (entry.kind === 'place' && entryData.entry) {
+      const placed = counters.value.find((counter) => String(counter.id) === String(entryData.counterId))
+      if (placed) spendEntryCost(placed, { c: entryData.col, r: entryData.row })
+    }
+    if (entry.kind === 'place') {
+      // Mémoire "a atterri ce tour-ci" des règles du module (cf.
+      // lib/useArnhem.js::noteAirborneArrival) : à rétablir, sinon un
+      // "Annuler le mouvement" fait APRÈS le rejeu rendrait à l'aéroporté
+      // son allocation pleine. Les MP dépensés, eux, ne sont PAS recalculés
+      // ici : c'est la valeur du journal, juste en dessous, qui fait foi.
+      const placed = counters.value.find((counter) => String(counter.id) === String(entryData.counterId))
+      if (placed) arnhem.noteAirborneArrival(placed)
     }
     // Après `spendEntryCost` : la valeur du journal fait foi (elle inclut
     // déjà le coût d'entrée payé à l'époque).
-    setSpentMp(d.counterId, d.mp)
+    setSpentMp(entryData.counterId, entryData.mp)
+  } else if (entry.kind === 'retreat' || entry.kind === 'advance') {
+    // Un pas de retraite ou d'avance après combat (cf. lib/useRetreat.js) :
+    // simple changement de position — ni liseré "a bougé", ni MP (cf.
+    // `moveUnit`/`advanceUnit` dans l'appel à useRetreat plus haut).
+    const counter = counters.value.find((counter) => String(counter.id) === String(entryData.counterId))
+    if (counter) { counter.col = entryData.col; counter.row = entryData.row }
   } else if (entry.kind === 'phase') {
-    setPhase(d.phase)
+    setPhase(entryData.phase)
   } else if (entry.kind === 'combat') {
-    markFought([...(d.attackerIds ?? []), ...(d.defenderIds ?? [])])
+    markFought([...(entryData.attackerIds ?? []), ...(entryData.defenderIds ?? [])])
   } else if (entry.kind === 'support') {
-    if (counters.value.some((c) => String(c.id) === String(d.counterId))) {
-      applyRemoteMove(d.counterId, d.col, d.row)
-    } else if (d.counter) {
-      counters.value.push({ ...d.counter, col: d.col, row: d.row })
+    if (counters.value.some((counter) => String(counter.id) === String(entryData.counterId))) {
+      applyRemoteMove(entryData.counterId, entryData.col, entryData.row)
+    } else if (entryData.counter) {
+      counters.value.push({ ...entryData.counter, col: entryData.col, row: entryData.row })
     }
   } else if (entry.kind === 'eliminate') {
-    const i = counters.value.findIndex((c) => String(c.id) === String(d.counterId))
-    if (i !== -1) counters.value.splice(i, 1)
-    eliminatedIds.value.add(String(d.counterId))
+    const counterIndex = counters.value.findIndex((counter) => String(counter.id) === String(entryData.counterId))
+    if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
+    eliminatedIds.value.add(String(entryData.counterId))
     eliminatedIds.value = new Set(eliminatedIds.value)
   } else if (entry.kind === 'return') {
-    const i = counters.value.findIndex((c) => String(c.id) === String(d.counterId))
-    if (i !== -1) counters.value.splice(i, 1)
-    eliminatedIds.value.delete(String(d.counterId))
+    const counterIndex = counters.value.findIndex((counter) => String(counter.id) === String(entryData.counterId))
+    if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
+    eliminatedIds.value.delete(String(entryData.counterId))
     eliminatedIds.value = new Set(eliminatedIds.value)
   } else if (entry.kind === 'turn') {
-    turnTrackerRef.value?.applyRemoteTurn(d.step)
+    turnTrackerRef.value?.applyRemoteTurn(entryData.step)
     // Nouveau tour/camp : plus aucune unité "a bougé" ni verrouillée — fait
     // ICI, tout de suite, et non dans onTurnChange (différé, cf. son
     // commentaire), pour que les `move` rejoués juste après restent marqués.
@@ -1397,9 +1548,9 @@ function zoomOut() {
 }
 
 /** Zoom à la molette (Ctrl/pas de modificateur — sur toute la zone carte). */
-function onMapWheel(e) {
+function onMapWheel(event) {
   const step = 0.05
-  const delta = e.deltaY < 0 ? step : -step
+  const delta = event.deltaY < 0 ? step : -step
   zoom.value = Math.min(2, Math.max(0.1, +(zoom.value + delta).toFixed(2)))
 }
 
@@ -1407,22 +1558,22 @@ function onMapWheel(e) {
 const mapWrapRef = ref(null)
 const mapDrag = ref(null) // { startX, startY, scrollLeft, scrollTop }
 
-function onMapDragStart(e) {
+function onMapDragStart(event) {
   const el = mapWrapRef.value
   if (!el) return
   // Un clic droit sur un pion ouvre son menu contextuel (cf. Counter.vue) —
   // ne pas démarrer un pan ici, sinon le preventDefault() ci-dessous
   // supprime l'événement contextmenu natif avant qu'il puisse se déclencher.
-  if (e.target.closest('.counter')) return
-  e.preventDefault()
-  mapDrag.value = { startX: e.clientX, startY: e.clientY, scrollLeft: el.scrollLeft, scrollTop: el.scrollTop }
+  if (event.target.closest('.counter')) return
+  event.preventDefault()
+  mapDrag.value = { startX: event.clientX, startY: event.clientY, scrollLeft: el.scrollLeft, scrollTop: el.scrollTop }
 }
-function onMapDragMove(e) {
+function onMapDragMove(event) {
   if (!mapDrag.value) return
   const el = mapWrapRef.value
   if (!el) return
-  el.scrollLeft = mapDrag.value.scrollLeft - (e.clientX - mapDrag.value.startX)
-  el.scrollTop = mapDrag.value.scrollTop - (e.clientY - mapDrag.value.startY)
+  el.scrollLeft = mapDrag.value.scrollLeft - (event.clientX - mapDrag.value.startX)
+  el.scrollTop = mapDrag.value.scrollTop - (event.clientY - mapDrag.value.startY)
 }
 function onMapDragEnd() {
   mapDrag.value = null
@@ -1496,10 +1647,10 @@ function onMapDragEnd() {
         <image :href="map.url" x="0" y="0" :width="map.imageWidth" :height="map.imageHeight" preserveAspectRatio="none" />
 
         <g v-if="showGrid">
-          <polygon v-for="h in hexes" :key="h.id" class="hex"
-            :class="{ adjacent: debug ? isInRange(h) : isReachable(h), entry: isEntryHex(h) }"
-            :points="h.pts" :stroke="gridStyle.stroke" :stroke-width="gridStyle.width"
-            :stroke-opacity="gridStyle.opacity" vector-effect="non-scaling-stroke" @click="onHex(h)" />
+          <polygon v-for="hex in hexes" :key="hex.id" class="hex"
+            :class="{ adjacent: debug ? isInRange(hex) : isReachable(hex), entry: isEntryHex(hex) }"
+            :points="hex.pts" :stroke="gridStyle.stroke" :stroke-width="gridStyle.width"
+            :stroke-opacity="gridStyle.opacity" vector-effect="non-scaling-stroke" @click="onHex(hex)" />
         </g>
 
         <!-- cf. lib/useAssisted.js::enemyZocSet — hex sous Zone de Contrôle
@@ -1509,8 +1660,8 @@ function onMapDragEnd() {
              mode debug (cf. HexMap.vue::zocSet) — la règle reste active en
              mode Assisté normal, seul ce surlignage est réservé au debug. -->
         <g v-if="debug">
-          <polygon v-for="h in hexes.filter((h) => isZocHex(h))" :key="'zoc' + h.id" class="hex-zoc"
-            :points="h.pts" vector-effect="non-scaling-stroke" />
+          <polygon v-for="hex in hexes.filter((hex) => isZocHex(hex))" :key="'zoc' + hex.id" class="hex-zoc"
+            :points="hex.pts" vector-effect="non-scaling-stroke" />
         </g>
 
         <!-- cf. lib/useCombat.js — combat en cours : hex CIBLES en orange
@@ -1520,51 +1671,75 @@ function onMapDragEnd() {
              désignés en jaune (non cliquables : c'est le pion posé dessus
              qui reçoit le clic, cf. onCounterSelect). -->
         <g v-if="combatActive">
-          <polygon v-for="h in hexes.filter((h) => isCombatAttackerHex(h))" :key="'atk' + h.id" class="hex-attacker"
-            :points="h.pts" vector-effect="non-scaling-stroke" />
-          <polygon v-for="h in hexes.filter((h) => isCombatTargetHex(h))" :key="'def' + h.id" class="hex-defender"
-            :points="h.pts" vector-effect="non-scaling-stroke" @click="onHex(h)" />
+          <polygon v-for="hex in hexes.filter((hex) => isCombatAttackerHex(hex))" :key="'atk' + hex.id" class="hex-attacker"
+            :points="hex.pts" vector-effect="non-scaling-stroke" />
+          <polygon v-for="hex in hexes.filter((hex) => isCombatTargetHex(hex))" :key="'def' + hex.id" class="hex-defender"
+            :points="hex.pts" vector-effect="non-scaling-stroke" @click="onHex(hex)" />
+        </g>
+
+        <!-- cf. lib/useRetreat.js — avance après combat : chemin de retraite
+             (POR) en vert, hex des unités qui peuvent avancer (contour vert),
+             hex où l'unité choisie peut avancer (vert vif, cliquables). Rendu
+             AVANT le groupe de retraite, dont le rouge doit rester dessus. -->
+        <g v-if="retreatActive">
+          <polygon v-for="hex in hexes.filter((hex) => isPorHex(hex))" :key="'por' + hex.id" class="hex-por"
+            :points="hex.pts" vector-effect="non-scaling-stroke" />
+          <polygon v-for="hex in hexes.filter((hex) => isAdvancerHex(hex))" :key="'adu' + hex.id" class="hex-advancer"
+            :points="hex.pts" vector-effect="non-scaling-stroke" />
+          <polygon v-for="hex in hexes.filter((hex) => isAdvanceHex(hex))" :key="'adv' + hex.id" class="hex-advance"
+            :points="hex.pts" vector-effect="non-scaling-stroke" @click="onHex(hex)" />
+        </g>
+
+        <!-- cf. lib/useRetreat.js — retraite en cours : hex de l'unité qui
+             retraite (contour rouge pointillé) et hex où elle peut aller
+             (en ROUGE, cliquables). Rendu après le groupe du combat pour
+             passer au-dessus de ses surlignages. -->
+        <g v-if="retreatActive">
+          <polygon v-for="hex in hexes.filter((hex) => isRetreatingHex(hex))" :key="'rtu' + hex.id" class="hex-retreating"
+            :points="hex.pts" vector-effect="non-scaling-stroke" />
+          <polygon v-for="hex in hexes.filter((hex) => isRetreatHex(hex))" :key="'rt' + hex.id" class="hex-retreat"
+            :points="hex.pts" vector-effect="non-scaling-stroke" @click="onHex(hex)" />
         </g>
 
         <g v-if="showLabels">
-          <text v-for="h in hexes" :key="'t' + h.id" class="coordtxt" :x="h.cx" :y="h.cy + calibration.a * 0.18"
-            text-anchor="middle" :font-size="calibration.a * 0.42">{{ h.id }}</text>
+          <text v-for="hex in hexes" :key="'t' + hex.id" class="coordtxt" :x="hex.cx" :y="hex.cy + calibration.a * 0.18"
+            text-anchor="middle" :font-size="calibration.a * 0.42">{{ hex.id }}</text>
         </g>
 
         <!-- cf. lib/useDebug.js — coût de terrain (COT) des hex adjacents au
              pion sélectionné, uniquement quand la case "debug" est cochée. -->
         <g v-if="debug">
-          <text v-for="d in adjacentCotLabels" :key="'cot' + d.id" class="debug-cot" :x="d.cx" :y="d.cy"
-            text-anchor="middle" :font-size="calibration.a * 0.55">{{ d.cot }}</text>
+          <text v-for="label in adjacentCotLabels" :key="'cot' + label.id" class="debug-cot" :x="label.cx" :y="label.cy"
+            text-anchor="middle" :font-size="calibration.a * 0.55">{{ label.cot }}</text>
         </g>
 
         <!-- cf. lib/useAssisted.js::entrySurcharge — surcoût de congestion
              déjà accumulé sur les hex d'entrée de renfort surlignés, visible
              uniquement en mode debug. -->
         <g v-if="debug">
-          <text v-for="d in entrySurchargeLabels" :key="'entrysur' + d.id" class="debug-entry-surcharge"
-            :x="d.cx" :y="d.cy - calibration.a * 0.4" text-anchor="middle" :font-size="calibration.a * 0.4">+{{ d.surcharge }}</text>
+          <text v-for="label in entrySurchargeLabels" :key="'entrysur' + label.id" class="debug-entry-surcharge"
+            :x="label.cx" :y="label.cy - calibration.a * 0.4" text-anchor="middle" :font-size="calibration.a * 0.4">+{{ label.surcharge }}</text>
         </g>
 
         <g v-if="showCounters" class="counters">
           <!-- Marqueurs (DZ...) rendus en premier : toujours sous les unités
                dans l'ordre de peinture SVG, quel que soit le hex. -->
-          <Counter v-for="c in counters.filter((c) => !isUnit(c))" :key="c.id" :id="c.id" :src="c.src" :col="c.col"
-            :row="c.row" :calibration="calibration" :selected="selectedCounterId === c.id" :selectable="false"
-            :offset="stackOffsets.get(c.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === c.id ? dragCurrentPx : null"
+          <Counter v-for="counter in counters.filter((counter) => !isUnit(counter))" :key="counter.id" :id="counter.id" :src="counter.src" :col="counter.col"
+            :row="counter.row" :calibration="calibration" :selected="selectedCounterId === counter.id" :selectable="false"
+            :offset="stackOffsets.get(counter.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === counter.id ? dragCurrentPx : null"
             @dragstart="onCounterDragStart" />
-          <Counter v-for="c in counters.filter(isUnit)" :key="c.id" :id="c.id" :src="c.src" :col="c.col"
-            :row="c.row" :calibration="calibration" :selected="selectedCounterId === c.id" :selectable="selectable"
-            :moved="movedThisTurnIds.has(String(c.id))" :spent="hasFought(c)"
-            :offset="stackOffsets.get(c.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === c.id ? dragCurrentPx : null"
+          <Counter v-for="counter in counters.filter(isUnit)" :key="counter.id" :id="counter.id" :src="counter.src" :col="counter.col"
+            :row="counter.row" :calibration="calibration" :selected="selectedCounterId === counter.id" :selectable="selectable"
+            :moved="movedThisTurnIds.has(String(counter.id))" :spent="hasFought(counter)"
+            :offset="stackOffsets.get(counter.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === counter.id ? dragCurrentPx : null"
             @select="onCounterSelect" @dragstart="onCounterDragStart" @contextmenu="onCounterContextMenu" />
         </g>
 
         <g v-if="showCounters" class="support-badges">
-          <circle v-for="b in supportStackBadges" :key="b.key" :cx="b.x" :cy="b.y" :r="calibration.a * 0.26"
+          <circle v-for="badge in supportStackBadges" :key="badge.key" :cx="badge.x" :cy="badge.y" :r="calibration.a * 0.26"
             class="support-badge-bg" />
-          <text v-for="b in supportStackBadges" :key="'t' + b.key" :x="b.x" :y="b.y + calibration.a * 0.1"
-            class="support-badge-text" text-anchor="middle" :font-size="calibration.a * 0.34">{{ b.count }}</text>
+          <text v-for="badge in supportStackBadges" :key="'t' + badge.key" :x="badge.x" :y="badge.y + calibration.a * 0.1"
+            class="support-badge-text" text-anchor="middle" :font-size="calibration.a * 0.34">{{ badge.count }}</text>
         </g>
       </svg>
     </main>
@@ -1577,7 +1752,8 @@ function onMapDragEnd() {
         <EliminatedPanel v-if="tab.key === 'eliminated'" :units="eliminatedCounters"
           @contextmenu="onEliminatedContextMenu" />
         <JournalPanel v-else-if="tab.key === 'journal'" ref="journalRef" :module-id="moduleId || module.name"
-          :turn="turnInfo.turn" @loaded="onJournalLoaded" />
+          :turn="turnInfo.turn" :settings="settings" @loaded="onJournalLoaded"
+          @settings-mismatch="(settings) => emit('restart-with', settings)" />
         <ReinforcementsPanel v-else :reinforcements="reinforcementsForTab(tab.key)"
           :selected-id="selectedReinforcementId" :current-turn="turnInfo.turn" :draggable="draggable"
           :can-place="canPlaceReinforcementNow"
@@ -1585,7 +1761,7 @@ function onMapDragEnd() {
       </template>
     </SidePanel>
 
-    <ContextMenu v-if="contextMenu" :x="contextMenu.x" :y="contextMenu.y" :items="contextMenu.items"
+    <ContextMenu v-if="contextMenu" :left-px="contextMenu.x" :top-px="contextMenu.y" :items="contextMenu.items"
       @choose="chooseContextMenuItem" @close="closeContextMenu" />
 
     <!-- cf. lib/useCombat.js — modale de combat, ouverte par un clic sur une
@@ -1595,7 +1771,9 @@ function onMapDragEnd() {
       :attackers="combatAttackers" :can-resolve="combatCanResolve" :stranded-units="combatStrandedUnits"
       :attack-strength="attackStrength" :defense-strength="defenseStrength" :differential="differential"
       :terrain-row="combatTerrainRow" :column="combatColumn" :combat-result="combatResult"
-      :crt-rows="crtRows" :crt-results="crtResults" @close="cancelCombat" @fight="onCombatFight" />
+      :crt-rows="crtRows" :crt-results="crtResults" :retreat="retreatInfo" :retreat-notes="retreatNotes"
+      :advance="advanceInfo" @close="cancelCombat" @fight="onCombatFight" @end-advance="endAdvance"
+      @reduce-retreat="reduceRetreat" />
 
     <!-- cf. onPhaseNext — changement de phase refusé : unités empilées en fin
          de Mouvement (cf. lib/useAssisted.js::stackedHexes) ou combats
@@ -1830,6 +2008,59 @@ polygon.hex.entry:hover {
   fill: rgba(232, 196, 104, 0.45);
   stroke: #e8c468;
   stroke-width: 2.5;
+  pointer-events: none;
+}
+
+/* cf. lib/useRetreat.js — hex où l'unité en retraite peut aller : rouge,
+   cliquable. */
+.hex-retreat {
+  fill: rgba(224, 40, 40, 0.45);
+  stroke: #e02828;
+  stroke-width: 3;
+  cursor: pointer;
+}
+
+.hex-retreat:hover {
+  fill: rgba(224, 40, 40, 0.65);
+}
+
+/* cf. lib/useRetreat.js — avance après combat. Chemin de retraite (POR) :
+   vert léger, les clics le traversent. */
+.hex-por {
+  fill: rgba(46, 160, 67, 0.28);
+  stroke: #2ea043;
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+/* Hex où l'unité choisie peut avancer : vert vif, cliquable. */
+.hex-advance {
+  fill: rgba(46, 160, 67, 0.6);
+  stroke: #1f7a33;
+  stroke-width: 3;
+  cursor: pointer;
+}
+
+.hex-advance:hover {
+  fill: rgba(46, 160, 67, 0.8);
+}
+
+/* Hex d'une unité qui peut avancer : c'est le pion posé dessus qui reçoit
+   le clic (cf. onCounterSelect). */
+.hex-advancer {
+  fill: none;
+  stroke: #2ea043;
+  stroke-width: 3;
+  stroke-dasharray: 8 5;
+  pointer-events: none;
+}
+
+/* Hex de l'unité qui est en train de retraiter : simple contour. */
+.hex-retreating {
+  fill: none;
+  stroke: #e02828;
+  stroke-width: 3;
+  stroke-dasharray: 8 5;
   pointer-events: none;
 }
 

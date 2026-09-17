@@ -101,7 +101,7 @@ const activeFactions = computed(() => {
   if (!props.config || !props.sides) return null
   return props.sides[activeSideKey.value] ?? null
 })
-const canControl = (c) => !activeFactions.value || activeFactions.value.includes(c?.faction)
+const canControl = (counter) => !activeFactions.value || activeFactions.value.includes(counter?.faction)
 
 watch(
   [currentStep, activeFactions],
@@ -146,8 +146,8 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
   <div v-if="config" class="turn-tracker">
     <div class="tt-row">
       <div class="tt-track">
-        <span v-for="t in config.turns" :key="t" class="tt-cell" :class="{ active: t === currentTurn }">
-          {{ t }}
+        <span v-for="turnNumber in config.turns" :key="turnNumber" class="tt-cell" :class="{ active: turnNumber === currentTurn }">
+          {{ turnNumber }}
         </span>
       </div>
       <img v-if="activeSideInfo" :src="activeSideInfo.marker" :alt="activeSideInfo.label" class="tt-marker" />
@@ -164,7 +164,7 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
          prochain clic va faire — voir useAssisted.js pour le calcul. -->
     <div v-if="phase !== null" class="tt-row tt-row-phases">
       <div class="tt-phases">
-        <span v-for="(label, i) in phaseLabels" :key="label" class="tt-phase" :class="{ active: (phaseIndex ?? phase) === i }">{{ label }}</span>
+        <span v-for="(label, labelIndex) in phaseLabels" :key="label" class="tt-phase" :class="{ active: (phaseIndex ?? phase) === labelIndex }">{{ label }}</span>
       </div>
       <!-- Pas de `nextTurn()` direct ici : on émet `phase-next` et on laisse
            useAssisted.js (via HexMap.vue) décider de l'effet réel du clic. -->

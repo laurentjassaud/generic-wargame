@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import HexMap from '../components/HexMap.vue'
+import { stashPendingReplay } from '../lib/journalStorage.js'
 
 // Chargement direct d'un module en local, sans passer par le lobby
 // multijoueur — pratique pour tester le moteur de jeu (HexMap) seul.
@@ -9,6 +10,7 @@ import HexMap from '../components/HexMap.vue'
 // (query string) ; si absent (accès direct à /demo), on retombe sur Arnhem.
 
 const route = useRoute()
+const router = useRouter()
 const module = ref(null)
 const moduleId = ref('')
 
@@ -16,21 +18,46 @@ const scenarioLabels = { historique: 'Historique', 'placement-libre': 'Placement
 const partyLabels = { libre: 'Libre', assiste: 'Assisté' }
 const timingLabels = { libre: 'Libre', limite: 'Limité', blitz: 'Blitz' }
 
-const scenarioLabel = scenarioLabels[route.query.scenario] ?? scenarioLabels.historique
-const hasWeather = route.query.weather === '1'
-const partyLabel = partyLabels[route.query.party] ?? partyLabels.libre
+// Réglages de la partie, lus dans l'URL. COMPUTED (et non figés au
+// chargement) : reprendre une sauvegarde faite avec d'autres réglages
+// change l'URL sans recréer cette page (cf. `restartWith`).
+const settings = computed(() => ({
+  scenario: route.query.scenario || 'historique',
+  weather: route.query.weather === '1' ? '1' : '0',
+  party: route.query.party || 'libre',
+  timing: route.query.timing || 'libre',
+  timingValue: route.query.timingValue || '',
+}))
+
+const scenarioLabel = computed(() => scenarioLabels[settings.value.scenario] ?? scenarioLabels.historique)
+const hasWeather = computed(() => settings.value.weather === '1')
+const partyLabel = computed(() => partyLabels[settings.value.party] ?? partyLabels.libre)
 // "Assisté" est le seul mode qui active les garde-fous (grille, sélection au
 // clic, restriction de tour — cf. lib/useAssisted.js) ; toute autre valeur
 // (dont l'absence, cf. fallback de partyLabel ci-dessus) reste "Libre", le
 // comportement par défaut de HexMap.vue.
-const isAssistedParty = route.query.party === 'assiste'
-const timingLabel = timingLabels[route.query.timing] ?? timingLabels.libre
-const timingValue = route.query.timingValue || ''
+const isAssistedParty = computed(() => settings.value.party === 'assiste')
+const timingLabel = computed(() => timingLabels[settings.value.timing] ?? timingLabels.libre)
+const timingValue = computed(() => settings.value.timingValue)
+
+// Clé de la carte : change avec les réglages, ce qui la REMONTE à neuf —
+// une partie ne change jamais de mode en cours de route (les règles du mode
+// Assisté supposent une partie jouée avec elles depuis le début).
+const mapKey = computed(() => JSON.stringify(settings.value))
+
+/** Un journal à reprendre a été joué avec d'autres réglages (cf.
+ *  JournalPanel.vue::startReplay) : on le met de côté, puis on relance la
+ *  partie avec ces réglages ; la carte remontée le rejoue au montage (cf.
+ *  HexMap.vue, `resumePending`). */
+function restartWith({ settings: saved, entries, message }) {
+  stashPendingReplay(entries, message)
+  router.replace({ query: { ...route.query, ...saved, module: moduleId.value } })
+}
 
 onMounted(async () => {
   moduleId.value = route.query.module || 'arnhem'
-  const index = await fetch('/modules/index.json', { cache: 'no-store' }).then((r) => r.json())
-  const entry = index.find((m) => m.id === moduleId.value) ?? index.find((m) => m.id === 'arnhem')
+  const index = await fetch('/modules/index.json', { cache: 'no-store' }).then((response) => response.json())
+  const entry = index.find((moduleEntry) => moduleEntry.id === moduleId.value) ?? index.find((moduleEntry) => moduleEntry.id === 'arnhem')
   const res = await fetch(entry.path, { cache: 'no-store' })
   module.value = await res.json()
   document.title = module.value.name
@@ -53,7 +80,8 @@ onMounted(async () => {
       · Partie {{ partyLabel }} · Timing {{ timingLabel
       }}<span v-if="timingValue"> ({{ timingValue }} min)</span>
     </p>
-    <HexMap v-if="module" :module="module" :module-id="moduleId" :assisted="isAssistedParty" />
+    <HexMap v-if="module" :key="mapKey" :module="module" :module-id="moduleId" :assisted="isAssistedParty"
+      :settings="settings" @restart-with="restartWith" />
   </div>
 </template>
 
