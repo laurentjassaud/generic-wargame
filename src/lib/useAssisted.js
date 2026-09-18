@@ -133,6 +133,8 @@ import { computed, ref, watch } from 'vue'
 import { hexId } from './calibration.js'
 import { neighborsOf } from './hex.js'
 import { isFighter } from './units.js'
+import { isAirborneEntry } from './setup.js'
+import { resolveRules } from './rules.js'
 
 /** Construit, une seule fois, l'ensemble des arêtes route/piste/ruisseau
  *  d'un module sous forme de clés "hexIdA-hexIdB" ET "hexIdB-hexIdA" (les
@@ -150,18 +152,10 @@ function buildEdgeSet(list) {
   return set
 }
 
-// Unités motorisées/blindées (`c.type`, cf. arnhem.json) auxquelles le
-// terrain accidenté est interdit d'accès — cf. `canEnterTerrain` plus bas.
-// "self-propelled arty" : l'artillerie automotrice, distincte de l'artillerie
-// tractée/à pied ("arty"), qui n'est PAS concernée par cette restriction.
-const VEHICLE_TYPES = new Set(['armor', 'reconnaissance', 'mechanized', 'self-propelled arty'])
-
-// Types de terrain (clés de `terrain.grid`/`terrain.types`, cf. arnhem.json)
-// fermés aux véhicules ci-dessus, quel que soit leur MP restant — un blocage
-// de TERRAIN, pas un simple coût. "woods" est la clé du module pour ce que
-// la règle de jeu appelle "forest" — aucun module ne déclare de clé "forest"
-// à ce jour.
-const IMPASSABLE_FOR_VEHICLES = new Set(['rough', 'broken', 'woods'])
+// Les types d'unité motorisées/blindées, les terrains qui leur sont
+// interdits et la limite d'empilement ne sont plus codés ici : ils viennent
+// de `module.rules` (cf. lib/rules.js, paramètre `rules` ci-dessous —
+// `vehicleTypes`, `impassableForVehicles`, `stackingLimit`).
 
 // Surcoût (en MP) pour traverser À GUÉ un hexside de ruisseau
 // (`terrain.streams`) SANS route/piste dessus, OU une rivière
@@ -172,7 +166,10 @@ const IMPASSABLE_FOR_VEHICLES = new Set(['rough', 'broken', 'woods'])
 // MP").
 const WATER_CROSSING_PENALTY = 3
 
-export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap, getReinforcements) {
+//   - `rules` : règles génériques paramétrées par le module (cf.
+//     lib/rules.js::resolveRules — `vehicleTypes`, `impassableForVehicles`,
+//     `stackingLimit`). À défaut, les valeurs par défaut du moteur.
+export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap, getReinforcements, rules = resolveRules(null)) {
   // Arêtes route/piste/ruisseau/rivière/pont/bac du module, construites une
   // seule fois (cf. buildEdgeSet ci-dessus) — `terrain` ne change pas en
   // cours de partie, inutile de les reconstruire à chaque appel de
@@ -350,12 +347,8 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // "Airborne" reste affiché (éteint) une fois passé au Mouvement.
   const airborneThisStep = ref(false)
 
-  /** `c` est-il une unité AÉROPORTÉE ? Même critère que partout ailleurs
-   *  (cf. HexMap.vue::onHex, coût d'entrée) : son `setup` se termine par
-   *  "+adj" — il entre en jeu sur sa DZ ou l'un des 6 hex voisins. */
-  function isAirborne(counter) {
-    return !!counter?.setup?.endsWith('+adj')
-  }
+  // `c` est-il une unité AÉROPORTÉE ? Même critère que partout ailleurs :
+  // son `setup` est un largage "+adj" (cf. lib/setup.js::isAirborneEntry).
 
   /** Le camp actif a-t-il au moins un aéroporté à poser ? Il faut qu'il ne
    *  soit ni sur la carte ni éliminé (cf. `getReinforcements`), qu'il soit à
@@ -366,7 +359,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   function airbornePending() {
     if (!assisted.value) return false
     const turn = turnTrackerRef.value?.currentTurn ?? 1
-    return (getReinforcements?.() ?? []).some((counter) => isAirborne(counter) && canControl(counter) && (counter.turn ?? 1) <= turn)
+    return (getReinforcements?.() ?? []).some((counter) => isAirborneEntry(counter) && canControl(counter) && (counter.turn ?? 1) <= turn)
   }
 
   /** Début du tour d'un camp : phase Airborne s'il a des aéroportés à poser
@@ -389,7 +382,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  `canControl`). Toujours vrai hors mode Assisté. */
   function canPlaceReinforcementNow(counter) {
     if (!assisted.value) return true
-    return phaseStep.value === PHASE_AIRBORNE ? isAirborne(counter) : !isAirborne(counter)
+    return phaseStep.value === PHASE_AIRBORNE ? isAirborneEntry(counter) : !isAirborneEntry(counter)
   }
 
   // MP déjà dépensés ce tour-ci, par unité : Map id -> nombre de MP
@@ -805,16 +798,25 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // renfort, qui a ses propres règles de blocage (cf. HexMap.vue::
   // isEntryHexBlocked : ennemi, ou ami figé en ZOC).
 
-  /** `h` est-il occupé par au moins une unité AMIE de `c` (même camp, ni
-   *  ennemie ni indifférente, cf. `isEnemyOf`) ? Ignore marqueurs et pions de
-   *  soutien, ni amis ni ennemis au sens de cette règle. Exportée (cf.
-   *  `return` plus bas) pour être réutilisée par HexMap.vue (surlignage vert
-   *  du premier pas et clic de mouvement) et lib/useDebug.js (portée
-   *  complète en mode debug) — même définition partout. */
-  function hasFriendlyOccupant(counter, hex) {
-    return counters.value.some(
-      (other) => other.col === hex.c && other.row === hex.r && isFighter(other) && !isEnemyOf(counter, other)
-    )
+  /** Nombre d'unités AMIES de `c` (même camp, cf. `isEnemyOf` — `c` lui-même
+   *  exclu) déjà présentes dans `h`. Marqueurs et pions de soutien ignorés,
+   *  ni amis ni ennemis au sens de cette règle. */
+  function friendlyCount(counter, hex) {
+    return counters.value.filter(
+      (other) => other.col === hex.c && other.row === hex.r && other.id !== counter?.id && isFighter(other) && !isEnemyOf(counter, other)
+    ).length
+  }
+
+  /** `c` serait-il EN SURPLUS d'empilement en s'arrêtant dans `h` ? Oui si
+   *  `h` contient déjà autant d'unités amies que la limite du module
+   *  (`rules.stackingLimit`, 1 par défaut : "une unité ne peut jamais
+   *  terminer sa phase de Mouvement sur un hex occupé par une unité amie").
+   *  Exportée (cf. `return` plus bas) pour être réutilisée par HexMap.vue
+   *  (surlignage vert du premier pas, clic de mouvement, entrée d'un
+   *  renfort) et lib/useDebug.js (portée complète en mode debug) — même
+   *  définition partout. */
+  function wouldOverstack(counter, hex) {
+    return friendlyCount(counter, hex) >= rules.stackingLimit
   }
 
   /** `c` peut-il, après être entré dans `h` en venant de `from` (et avoir
@@ -829,7 +831,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *      `canEnterTerrain`) et abordable avec les MP qu'il lui resterait —
    *      peu importe si CE voisin est lui-même libre ou pas (on ne vérifie
    *      qu'UN pas en avant, pas tout un chemin jusqu'à la fin du tour).
-   *  Exportée (cf. `return` plus bas), même raison que `hasFriendlyOccupant`. */
+   *  Exportée (cf. `return` plus bas), même raison que `wouldOverstack`. */
   function canLeaveAfterEntering(counter, hex, from) {
     const remaining = remainingMp(counter)
     if (remaining == null) return true
@@ -872,21 +874,19 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  AUTRE unité amie ? C'est la question "cette unité est-elle en
    *  SURPLUS D'EMPILEMENT (overstack) là où elle se trouve ?".
    *
-   *  Différence avec `hasFriendlyOccupant(c, h)` : celle-ci regarde un hex
-   *  `h` où `c` n'est PAS encore (avant un déplacement) et compterait `c`
-   *  lui-même s'il y était déjà — d'où cette fonction dédiée, qui exclut `c`.
+   *  Différence avec `wouldOverstack(c, h)` : celle-ci regarde un hex `h` où
+   *  `c` n'est PAS encore (avant un déplacement) ; ici, `c` est déjà dans
+   *  l'hex examiné (sa propre position).
    *
    *  Sert à HexMap.vue::setSelectedCounter : on ne peut pas TERMINER le
    *  mouvement d'une unité (la désélectionner, ou passer à une autre unité /
    *  un renfort) tant qu'elle est en overstack — le joueur doit d'abord la
    *  déplacer ailleurs (ou annuler son mouvement). Marqueurs et pions de
    *  soutien ne comptent jamais (ni amis ni ennemis, cf.
-   *  `hasFriendlyOccupant`). Toujours faux hors mode Assisté. */
+   *  `wouldOverstack`). Toujours faux hors mode Assisté. */
   function isOverstacked(counter) {
     if (!assisted.value || !isFighter(counter)) return false
-    return counters.value.some((otherCounter) =>
-      otherCounter.id !== counter.id && otherCounter.col === counter.col && otherCounter.row === counter.row
-      && isFighter(otherCounter) && !isEnemyOf(counter, otherCounter))
+    return friendlyCount(counter, { c: counter.col, r: counter.row }) >= rules.stackingLimit
   }
 
   /** EMPILEMENTS EN ATTENTE — filet de sécurité de la même règle, vérifié
@@ -906,8 +906,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  Ne comptent que les unités du camp ACTIF (cf. `canControl`) : c'est lui
    *  qui termine sa phase, et lui seul peut encore déplacer ses pions pour
    *  défaire l'empilement. Marqueurs et pions de soutien ignorés (ni amis ni
-   *  ennemis, cf. `hasFriendlyOccupant`). Un hex est listé dès qu'il y a au
-   *  moins 2 unités AMIES entre elles (cf. `isEnemyOf`).
+   *  ennemis, cf. `friendlyCount`). Un hex est listé dès qu'il y a plus
+   *  d'unités que la limite d'empilement (`rules.stackingLimit`), AMIES entre
+   *  elles (cf. `isEnemyOf`).
    *
    *  Liste vide hors mode Assisté ou hors phase Mouvement. Chaque entrée :
    *  `{ key, hex, units }` — numéro d'hex imprimé et noms des unités
@@ -924,7 +925,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     }
     const list = []
     for (const [key, units] of byHex) {
-      if (units.length < 2) continue
+      if (units.length <= rules.stackingLimit) continue
       // Au moins une paire AMIE dans l'hex (sans `sides` configurés, deux
       // pions "contrôlables" pourraient en théorie être de camps opposés).
       const friendly = units.some((unitA, unitIndex) => units.slice(unitIndex + 1).some((unitB) => !isEnemyOf(unitA, unitB)))
@@ -946,7 +947,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *     pas ("River Prohibited" sur la table de terrain du module).
    *
    *  Les blocages restants ne concernent QUE les véhicules (cf.
-   *  `VEHICLE_TYPES`) — toute autre unité (infanterie, artillerie à pied...)
+   *  `rules.vehicleTypes`) — toute autre unité (infanterie, artillerie à pied...)
    *  répond toujours vrai au-delà du cas 1 ci-dessus :
    *
    *  2. RUISSEAU OU RIVIÈRE PAR BAC (`edgeKind` — "stream" ou "ferry") SANS
@@ -966,9 +967,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   function canEnterTerrain(counter, hex, from) {
     const kind = edgeKind(from, hex)
     if (kind === 'river') return false
-    if (!VEHICLE_TYPES.has(counter?.type)) return true
+    if (!rules.vehicleTypes.has(counter?.type)) return true
     if (kind === 'stream' || kind === 'ferry') return false
-    if (IMPASSABLE_FOR_VEHICLES.has(terrain?.grid?.[hexId(hex.c + 1, hex.r)])) return kind != null
+    if (rules.impassableForVehicles.has(terrain?.grid?.[hexId(hex.c + 1, hex.r)])) return kind != null
     return true
   }
 
@@ -1185,5 +1186,5 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   }
 
   return { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, hasFriendlyOccupant, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, setPhase, setSpentMp, resetTurnState }
+    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, setPhase, setSpentMp, resetTurnState }
 }

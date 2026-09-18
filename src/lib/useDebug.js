@@ -82,8 +82,8 @@
 //     lib/useAssisted.js::entrySurcharge) — le surcoût de congestion déjà
 //     accumulé sur un hex d'entrée ce tour-ci (0 si personne n'y est encore
 //     entré).
-//   - `hasFriendlyOccupant` : fonction `(pion, hex) => bool` (cf.
-//     lib/useAssisted.js::hasFriendlyOccupant) — même règle d'empilement que
+//   - `wouldOverstack` : fonction `(pion, hex) => bool` (cf.
+//     lib/useAssisted.js::wouldOverstack) — même règle d'empilement que
 //     HexMap.vue::reachableSet (1er pas) appliquée ici à CHAQUE hex du
 //     résultat de `reachableHexes` : un hex ami occupé n'est un point
 //     d'ARRÊT valide (donc inclus dans la portée affichée) que si le pion
@@ -115,7 +115,7 @@ import { computed, ref } from 'vue'
  *  visité le plus proche suffit très largement. Renvoie un Set de clés
  *  "col,row", SANS le hex de départ (`c` n'a pas besoin d'"entrer" dans son
  *  propre hex, quoi qu'il en soit du terrain qu'il occupe déjà). */
-function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terrainCost, canEnterTerrain, zocSet, hasFriendlyOccupant) {
+function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terrainCost, canEnterTerrain, zocSet, wouldOverstack) {
   const startKey = col + ',' + row
   const dist = new Map([[startKey, 0]])
   const visited = new Set()
@@ -149,7 +149,7 @@ function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terra
     }
   }
   dist.delete(startKey)
-  // Empilement (cf. lib/useAssisted.js::hasFriendlyOccupant/
+  // Empilement (cf. lib/useAssisted.js::wouldOverstack/
   // canLeaveAfterEntering, même règle qu'au 1er pas — HexMap.vue::
   // reachableSet) : un hex occupé par un pion AMI n'est un point d'ARRÊT
   // valide que si le pion pourrait ensuite continuer sa route (MP restants,
@@ -159,7 +159,7 @@ function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terra
   // loin (déjà géré ci-dessus, l'exploration continue au travers).
   for (const [key, distance] of dist) {
     const [hexCol, hexRow] = key.split(',').map(Number)
-    if (!hasFriendlyOccupant(unit, { c: hexCol, r: hexRow })) continue
+    if (!wouldOverstack(unit, { c: hexCol, r: hexRow })) continue
     const remaining = budget - distance
     const canDepart = remaining > 0 && !zocSet.has(key) && neighborsOf(hexCol, hexRow).some((neighbor) => {
       if (!hexOnMap(neighbor.col, neighbor.row)) return false
@@ -173,7 +173,7 @@ function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terra
 
 export function useDebug(
   hexes, isAdjacent, terrainCost, selectedCounter, remainingMp, neighborsOf, hexOnMap, canEnterTerrain, zocSet,
-  entryHexSet, entrySurcharge, hasFriendlyOccupant,
+  entryHexSet, entrySurcharge, wouldOverstack,
 ) {
   // Unique interrupteur du mode debug (case à cocher "debug", cf. HexMap.vue)
   // — tous les affichages de ce composable, présents et futurs, doivent être
@@ -211,7 +211,7 @@ export function useDebug(
     return reachableHexes(
       counter, { col: counter.col, row: counter.row },
       budget == null ? Infinity : budget,
-      neighborsOf, hexOnMap, terrainCost, canEnterTerrain, zocSet.value, hasFriendlyOccupant,
+      neighborsOf, hexOnMap, terrainCost, canEnterTerrain, zocSet.value, wouldOverstack,
     )
   })
   const isInRange = (hex) => inRangeSet.value.has(hex.c + ',' + hex.r)

@@ -1,9 +1,10 @@
 // Calibration de la grille hexagonale posée sur l'image de carte, en pixels
 // natifs de l'image (pas en pixels écran — le zoom ne touche pas ces valeurs).
-// Contrairement au reste des infos de carte (image, cols/rows, orientation),
-// qui vivent dans le JSON du module (src/modules/*.json), la calibration
-// reste ici : elle sert de réglage par défaut / de secours pour le panneau
-// de calibration (CalibrationPanel.vue, bouton "réinitialiser défauts").
+// Chaque module déclare la sienne dans son JSON (`map.calibration`, cf.
+// public/modules/arnhem/arnhem.json) ; HexMap.vue la complète avec
+// `DEFAULT_CALIBRATION` ci-dessous — un simple REPLI pour un module qui
+// n'en déclarerait pas (ou pas entièrement), et la base du bouton
+// "réinitialiser défauts" de CalibrationPanel.vue.
 //
 //  x0,y0    : centre du premier hex (colonne 0, ligne 1)
 //  colStep  : pas horizontal entre deux colonnes adjacentes
@@ -12,9 +13,8 @@
 //  -> demi-hauteur b = rowStep / 2 ; les colonnes impaires (index 1, 3, 5…)
 //     sont décalées de +b vers le bas (disposition hex "flat-top", offset odd-q).
 //
-// Valeurs mesurées sur arnhem-map.jpg (3300×2550) — alignement vérifié du
-// coin Eindhoven (haut-gauche) jusqu'au coin Arnhem/Oosterbeek (bas-droit),
-// aucune dérive cumulative constatée.
+// Valeurs de repli : celles de la première carte calibrée (arnhem-map.jpg,
+// 3300×2550) — un autre module doit déclarer les siennes.
 export const DEFAULT_CALIBRATION = {
   x0: 100.5,
   y0: 122,

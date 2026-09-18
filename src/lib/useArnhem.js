@@ -70,8 +70,12 @@
 //         reste du moteur ignore.
 //       • `terrain` : `module.terrain` (`grid` hexId → type, `types`) — pour
 //         les règles liées au terrain (ex. retraite en ville).
+//       • `rules` : `module.rules` résolues (cf. lib/rules.js) — les
+//         VALEURS des règles particulières y sont déclarées par le module
+//         (ex. `airborneArrivalSpentMp`), leur LOGIQUE reste ici.
 import { computed, unref } from 'vue'
 import { hexId } from './calibration.js'
+import { isAirborneEntry } from './setup.js'
 
 // Identifiant du module concerné, tel qu'il figure dans
 // public/modules/index.json. Exporté pour que l'appelant puisse, s'il le
@@ -87,7 +91,9 @@ export const ARNHEM_MODULE_ID = 'arnhem'
 // imprimée. »
 //
 // La règle est écrite en "MP DÉPENSÉS" (4) et non en "MP restants" (3),
-// et c'est aussi ainsi qu'on l'implémente — pour deux raisons :
+// et c'est aussi ainsi qu'on l'implémente — la valeur vient du module
+// (`rules.airborneArrivalSpentMp`, cf. arnhem.json ; 4 à défaut) — pour deux
+// raisons :
 //  1. c'est exactement la façon dont le moteur compte (cf.
 //     lib/useAssisted.js::remainingMp = `c.mov - spentMp`) : il suffit
 //     d'inscrire 4 dans les MP dépensés du pion, sans toucher à son `mov`
@@ -97,7 +103,7 @@ export const ARNHEM_MODULE_ID = 'arnhem'
 //     comme ayant dépensé 4" fait de l'atterrissage un mouvement DÉJÀ
 //     entamé, ce qui compte pour toutes les règles qui regardent les MP
 //     dépensés, pas seulement pour le reste disponible.
-const AIRBORNE_ARRIVAL_SPENT_MP = 4
+const DEFAULT_AIRBORNE_ARRIVAL_SPENT_MP = 4
 
 export function useArnhem(moduleId, ctx = {}) {
   // Vrai seulement si la partie en cours EST Arnhem. Toutes les règles
@@ -164,16 +170,16 @@ export function useArnhem(moduleId, ctx = {}) {
   // au moment précis d'une pose ou d'une annulation.
   const airborneArrivals = new Set()
 
-  /** Ce pion entre-t-il en jeu par LARGAGE/ATTERRISSAGE ? Critère : son
-   *  `setup` se termine par "+adj" — la notation du module pour « sur cet hex
-   *  de référence (sa DZ) OU l'un de ses 6 voisins », qui n'est utilisée QUE
-   *  par l'aéroporté (cf. HexMap.vue, `entryHexSet`, et la phase Airborne de
-   *  lib/useAssisted.js). On s'appuie sur elle plutôt que sur `c.type`
-   *  ("airborne infantry", "glider", "airborne arty") : c'est le MODE
-   *  D'ENTRÉE qui déclenche la règle, et cette notation est justement ce que
-   *  le reste du moteur utilise déjà pour le reconnaître. */
-  function isAirborneEntry(counter) {
-    return typeof counter?.setup === 'string' && counter.setup.endsWith('+adj')
+  // Ce pion entre-t-il en jeu par LARGAGE/ATTERRISSAGE ? Critère : son
+  // `setup` est un largage "+adj" (cf. lib/setup.js::isAirborneEntry) —
+  // c'est le MODE D'ENTRÉE qui déclenche la règle, pas `c.type` ("airborne
+  // infantry", "glider", "airborne arty").
+
+  /** Valeur de la règle pour ce module (`rules.airborneArrivalSpentMp`,
+   *  cf. arnhem.json), ou 4 à défaut. */
+  function arrivalSpentMp() {
+    const declared = ctx.rules?.airborneArrivalSpentMp
+    return Number.isFinite(declared) ? declared : DEFAULT_AIRBORNE_ARRIVAL_SPENT_MP
   }
 
   /** À appeler juste APRÈS qu'une unité aéroportée a été posée sur la carte
@@ -188,7 +194,7 @@ export function useArnhem(moduleId, ctx = {}) {
   }
 
   /** Combien de MP ce pion doit-il compter comme DÉJÀ DÉPENSÉS du seul fait
-   *  de son arrivée ? `AIRBORNE_ARRIVAL_SPENT_MP` (4) s'il a atterri pendant
+   *  de son arrivée ? `rules.airborneArrivalSpentMp` (4) s'il a atterri pendant
    *  le tour en cours (cf. `noteAirborneArrival`), `null` sinon — donc aussi
    *  bien pour une unité arrivée à un tour précédent (qui retrouve sa pleine
    *  allocation imprimée) que pour une unité terrestre, un autre module, ou
@@ -204,7 +210,7 @@ export function useArnhem(moduleId, ctx = {}) {
   function airborneArrivalSpentMp(counter) {
     if (!active.value || !unref(ctx.assisted)) return null
     if (!airborneArrivals.has(String(counter?.id))) return null
-    return AIRBORNE_ARRIVAL_SPENT_MP
+    return arrivalSpentMp()
   }
 
   /** Oublie les arrivées aéroportées du tour écoulé — « Après leur Tour de

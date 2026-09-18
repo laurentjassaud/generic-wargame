@@ -93,7 +93,8 @@ Champs du JSON (cf. `arnhem.json`) :
 |---|---|
 | `boardGame`, `name`, `favicon` | Identité (titre de page, icône d'onglet) |
 | `movementChart`, `combatChart` | Images des tables, affichables en jeu |
-| `map` | `url`, `imageWidth/Height`, `cols`, `rows`, `evenColMinus` (colonnes décalées amputées d'une ligne), `removedHexes` |
+| `map` | `url`, `imageWidth/Height`, `cols`, `rows`, `evenColMinus` (colonnes décalées amputées d'une ligne), `removedHexes`, `calibration` (x0/y0/colStep/a/rowStep, en pixels de l'image) |
+| `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`) — cf. `src/lib/rules.js` |
 | `sides` | Camps jouables → factions (`{"allies": ["commonwealth","us","pol"], "german": ["german"]}`) |
 | `turnTrack` | `turns`, `order` des camps, libellé et marqueur de chaque camp |
 | `supportTrack` | Tablette de soutien : pions par tour (`byTurn`) |
@@ -105,9 +106,13 @@ carte), `"3719+adj"` (largage : l'hex ou l'un de ses 6 voisins — c'est ce
 suffixe qui fait d'un pion un **aéroporté**). Un pion `type: "marker"` (zones
 de largage « DZ ») n'est pas une unité (cf. `src/lib/units.js`).
 
-La **calibration** pixel de la grille (`src/lib/calibration.js`) est
-ajustable en direct via le panneau « calibration » ; ses valeurs par défaut
-sont celles de la carte d'Arnhem.
+La **calibration** pixel de la grille (`map.calibration`) est ajustable en
+direct via le panneau « calibration » ; `src/lib/calibration.js` ne garde
+qu'un repli pour un module qui n'en déclarerait pas.
+
+Les **règles particulières** d'un module (ce qu'aucun champ du JSON ne sait
+exprimer) vivent dans un composable dédié inscrit dans le registre
+`src/lib/moduleRules.js` — `src/lib/useArnhem.js` sert de patron.
 
 ## Organisation du code
 
@@ -122,7 +127,10 @@ src/
     ├── useAssisted.js   mode Assisté : phases, MP/terrain, ZOC, empilement, congestion
     ├── useCombat.js     table de combat, cibles/attaquants, combats obligatoires
     ├── useRetreat.js    retraites, éliminations, avance après combat
+    ├── moduleRules.js   registre des règles particulières par module
     ├── useArnhem.js     règles particulières du module Arnhem (patron pour d'autres modules)
+    ├── rules.js         paramètres des règles génériques (module.rules) et leurs défauts
+    ├── setup.js         notation `setup` des pions (hex, plage, largage)
     ├── useDebug.js      affichages de debug (coûts, portée, congestion)
     ├── units.js         qu'est-ce qu'une unité / un marqueur / un pion de soutien
     ├── hex.js, mapShape.js, calibration.js   géométrie de la grille
@@ -181,7 +189,7 @@ room jamais lancée, 72 h pour une partie lancée).
 - « Placement libre » et « Météo » sont proposés grisés : le moteur ne les
   applique pas encore.
 - Plusieurs valeurs propres à Arnhem restent codées dans le moteur (table de
-  combat, constantes de mouvement, notation `setup`, calibration par défaut)
-  : un second module demandera de les déplacer dans le JSON.
+  combat, sémantique des couches d'arêtes, structure des phases) : un second
+  module demandera de les déplacer dans le JSON.
 - Pas de suite de tests automatisée dans le dépôt (les vérifications se font
   par scripts ad hoc et navigateur automatisé).

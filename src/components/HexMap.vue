@@ -3,9 +3,10 @@
 // HexMap.vue — carte hexagonale complète : toolbar, image + grille SVG
 // cliquable, et panneau de calibration. Composant autonome : reçoit un
 // `module` (la boîte de jeu — cf. public/modules/*.json) pour l'image et la
-// géométrie de grille (cols/rows) ; la calibration pixel de la grille
-// (x0/y0/colStep/a/rowStep) vient elle de DEFAULT_CALIBRATION dans
-// lib/calibration.js et reste ajustable en direct via CalibrationPanel.vue.
+// géométrie de grille (cols/rows) et la calibration pixel de la grille
+// (`map.calibration` — x0/y0/colStep/a/rowStep, complétée par
+// DEFAULT_CALIBRATION de lib/calibration.js), ajustable en direct via
+// CalibrationPanel.vue.
 //
 // SYSTÈME DE COORDONNÉES :
 //  - "hex" (col, row) : coordonnées logiques de la grille, col 0-based,
@@ -19,15 +20,17 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { reactive, ref, computed, toRef, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { hexId, parseHexId, DEFAULT_CALIBRATION } from '../lib/calibration.js'
+import { hexId, DEFAULT_CALIBRATION } from '../lib/calibration.js'
 import { neighborsOf, hexDistance } from '../lib/hex.js'
 import { hexExists, removedHexSet } from '../lib/mapShape.js'
 import { useAssisted } from '../lib/useAssisted.js'
 import { useDebug } from '../lib/useDebug.js'
 import { useCombat } from '../lib/useCombat.js'
 import { useRetreat } from '../lib/useRetreat.js'
-import { useArnhem } from '../lib/useArnhem.js'
+import { useModuleRules } from '../lib/moduleRules.js'
 import { isUnit, isFighter, isSupport } from '../lib/units.js'
+import { parseSetup, isAirborneEntry, deploymentCells, rangeCells, landingCells } from '../lib/setup.js'
+import { resolveRules } from '../lib/rules.js'
 import CalibrationPanel from './CalibrationPanel.vue'
 import Counter from './Counter.vue'
 import TurnTracker from './TurnTracker.vue'
@@ -220,7 +223,7 @@ function clearAllMoved() {
   // s'effacent au même moment (cf. lib/useArnhem.js::clearTurnState — les
   // aéroportés largués ce tour-ci, dont l'allocation de mouvement est
   // réduite jusqu'au tour suivant). Sans effet sur les autres modules.
-  arnhem.clearTurnState()
+  moduleRules.clearTurnState()
 }
 
 // --- Verrouillage d'une unité après désélection (mouvement normal) --------
@@ -281,7 +284,7 @@ function cancelMovement(id) {
     // (cf. lib/useArnhem.js::airborneArrivalSpentMp) : un aéroporté largué
     // ce tour-ci qui annule son mouvement retrouve ses 3 MP d'atterrissage,
     // pas les 7 de son allocation imprimée.
-    const arrivalMp = arnhem.airborneArrivalSpentMp(counter)
+    const arrivalMp = moduleRules.airborneArrivalSpentMp(counter)
     if (arrivalMp !== null) setSpentMp(counter.id, arrivalMp)
     counter.col = start.col; counter.row = start.row
     emit('move', { counterId: counter.id, col: counter.col, row: counter.row })
@@ -423,7 +426,10 @@ const canEnterThisTurn = (counter) => (counter?.turn ?? 1) <= turnInfo.value.tur
 // depuis la tablette (cf. onCounterDragStart / onMapDrop plus bas).
 const supportTrackerRef = ref(null)
 
-const calibration = reactive({ ...DEFAULT_CALIBRATION })
+// Calibration déclarée par le module (`map.calibration`), complétée par le
+// repli du moteur — et base du bouton "réinitialiser défauts".
+const moduleCalibration = { ...DEFAULT_CALIBRATION, ...(map.value.calibration ?? {}) }
+const calibration = reactive({ ...moduleCalibration })
 const gridStyle = reactive({ stroke: '#d11a1a', width: 1.5, opacity: 0 })
 const mapConfig = reactive({ cols: map.value.cols, rows: map.value.rows })
 
@@ -470,32 +476,14 @@ const hexes = computed(() => {
 // (cf. `reinforcements`).
 const allCounters = computed(() => Object.values(props.module.counters || {}).flat())
 
-/** `setup` d'un pion : soit un hex unique ("0604"), soit une plage bord de
- *  carte "HHHH-HHHH" (ex. allemands, cf. arnhem.json — entrée "sur ou entre"
- *  les deux hex, alignés sur une même ligne ou une même colonne). Renvoie
- *  tous les hex valides de la plage (un seul élément si hex unique) — sert
- *  au surlignage des hex d'entrée choisissables (cf. `entryHexSet`). */
-function enumerateSetupHexes(setup) {
-  if (!setup.includes('-')) return [parseHexId(setup)]
-  const [rangeStart, rangeEnd] = setup.split('-').map(parseHexId)
-  const cells = []
-  if (rangeStart.row === rangeEnd.row) {
-    const [lo, hi] = rangeStart.col <= rangeEnd.col ? [rangeStart.col, rangeEnd.col] : [rangeEnd.col, rangeStart.col]
-    for (let col = lo; col <= hi; col++) cells.push({ col: col, row: rangeStart.row })
-  } else {
-    const [lo, hi] = rangeStart.row <= rangeEnd.row ? [rangeStart.row, rangeEnd.row] : [rangeEnd.row, rangeStart.row]
-    for (let row = lo; row <= hi; row++) cells.push({ col: rangeStart.col, row: row })
-  }
-  const valid = cells.filter((cell) => hexOnMap(cell.col, cell.row))
-  return valid.length ? valid : [rangeStart]
-}
-
-/** Un hex cible tiré au hasard dans la plage `setup` — utilisé uniquement
- *  pour le placement initial automatique au chargement (cf. `counters`
- *  ci-dessous), pas pour l'arrivée interactive d'un renfort (cf. plus bas :
- *  glisser-déposer libre ou choix explicite d'un hex surligné). */
+/** Un hex cible tiré au hasard parmi ceux du `setup` du pion (cf.
+ *  lib/setup.js::deploymentCells — toute la plage pour un "CCRR-CCRR", l'hex
+ *  de référence sinon) — utilisé uniquement pour le placement initial
+ *  automatique au chargement (cf. `counters` ci-dessous), pas pour l'arrivée
+ *  interactive d'un renfort (cf. plus bas : glisser-déposer libre ou choix
+ *  explicite d'un hex surligné). */
 function resolveEntryTarget(setup) {
-  const pool = enumerateSetupHexes(setup)
+  const pool = deploymentCells(parseSetup(setup), hexOnMap)
   return pool[Math.floor(Math.random() * pool.length)]
 }
 
@@ -512,16 +500,21 @@ function pickArrivalHex(col, row, occupied) {
   return { col, row }
 }
 
-// Règles PARTICULIÈRES au module joué (cf. lib/useArnhem.js) : tout ce qui
-// ne vaut QUE pour une boîte de jeu précise et qu'aucun champ du JSON ne
-// sait exprimer. Le composable ne s'active que si `moduleId` est bien celui
-// du module concerné ; sur tout autre module, chacune de ses règles renvoie
-// `null` et le moteur générique ci-dessous s'applique tel quel.
-const arnhem = useArnhem(toRef(props, 'moduleId'), {
+// Paramètres des règles génériques déclarés par le module (`module.rules`,
+// cf. lib/rules.js) : véhicules, terrains interdits, empilement...
+const rules = resolveRules(props.module.rules)
+
+// Règles PARTICULIÈRES au module joué (cf. lib/moduleRules.js, registre par
+// module — ex. lib/useArnhem.js) : tout ce qui ne vaut QUE pour une boîte de
+// jeu précise et qu'aucun champ du JSON ne sait exprimer. Pour un module qui
+// n'en déclare pas, chaque règle renvoie `null` et le moteur générique
+// ci-dessous s'applique tel quel.
+const moduleRules = useModuleRules(toRef(props, 'moduleId'), {
   sides: props.module.sides,
   isUnit,
   assisted: toRef(props, 'assisted'),
   terrain: props.module.terrain,
+  rules,
 })
 
 // Marqueurs / pions de soutien / unités combattantes : cf. lib/units.js
@@ -545,7 +538,7 @@ const arnhem = useArnhem(toRef(props, 'moduleId'), {
 // le stacking (les marqueurs, eux, ignorent complètement cette logique — cf.
 // isUnit).
 function autoPlacesAtLoad(counter) {
-  const special = arnhem.autoPlacesAtLoad(counter)
+  const special = moduleRules.autoPlacesAtLoad(counter)
   if (special !== null) return special
   return (counter.turn ?? 1) === 1
 }
@@ -559,7 +552,7 @@ function autoPlacesAtLoad(counter) {
 function buildInitialCounters() {
   const occupied = new Set()
   const placed = []
-  for (const counter of allCounters.value.filter((counter) => counter.setup && autoPlacesAtLoad(counter))) {
+  for (const counter of allCounters.value.filter((counter) => parseSetup(counter.setup) && autoPlacesAtLoad(counter))) {
     const override = props.initialPositions[counter.id]
     const target = resolveEntryTarget(counter.setup)
     const pos = override ?? (isUnit(counter) ? pickArrivalHex(target.col, target.row, occupied) : target)
@@ -583,7 +576,7 @@ const initialDeployment = counters.value.map((counter) => ({ id: counter.id, col
 // lib/useAssisted.js::airbornePending), passés en FONCTION car
 // `reinforcements` n'est déclaré que plus bas dans ce fichier.
 const { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, hasFriendlyOccupant, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value)
+  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules)
 
 // Combat du mode Assisté (cf. lib/useCombat.js, qui porte toute la règle :
 // désignation défenseur/attaquants, table de combat, jet de dé). Ce composant
@@ -620,7 +613,7 @@ const {
   eliminateUnit: (unit, reason) => eliminateCounter(unit.id, reason),
   // Réductions de retraite propres au module (cf.
   // lib/useArnhem.js::cityRetreatReduction) — `null` hors Arnhem.
-  retreatReduction: (unit, hex, task) => arnhem.cityRetreatReduction(unit, hex, task),
+  retreatReduction: (unit, hex, task) => moduleRules.cityRetreatReduction(unit, hex, task),
   // Avance après combat : même traitement qu'un pas de retraite, sous une
   // entrée `advance` (cf. applyReplayEntry).
   advanceUnit: (unit, hex) => {
@@ -827,12 +820,18 @@ const reinforcements = computed(() =>
 // les renforts des factions de son camp. Repli sur un onglet unique si le
 // module n'a pas encore ce champ. Plus un onglet fixe "Unités éliminées",
 // commun à tous les camps (regroupé par nationalité à l'intérieur).
-const SIDE_LABELS = { german: 'Renfort allemands', allies: 'Renfort alliés' }
+// Libellé de l'onglet d'un camp : "Renfort " + le nom du camp tel que la
+// piste de tour l'affiche (`turnTrack.sides[side].label`, ex. "Renfort
+// alliés") — la clé brute du camp à défaut.
+const sideTabLabel = (side) => {
+  const label = props.module.turnTrack?.sides?.[side]?.label
+  return `Renfort ${label ? label.toLowerCase() : side}`
+}
 const sidePanelTabs = computed(() => {
   const sides = props.module.sides
   const base = !sides
     ? [{ key: 'reinforcements', label: 'Renforts' }]
-    : Object.keys(sides).map((side) => ({ key: side, label: SIDE_LABELS[side] ?? `Renfort ${side}` }))
+    : Object.keys(sides).map((side) => ({ key: side, label: sideTabLabel(side) }))
   return [...base, { key: 'eliminated', label: 'Unités éliminées' }, { key: 'journal', label: 'Journal' }]
 })
 function reinforcementsForTab(key) {
@@ -955,7 +954,7 @@ const reachableSet = computed(() => {
     // sinon il resterait "coincé" dessus, ce qui est interdit. On l'exclut
     // donc du surlignage vert pour ne pas laisser croire que ce clic ferait
     // quelque chose.
-    if (hasFriendlyOccupant(counter, hexCell) && !canLeaveAfterEntering(counter, hexCell, from)) continue
+    if (wouldOverstack(counter, hexCell) && !canLeaveAfterEntering(counter, hexCell, from)) continue
     set.add(key)
   }
   return set
@@ -1015,7 +1014,7 @@ function isEntryHexBlocked(reinforcement, hex) {
 // mode Assisté.
 function entryWouldStack(reinforcement, hex) {
   const entryCell = { c: hex.col, r: hex.row }
-  return hasFriendlyOccupant(reinforcement, entryCell) && !canLeaveAfterReinforcementEntry(reinforcement, entryCell, !reinforcement.setup.endsWith('+adj'))
+  return wouldOverstack(reinforcement, entryCell) && !canLeaveAfterReinforcementEntry(reinforcement, entryCell, !isAirborneEntry(reinforcement))
 }
 
 // Atterrissage d'un AÉROPORTÉ (`setup` "+adj", cf. `entryHexSet`) : règle
@@ -1073,19 +1072,13 @@ function fallbackEntryHexes(reinforcement, ref) {
 //     repli(s), jamais plus d'un choix "normal" en même temps).
 const entryHexSet = computed(() => {
   const reinforcement = selectedReinforcement.value
-  if (!reinforcement) return new Set()
-  if (reinforcement.setup.includes('-')) {
-    const cells = enumerateSetupHexes(reinforcement.setup).filter((hex) => !entryWouldStack(reinforcement, hex))
-    return new Set(cells.map((hex) => hex.col + ',' + hex.row))
-  }
-  const ref = parseHexId(reinforcement.setup) // tolère un éventuel suffixe "+adj" (ne lit que les 4 premiers caractères)
-  if (reinforcement.setup.endsWith('+adj')) {
-    const cells = [ref, ...neighborsOf(ref.col, ref.row).filter((neighbor) => hexOnMap(neighbor.col, neighbor.row))]
-      .filter((hex) => !airborneLandingBlocked(hex))
-    return new Set(cells.map((hex) => hex.col + ',' + hex.row))
-  }
-  const cells = isEntryHexBlocked(reinforcement, ref) ? fallbackEntryHexes(reinforcement, ref) : [ref]
-  return new Set(cells.map((hex) => hex.col + ',' + hex.row))
+  const parsed = parseSetup(reinforcement?.setup)
+  if (!parsed) return new Set()
+  const keys = (cells) => new Set(cells.map((hex) => hex.col + ',' + hex.row))
+  if (parsed.kind === 'range') return keys(rangeCells(parsed, hexOnMap).filter((hex) => !entryWouldStack(reinforcement, hex)))
+  if (parsed.kind === 'adjacent') return keys(landingCells(parsed, hexOnMap).filter((hex) => !airborneLandingBlocked(hex)))
+  const { ref } = parsed
+  return keys(isEntryHexBlocked(reinforcement, ref) ? fallbackEntryHexes(reinforcement, ref) : [ref])
 })
 const isEntryHex = (hex) => entryHexSet.value.has(hex.c + ',' + hex.r)
 
@@ -1114,7 +1107,7 @@ const isZocHex = (hex) => zocSet.value.has(hex.c + ',' + hex.r)
 // chemin au-delà d'un hex sous ZOC ennemie.
 const { debug, adjacentCotLabels, isInRange, entrySurchargeLabels } = useDebug(
   hexes, isAdjacent, terrainCost, selectedCounter, remainingMp, neighborsOf, hexOnMap, canEnterTerrain, zocSet,
-  entryHexSet, entrySurcharge, hasFriendlyOccupant,
+  entryHexSet, entrySurcharge, wouldOverstack,
 )
 
 // Décalage visuel des pions empilés sur un même hex — même principe
@@ -1244,7 +1237,7 @@ function onReinforcementSelect(id) {
 // --- Empilement (stacking) au mouvement normal -----------------------------
 // Une unité ne peut jamais TERMINER sa phase de Mouvement sur un hex occupé
 // par une unité AMIE (deux amies ne peuvent pas y rester ensemble à la fin
-// du tour) — cf. lib/useAssisted.js::hasFriendlyOccupant/
+// du tour) — cf. lib/useAssisted.js::wouldOverstack/
 // canLeaveAfterEntering (déplacées là-bas pour être réutilisées telles
 // quelles par lib/useDebug.js, cf. plus bas : le surlignage vert de la
 // portée complète en mode debug doit lui aussi exclure ces hex). Ne concerne
@@ -1262,7 +1255,7 @@ function onReinforcementSelect(id) {
  *     adjacent, il lui reste assez de MP pour en payer le coût de terrain
  *     (cf. lib/useAssisted.js::canEnterHex/spendMp) ET l'hex n'est pas
  *     occupé par un ami avec lequel il finirait "coincé" (cf.
- *     `hasFriendlyOccupant`/`canLeaveAfterEntering` ci-dessus) -> il s'y
+ *     `wouldOverstack`/`canLeaveAfterEntering` ci-dessus) -> il s'y
  *     déplace (et reste sélectionné, pour enchaîner sur d'autres hex tant
  *     qu'il lui reste des MP) ;
  *  3. sinon, le clic ne fait rien (pas de pion/renfort concerné par cet hex).
@@ -1293,7 +1286,7 @@ const onHex = (hex) => {
         // "+adj" (aéroporté) n'est jamais un hex de bord de carte au sens de
         // cette règle — cf. lib/useAssisted.js::spendEntryCost, qui ne fait
         // rien hors mode Assisté de toute façon.
-        const paysEntry = !reinforcement.setup.endsWith('+adj')
+        const paysEntry = !isAirborneEntry(reinforcement)
         const paid = paysEntry ? spendEntryCost(placed, hex) : null
         // Règle particulière du module sur l'arrivée (cf.
         // lib/useArnhem.js::airborneArrivalSpentMp — un aéroporté largué
@@ -1301,8 +1294,8 @@ const onHex = (hex) => {
         // AVANT le `log` ci-dessous, qui journalise les MP du pion (cf.
         // `mpText`/`spentMpOf`) : la ligne du journal doit montrer, et le
         // rejeu rétablir, l'état d'APRÈS application de la règle.
-        arnhem.noteAirborneArrival(placed)
-        const arrivalMp = arnhem.airborneArrivalSpentMp(placed)
+        moduleRules.noteAirborneArrival(placed)
+        const arrivalMp = moduleRules.airborneArrivalSpentMp(placed)
         if (arrivalMp !== null) setSpentMp(placed.id, arrivalMp)
         emit('move', { counterId: placed.id, col: hex.c, row: hex.r })
         // Hex d'entrée CONGESTIONNÉ (au moins une autre entrée par ce même hex
@@ -1343,9 +1336,9 @@ const onHex = (hex) => {
     const fromHex = counter ? { c: from.col, r: from.row } : null
     // Empilement : `h` est occupé par un ami ET `c` ne pourrait plus repartir
     // ensuite -> comme si l'hex n'était pas une destination valide (cf.
-    // `hasFriendlyOccupant`/`canLeaveAfterEntering` plus haut) — une unité ne
+    // `wouldOverstack`/`canLeaveAfterEntering` plus haut) — une unité ne
     // peut jamais TERMINER sa phase de Mouvement sur un hex ami.
-    const stackingBlocked = counter && hasFriendlyOccupant(counter, hex) && !canLeaveAfterEntering(counter, hex, fromHex)
+    const stackingBlocked = counter && wouldOverstack(counter, hex) && !canLeaveAfterEntering(counter, hex, fromHex)
     // Pas assez de MP pour entrer dans cet hex (cf. useAssisted.js) : le
     // pion reste sélectionné et sur place, comme si l'hex n'était pas une
     // destination valide — libre à l'utilisateur d'essayer un autre hex
@@ -1683,7 +1676,7 @@ function applyReplayEntry(entry) {
       // son allocation pleine. Les MP dépensés, eux, ne sont PAS recalculés
       // ici : c'est la valeur du journal, juste en dessous, qui fait foi.
       const placed = counters.value.find((counter) => String(counter.id) === String(entryData.counterId))
-      if (placed) arnhem.noteAirborneArrival(placed)
+      if (placed) moduleRules.noteAirborneArrival(placed)
     }
     // Après `spendEntryCost` : la valeur du journal fait foi (elle inclut
     // déjà le coût d'entrée payé à l'époque).
@@ -2072,7 +2065,7 @@ function onMapDragEnd() {
     </main>
 
     <CalibrationPanel v-if="showCalib" :calibration="calibration" :grid-style="gridStyle" :map-config="mapConfig"
-      :default-calibration="DEFAULT_CALIBRATION" :image-width="map.imageWidth" :image-height="map.imageHeight" />
+      :default-calibration="moduleCalibration" :image-width="map.imageWidth" :image-height="map.imageHeight" />
 
     <SidePanel :tabs="sidePanelTabs" v-model:open-tab="openTab">
       <template v-for="tab in sidePanelTabs" :key="tab.key" v-slot:[tab.key]>
