@@ -31,21 +31,19 @@
 //         - chaque pion ne peut entrer dans un hex que s'il lui reste assez
 //           de POINTS DE MOUVEMENT (MP) pour payer le COÛT DE TERRAIN (COT)
 //           de cet hex (cf. section "Points de mouvement" plus bas),
-//         - une RIVIÈRE est infranchissable pour TOUT LE MONDE sauf par un
-//           PONT (canal/chemin de fer/route, sans surcoût) ou, pour les
-//           unités NON motorisées/blindées, par un BAC (+3 MP, comme un gué
-//           de ruisseau) — cf. `canEnterTerrain`/`terrainCost`, section
-//           "Points de mouvement",
-//         - les véhicules (blindés, reconnaissance, mécanisés, artillerie
-//           automotrice) ne peuvent PAS entrer dans un hex rough/broken/
-//           woods ("forest"), quel que soit leur MP restant, SAUF par une
-//           route/piste/pont précis ; ils ne peuvent traverser un ruisseau
-//           QUE par une route/piste (jamais à gué), ni une rivière QUE par
-//           un pont (jamais par bac) — même section,
-//         - traverser à gué un ruisseau SANS route/piste, ou une rivière PAR
-//           BAC (les unités non motorisées/blindées le peuvent, contrairement
-//           aux véhicules ci-dessus) coûte le COT de l'hex d'arrivée + 3 MP
-//           (cf. `terrainCost`, même section),
+//         - les HEXSIDES (côtés d'hex) portent des routes, pistes, ponts,
+//           bacs, rivières, ruisseaux... dont l'effet est DÉCLARÉ par le
+//           module (`terrain.edges`, cf. lib/edges.js) : coût fixe (route,
+//           piste), surcoût (gué, bac), arête infranchissable (rivière sans
+//           pont), arête interdite aux véhicules ou au contraire qui leur
+//           ouvre un terrain interdit — cf. `edgeKind`/`terrainCost`/
+//           `canEnterTerrain`, section "Points de mouvement". Pour Arnhem :
+//           une RIVIÈRE est infranchissable sauf par un PONT (sans surcoût)
+//           ou, pour les unités NON motorisées/blindées, par un BAC (+3 MP,
+//           comme un gué de ruisseau) ; les véhicules (cf. `rules.
+//           vehicleTypes`) n'entrent dans un hex rough/broken/woods que par
+//           une route/piste/pont et ne franchissent ni ruisseau à gué ni
+//           rivière par bac,
 //         - ZONE DE CONTRÔLE (ZOC, cf. section dédiée plus bas) : un pion
 //           qui commence son tour dans la ZOC d'un pion ennemi ne peut pas
 //           bouger du tout ; un pion qui ENTRE dans une ZOC ennemie doit s'y
@@ -99,14 +97,14 @@
 //         de camp (`currentStep`) : "le même tour" y couvre les deux camps.
 //   - `terrain` : `module.terrain` (JSON du module, ex. arnhem.json) —
 //     `{ types: { [clé]: { label, mp } }, grid: { [id d'hex "CCRR"]: clé },
-//     roads: ["AAAA-BBBB", ...], trails: [...], streams: [...],
-//     rivers: [...], ferries: [...], canalBridges: [...],
-//     railroadBridges: [...], highwayBridges: [...] }`. Tous, hormis
-//     `types`/`grid`, sont des listes d'ARÊTES (paires d'hex adjacents
-//     précises, pas juste "cet hex est une route/un cours d'eau") : cf.
-//     section "Points de mouvement" plus bas pour leur usage. Peut être
-//     absent (modules pas encore enrichis en terrain) : dans ce cas, tout
-//     hex coûte 1 MP par défaut, sans bonus/malus d'aucune sorte.
+//     edges: { layers, kinds, movementPriority, combatPriority }, <couches>
+//     }`. Les couches (`roads`, `rivers`... pour Arnhem) sont des listes
+//     d'ARÊTES (paires d'hex adjacents précises, pas juste "cet hex est une
+//     route/un cours d'eau") ; `edges` déclare ce que chacune veut dire (cf.
+//     lib/edges.js, et section "Points de mouvement" plus bas pour leur
+//     usage). Peut être absent (modules pas encore enrichis en terrain) :
+//     dans ce cas, tout hex coûte 1 MP par défaut, sans bonus/malus
+//     d'aucune sorte.
 //   - `counters` : ref/computed du tableau des pions actuellement POSÉS sur
 //     la carte (cf. HexMap.vue::counters — pas les renforts pas encore
 //     posés, ni les pions éliminés). Sert à la ZOC (section dédiée plus bas)
@@ -135,75 +133,48 @@ import { neighborsOf } from './hex.js'
 import { isFighter } from './units.js'
 import { isAirborneEntry } from './setup.js'
 import { resolveRules } from './rules.js'
-
-/** Construit, une seule fois, l'ensemble des arêtes route/piste/ruisseau
- *  d'un module sous forme de clés "hexIdA-hexIdB" ET "hexIdB-hexIdA" (les
- *  deux sens : le JSON ne liste chaque arête qu'une fois, dans un ordre
- *  arbitraire, alors qu'on doit pouvoir la retrouver en avançant comme en
- *  reculant dessus). `list` : `terrain.roads`, `terrain.trails` ou
- *  `terrain.streams` (tableau de "AAAA-BBBB"). */
-function buildEdgeSet(list) {
-  const set = new Set()
-  for (const edge of list ?? []) {
-    const [hexIdA, hexIdB] = edge.split('-')
-    set.add(hexIdA + '-' + hexIdB)
-    set.add(hexIdB + '-' + hexIdA)
-  }
-  return set
-}
+import { resolveEdges } from './edges.js'
 
 // Les types d'unité motorisées/blindées, les terrains qui leur sont
 // interdits et la limite d'empilement ne sont plus codés ici : ils viennent
 // de `module.rules` (cf. lib/rules.js, paramètre `rules` ci-dessous —
 // `vehicleTypes`, `impassableForVehicles`, `stackingLimit`).
 
-// Surcoût (en MP) pour traverser À GUÉ un hexside de ruisseau
-// (`terrain.streams`) SANS route/piste dessus, OU une rivière
-// (`terrain.rivers`) SANS pont, PAR BAC (`terrain.ferries`) — cf.
-// `terrainCost`/`canEnterTerrain` plus bas. S'AJOUTE au coût normal de l'hex
-// d'arrivée (ex. 2 MP de terrain + 3 = 5), il ne le remplace pas. Même
-// valeur pour les deux cas (movement-chart.png : "Stream +3 MP", "Ferry +3
-// MP").
-const WATER_CROSSING_PENALTY = 3
+// De même, ce que valent les HEXSIDES (routes, rivières, ponts, bacs...) :
+// coûts, surcoûts et interdictions sont déclarés par le module
+// (`terrain.edges`, cf. lib/edges.js) — y compris le surcoût d'un gué ou
+// d'un bac (+3 MP pour Arnhem, "Stream +3 MP" / "Ferry +3 MP" sur
+// movement-chart.png), autrefois codé ici.
 
 //   - `rules` : règles génériques paramétrées par le module (cf.
 //     lib/rules.js::resolveRules — `vehicleTypes`, `impassableForVehicles`,
 //     `stackingLimit`). À défaut, les valeurs par défaut du moteur.
 export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap, getReinforcements, rules = resolveRules(null)) {
-  // Arêtes route/piste/ruisseau/rivière/pont/bac du module, construites une
-  // seule fois (cf. buildEdgeSet ci-dessus) — `terrain` ne change pas en
-  // cours de partie, inutile de les reconstruire à chaque appel de
-  // `terrainCost`. 3 SORTES de pont (canal/chemin de fer/route) déclarées
-  // séparément dans le JSON (cf. arnhem.json) mais traitées ICI de façon
-  // identique (cf. `isBridgeEdge` plus bas) : peu importe LEQUEL, un pont
-  // permet toujours de franchir sans surcoût, pour tout le monde.
-  const roadEdges = buildEdgeSet(terrain?.roads)
-  const trailEdges = buildEdgeSet(terrain?.trails)
-  const streamEdges = buildEdgeSet(terrain?.streams)
-  const riverEdges = buildEdgeSet(terrain?.rivers)
-  const ferryEdges = buildEdgeSet(terrain?.ferries)
-  const canalBridgeEdges = buildEdgeSet(terrain?.canalBridges)
-  const railroadBridgeEdges = buildEdgeSet(terrain?.railroadBridges)
-  const highwayBridgeEdges = buildEdgeSet(terrain?.highwayBridges)
+  // --- Arêtes (hexsides) du module -------------------------------------------
+  // Interprète des arêtes, construit UNE SEULE FOIS (cf. lib/edges.js) :
+  // `terrain` ne change pas en cours de partie, inutile de reconstruire les
+  // ensembles d'arêtes à chaque appel de `terrainCost`. Il répond à trois
+  // questions, et c'est tout ce que ce fichier sait des arêtes :
+  //   - `edges.movementKind(clé)` : quelle NATURE d'arête ("road", "river"...)
+  //     fait foi pour un DÉPLACEMENT par cette arête (la première de
+  //     `terrain.edges.movementPriority` présente) ;
+  //   - `edges.combatKind(clé)` : même question pour le COMBAT et la ZOC
+  //     (`combatPriority`, ordre qui peut différer — cf. `combatEdgeKind`) ;
+  //   - `edges.entryKind("CCRR")` : l'hex est-il DESSERVI par une arête à
+  //     coût fixe (route, piste), peu importe par où — pour l'entrée en jeu
+  //     d'un renfort, qui n'a pas d'arête de provenance (cf. `entryBaseCost`).
+  // Et `edges.kindOf(nature)` donne les propriétés déclarées d'une nature
+  // (`mp`, `extraMp`, `impassable`, `vehicles`, `blocksZoc`, `blocksAttack`).
+  // Plusieurs couches du JSON peuvent partager une nature : les trois sortes
+  // de pont d'Arnhem (canal, chemin de fer, route) sont toutes "bridge" —
+  // peu importe LEQUEL, un pont se franchit sans surcoût, par tout le monde.
+  const edges = resolveEdges(terrain)
 
-  /** `edgeKey` (déjà au format "hexIdA-hexIdB") correspond-elle à un pont,
-   *  quel qu'en soit le type (canal, chemin de fer, route/highway) ? */
-  function isBridgeEdge(edgeKey) {
-    return canalBridgeEdges.has(edgeKey) || railroadBridgeEdges.has(edgeKey) || highwayBridgeEdges.has(edgeKey)
+  /** Clé "CCRR-CCRR" de l'arête `from` -> `h` (hex au format { c, r } de
+   *  HexMap.vue), telle que l'attend l'interprète `edges` ci-dessus. */
+  function edgeKeyOf(from, hex) {
+    return hexId(from.c + 1, from.r) + '-' + hexId(hex.c + 1, hex.r)
   }
-
-  // Ensembles ("hexId", ex. "0106") de tous les hex touchés par AU MOINS une
-  // route/piste, quel que soit le voisin de l'autre côté — construits une
-  // seule fois à partir de `roadEdges`/`trailEdges` (qui stockent déjà
-  // chaque arête dans les 2 sens, donc un simple `.split('-')[0]` sur
-  // chaque entrée finit par lister les deux extrémités de chaque arête).
-  // Sert UNIQUEMENT à `entryBaseCost` plus bas : une unité qui ENTRE EN JEU
-  // n'a pas de "from" (elle vient de "hors carte"), on ne peut donc pas
-  // demander "quelle est la nature de l'arête from->h" comme le fait
-  // `terrainCost` pour un déplacement classique — on demande juste "cet hex
-  // est-il DESSERVI par une route/piste, peu importe par où".
-  const roadTouchedHexes = new Set([...roadEdges].map((edgeKey) => edgeKey.split('-')[0]))
-  const trailTouchedHexes = new Set([...trailEdges].map((edgeKey) => edgeKey.split('-')[0]))
 
   // --- Affichage de la grille hexagonale -----------------------------------
   // `showGridPref` mémorise la PRÉFÉRENCE de l'utilisateur (case cochée ou
@@ -564,30 +535,27 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // plutôt que "zéro MP", pour ne jamais bloquer un pion que le module ne
   // fait pas participer au système de MP.
 
-  /** "road", "trail", "bridge", "ferry", "river", "stream" ou `null` : nature
-   *  de l'ARÊTE précise entre `from` et `h` (cf. terrain.roads/trails/
-   *  streams/rivers/ferries/canalBridges/railroadBridges/highwayBridges, des
-   *  listes "hexIdA-hexIdB" — une connexion PRÉCISE entre deux hex donnés,
-   *  jamais juste "cet hex touche une route/un cours d'eau"). `null` si
-   *  `from` est absent ou si cette paire d'hex précise n'est reliée par
-   *  AUCUNE des listes ci-dessus (même si l'un des deux, voire les deux,
-   *  touche l'une d'elles ailleurs, sur un autre de ses côtés).
+  /** Nature ("road", "river"... — cf. `terrain.edges.kinds`) de l'ARÊTE
+   *  précise entre `from` et `h` pour un DÉPLACEMENT — une connexion PRÉCISE
+   *  entre deux hex donnés, jamais juste "cet hex touche une route/un cours
+   *  d'eau". `null` si `from` est absent ou si cette paire d'hex précise
+   *  n'est reliée par AUCUNE couche déclarée (même si l'un des deux, voire
+   *  les deux, en touche une ailleurs, sur un autre de ses côtés).
    *
-   *  Priorité (du plus fort au plus faible) quand PLUSIEURS sont déclarées
-   *  sur la même arête :
-   *   1. route > piste — cf. arnhem.json : une route/piste qui franchit un
-   *      ruisseau, typiquement un pont/gué aménagé -> on suit son coût, PAS
-   *      le surcoût de ruisseau (cf. `terrainCost`) ;
-   *   2. pont (canal/chemin de fer/route — cf. `isBridgeEdge`, peu importe
-   *      lequel) — s'il n'y a ni route ni piste déclarée par-dessus (rare :
-   *      la plupart des ponts routiers SONT aussi une route/piste, déjà
-   *      couverts par la priorité 1 ci-dessus) ;
-   *   3. bac (`terrain.ferries`) — s'il n'y a ni route/piste ni pont ;
-   *   4. rivière (`terrain.rivers`) — s'il n'y a ni pont ni bac : signale une
-   *      arête infranchissable (cf. `canEnterTerrain`, "River Prohibited" du
-   *      module) ;
-   *   5. ruisseau (`terrain.streams`) — dernier recours, franchissable à gué
-   *      par tout le monde sauf les véhicules (cf. `canEnterTerrain`).
+   *  Quand PLUSIEURS natures sont posées sur la même arête, c'est la
+   *  première de `terrain.edges.movementPriority` qui fait foi. Pour Arnhem,
+   *  du plus fort au plus faible :
+   *   1. route > piste : une route/piste qui franchit un ruisseau,
+   *      typiquement un pont/gué aménagé -> on suit son coût, PAS le surcoût
+   *      de ruisseau (cf. `terrainCost`) ;
+   *   2. pont (canal/chemin de fer/route, peu importe lequel) — s'il n'y a ni
+   *      route ni piste déclarée par-dessus (rare : la plupart des ponts
+   *      routiers SONT aussi une route/piste, déjà couverts ci-dessus) ;
+   *   3. bac — s'il n'y a ni route/piste ni pont ;
+   *   4. rivière — s'il n'y a ni pont ni bac : arête infranchissable (cf.
+   *      `canEnterTerrain`, "River Prohibited" du module) ;
+   *   5. ruisseau — dernier recours, franchissable à gué par tout le monde
+   *      sauf les véhicules (cf. `canEnterTerrain`).
    *
    *  Factorisé ici car utilisé à la fois par `terrainCost` (coût) et par
    *  `canEnterTerrain` plus bas (route/piste/pont = exception au terrain —
@@ -595,57 +563,55 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  infranchissable). */
   function edgeKind(from, hex) {
     if (!from) return null
-    const edgeKey = hexId(from.c + 1, from.r) + '-' + hexId(hex.c + 1, hex.r)
-    if (roadEdges.has(edgeKey)) return 'road'
-    if (trailEdges.has(edgeKey)) return 'trail'
-    if (isBridgeEdge(edgeKey)) return 'bridge'
-    if (ferryEdges.has(edgeKey)) return 'ferry'
-    if (riverEdges.has(edgeKey)) return 'river'
-    if (streamEdges.has(edgeKey)) return 'stream'
-    return null
+    return edges.movementKind(edgeKeyOf(from, hex))
   }
 
   /** Nature de l'hexside `from` -> `h` DU POINT DE VUE DU COMBAT (cf.
-   *  lib/useCombat.js) — priorités différentes de `edgeKind` ci-dessus, qui
-   *  est pensée pour le COÛT de mouvement :
-   *   - 'bridge' : un pont (canal/chemin de fer/route) enjambe l'obstacle.
-   *     Testé EN PREMIER, car la plupart des ponts sont AUSSI déclarés comme
-   *     route, que `edgeKind` ferait alors passer d'abord ("road") ;
+   *  lib/useCombat.js) et de la ZOC (cf. `edgeBlocksZoc`) : la première de
+   *  `terrain.edges.combatPriority` présente sur l'arête, ou `null`. Cet
+   *  ordre peut différer de celui du mouvement (cf. `edgeKind`, pensé pour
+   *  le COÛT). Pour Arnhem :
+   *   - 'bridge' : un pont enjambe l'obstacle. EN PREMIER, car la plupart des
+   *     ponts sont AUSSI déclarés comme route, que `edgeKind` ferait alors
+   *     passer d'abord ("road") ; au combat, sa ligne de table ("Grove,
+   *     Bridge") remplace celle du terrain (cf. `module.combat.edgeRows`) ;
    *   - 'river' : rivière SANS pont — l'attaque à travers cet hexside est
-   *     INTERDITE (règle validée avec l'utilisateur, cohérente avec la ZOC
-   *     qui ne s'y étend pas non plus, cf. `riverBlocksZoc`). Un BAC n'y
-   *     change rien : ce n'est pas un pont ;
-   *   - `null` si une route/piste franchit l'hexside : passage aménagé, donc
-   *     pas un obstacle — même raisonnement que la priorité route/piste de
-   *     `edgeKind` (un ruisseau traversé par une route ne pénalise pas) ;
+   *     INTERDITE (`blocksAttack`, règle validée avec l'utilisateur,
+   *     cohérente avec la ZOC qui ne s'y étend pas non plus, `blocksZoc`).
+   *     Un BAC n'y change rien : ce n'est pas un pont (absent de la liste) ;
+   *   - 'road' / 'trail' : passage aménagé, donc pas un obstacle — aucune
+   *     propriété de combat, la ligne du terrain de l'hex s'applique (un
+   *     ruisseau traversé par une route ne pénalise pas) ;
    *   - 'stream' : ruisseau nu, qui remplace la ligne de terrain sur la
    *     table de combat si TOUS les attaquants le franchissent ;
    *   - `null` sinon (hexside ordinaire, sans particularité).
    *  Exportée (cf. `return` plus bas) pour lib/useCombat.js. */
   function combatEdgeKind(from, hex) {
     if (!from) return null
-    const edgeKey = hexId(from.c + 1, from.r) + '-' + hexId(hex.c + 1, hex.r)
-    if (isBridgeEdge(edgeKey)) return 'bridge'
-    if (riverEdges.has(edgeKey)) return 'river'
-    if (roadEdges.has(edgeKey) || trailEdges.has(edgeKey)) return null
-    if (streamEdges.has(edgeKey)) return 'stream'
-    return null
+    return edges.combatKind(edgeKeyOf(from, hex))
+  }
+
+  /** Peut-on ATTAQUER à travers l'hexside `from` -> `h` ? Non si sa nature
+   *  de combat (cf. `combatEdgeKind`) est déclarée `blocksAttack` (rivière
+   *  sans pont, pour Arnhem). Exportée pour lib/useCombat.js. */
+  function edgeBlocksAttack(from, hex) {
+    return !!edges.kindOf(combatEdgeKind(from, hex))?.blocksAttack
   }
 
   /** Coût (en MP) pour ENTRER dans l'hex `h` ({ c, r }, 0-based/1-based comme
    *  partout dans HexMap.vue) en VENANT de l'hex `from` (même forme, optionnel).
    *
-   *  Règle route/piste/pont/bac/rivière/ruisseau (cf. `edgeKind` ci-dessus,
-   *  qui donne aussi l'ordre de priorité) : route -> coût de la route
-   *  (`terrain.types.road.mp`, ex. 0.5) ; piste -> coût de la piste
-   *  (`terrain.types.trail.mp`, ex. 1) ; pont -> coût normal de `h`, SANS
-   *  surcoût ("No add MP" sur la table de terrain du module, quel que soit
-   *  le type de pont) ; bac OU ruisseau -> coût normal de `h` PLUS
-   *  `WATER_CROSSING_PENALTY` (ex. 2 MP de terrain + 3 = 5) ; rivière (sans
-   *  pont ni bac) -> coût normal de `h`, une valeur purement indicative
+   *  Règle des arêtes (cf. `edgeKind` ci-dessus, qui choisit LA nature qui
+   *  fait foi) : si cette nature déclare un coût fixe (`mp` — route 0.5,
+   *  piste 1 pour Arnhem), c'est lui qui s'applique, À LA PLACE du coût du
+   *  terrain ; sinon, coût normal de `h` PLUS son éventuel surcoût
+   *  (`extraMp` — gué de ruisseau ou bac : +3 pour Arnhem, ex. 2 MP de
+   *  terrain + 3 = 5). Un pont ("No add MP" sur la table de terrain
+   *  d'Arnhem) n'a ni l'un ni l'autre : coût normal de `h`. Une rivière sans
+   *  pont ni bac donne le coût normal de `h`, valeur purement indicative
    *  (cf. `canEnterTerrain`, qui refuse de toute façon cette arête à TOUT LE
-   *  MONDE dans ce cas). Sans `from` (ex. appel générique sans connaître la
-   *  provenance), toujours le coût normal du terrain.
+   *  MONDE — `impassable`). Sans `from` (ex. appel générique sans connaître
+   *  la provenance), toujours le coût normal du terrain.
    *
    *  Coût normal (sans rien de tout ça) : lu dans `terrain.grid[hexId]` (le
    *  type de terrain de `h`) puis `terrain.types[type].mp`. 1 par défaut si
@@ -657,18 +623,14 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  portée de déplacement en mode debug) — seule source de vérité pour un
    *  coût de terrain, à ne jamais dupliquer ailleurs. */
   function terrainCost(hex, from) {
-    const kind = edgeKind(from, hex)
-    if (kind === 'road') return terrain?.types?.road?.mp ?? terrainAreaCost(hex)
-    if (kind === 'trail') return terrain?.types?.trail?.mp ?? terrainAreaCost(hex)
-    if (kind === 'bridge') return terrainAreaCost(hex)
-    if (kind === 'ferry' || kind === 'stream') return terrainAreaCost(hex) + WATER_CROSSING_PENALTY
-    return terrainAreaCost(hex)
+    const edge = edges.kindOf(edgeKind(from, hex))
+    if (edge?.mp != null) return edge.mp
+    return terrainAreaCost(hex) + (edge?.extraMp ?? 0)
   }
 
-  /** Coût "de zone" de `h`, sans tenir compte d'une éventuelle route/piste
+  /** Coût "de zone" de `h`, sans tenir compte d'une éventuelle arête
    *  empruntée pour y entrer — cf. `terrainCost` ci-dessus, qui applique
-   *  cette valeur par défaut et en cas de fallback (route/piste sans coût
-   *  déclaré dans `terrain.types`). */
+   *  cette valeur quand l'arête ne déclare pas de coût fixe. */
   function terrainAreaCost(hex) {
     const type = terrain?.grid?.[hexId(hex.c + 1, hex.r)]
     return terrain?.types?.[type]?.mp ?? 1
@@ -689,13 +651,13 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
 
   // --- Zone de Contrôle (ZOC) -------------------------------------------------
   // Règle : les 6 hex autour d'un pion constituent sa ZOC — SAUF à travers un
-  // hexside de RIVIÈRE sans pont (cf. `riverBlocksZoc` plus bas) : une
-  // rivière coupe la ZOC tout comme elle coupe le mouvement (cf.
-  // `canEnterTerrain`), un pont (canal/chemin de fer/route, cf.
-  // `isBridgeEdge`) la rétablit. Un hexside de RUISSEAU ou de CANAL (pas de
-  // barrière propre dans les données du module : seuls ses ponts,
-  // `canalBridges`, y sont déclarés) n'interrompt PAS la ZOC, qui s'étend
-  // normalement à travers eux — seule une rivière SANS pont bloque. Un pion
+  // hexside dont la nature de combat est déclarée `blocksZoc` (cf.
+  // `edgeBlocksZoc` plus bas). Pour Arnhem, c'est la RIVIÈRE sans pont : elle
+  // coupe la ZOC tout comme elle coupe le mouvement (cf. `canEnterTerrain`),
+  // un pont (canal/chemin de fer/route) la rétablit. Un hexside de RUISSEAU
+  // ou de CANAL (pas de barrière propre dans les données du module : seuls
+  // ses ponts, `canalBridges`, y sont déclarés) n'interrompt PAS la ZOC, qui
+  // s'étend normalement à travers eux — seule une rivière SANS pont bloque. Un pion
   // qui COMMENCE sa phase de Mouvement dans la ZOC d'un pion ennemi ne peut pas
   // bouger DU TOUT ce tour-ci ; un pion qui ENTRE dans une ZOC ennemie (en
   // partant d'un hex hors ZOC) doit s'y arrêter — aucun déplacement
@@ -744,27 +706,25 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   }
 
   /** Le hexside précis entre `a` et `b` ({ col, row } 0-based/1-based, ex.
-   *  un pion et l'un de ses voisins) coupe-t-il la ZOC ? Vrai uniquement
-   *  pour une arête de RIVIÈRE (`terrain.rivers`) qui n'est PAS un pont (cf.
-   *  `isBridgeEdge` — canal/chemin de fer/route, peu importe lequel) : un
-   *  BAC (`terrain.ferries`) n'en est pas un, une rivière traversée par bac
-   *  coupe donc quand même la ZOC (seul un pont la rétablit). Un hexside de
-   *  ruisseau (`terrain.streams`) ou de canal (jamais lui-même dans les
-   *  données du module, seuls ses ponts `canalBridges` le sont) n'est PAS
-   *  concerné : la ZOC s'étend normalement à travers eux, seule la rivière
-   *  est une vraie coupure. */
-  function riverBlocksZoc(counterA, counterB) {
-    const edgeKey = hexId(counterA.col + 1, counterA.row) + '-' + hexId(counterB.col + 1, counterB.row)
-    return riverEdges.has(edgeKey) && !isBridgeEdge(edgeKey)
+   *  un pion et l'un de ses voisins) coupe-t-il la ZOC ? Vrai si sa nature
+   *  de combat (cf. `combatEdgeKind` — même ordre de priorité) est déclarée
+   *  `blocksZoc`. Pour Arnhem, uniquement une arête de RIVIÈRE qui n'est PAS
+   *  un pont (le pont, prioritaire, la rétablit) : un BAC n'en est pas un,
+   *  une rivière traversée par bac coupe donc quand même la ZOC. Un hexside
+   *  de ruisseau ou de canal (jamais lui-même dans les données du module,
+   *  seuls ses ponts `canalBridges` le sont) n'est PAS concerné : la ZOC
+   *  s'étend normalement à travers eux. */
+  function edgeBlocksZoc(counterA, counterB) {
+    const from = { c: counterA.col, r: counterA.row }
+    return !!edges.kindOf(combatEdgeKind(from, { c: counterB.col, r: counterB.row }))?.blocksZoc
   }
 
   /** Ensemble ("col,row") de tous les hex sous ZOC ennemie de `c` — union
    *  des 6 hex VOISINS (jamais l'hex du pion ennemi lui-même) de chaque
    *  pion actuellement posé sur la carte (`counters`) qui est ennemi de `c`
    *  (cf. `isEnemyOf`) et qui projette une ZOC (pas un marqueur, pas un pion
-   *  de soutien) — sauf à travers un hexside de rivière sans pont (cf.
-   *  `riverBlocksZoc` ci-dessus), qui coupe la ZOC comme il coupe le
-   *  mouvement. `c` lui-même et ses propres alliés n'y contribuent
+   *  de soutien) — sauf à travers un hexside qui coupe la ZOC (cf.
+   *  `edgeBlocksZoc` ci-dessus — rivière sans pont pour Arnhem). `c` lui-même et ses propres alliés n'y contribuent
    *  jamais. Set VIDE si `c` est `null`/absent.
    *
    *  Exportée (cf. `return` plus bas) pour être réutilisée telle quelle par
@@ -780,7 +740,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
       if (!isFighter(other)) continue
       if (!isEnemyOf(counter, other)) continue
       for (const neighbor of neighborsOf(other.col, other.row)) {
-        if (riverBlocksZoc(other, neighbor)) continue
+        if (edgeBlocksZoc(other, neighbor)) continue
         set.add(neighbor.col + ',' + neighbor.row)
       }
     }
@@ -940,36 +900,38 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  entrer dans `h` ? Indépendant des MP : même avec des MP à revendre,
    *  l'hex/l'arête reste hors d'atteinte dans les cas ci-dessous.
    *
-   *  1. RIVIÈRE (`edgeKind` — "river") SANS pont ni bac (cf. priorité
-   *     route/piste/pont/bac > rivière dans `edgeKind` : si l'un des trois
-   *     est présent, ce n'est plus une traversée "à la nage", ce blocage ne
-   *     s'applique pas) : infranchissable pour TOUT LE MONDE, véhicule ou
-   *     pas ("River Prohibited" sur la table de terrain du module).
+   *  1. l'arête qui fait foi (cf. `edgeKind`) est déclarée `impassable` :
+   *     infranchissable pour TOUT LE MONDE, véhicule ou pas. Pour Arnhem :
+   *     RIVIÈRE SANS pont ni bac (si l'un des deux — ou une route/piste —
+   *     est présent, il passe avant la rivière dans `movementPriority` : ce
+   *     n'est plus une traversée "à la nage") — "River Prohibited" sur la
+   *     table de terrain du module.
    *
    *  Les blocages restants ne concernent QUE les véhicules (cf.
    *  `rules.vehicleTypes`) — toute autre unité (infanterie, artillerie à pied...)
    *  répond toujours vrai au-delà du cas 1 ci-dessus :
    *
-   *  2. RUISSEAU OU RIVIÈRE PAR BAC (`edgeKind` — "stream" ou "ferry") SANS
-   *     route ni piste dessus : un véhicule ne peut franchir un ruisseau à
-   *     gué, ni une rivière par bac, QUE l'infanterie et assimilés peuvent
-   *     emprunter (cf. `terrainCost`, surcoût réservé à ce cas précis pour
-   *     eux) — un véhicule a besoin d'une route/piste (ruisseau) ou d'un
-   *     PONT (rivière, cf. "bridge" dans `edgeKind` — jamais d'un simple bac).
-   *  3. `h` est rough/broken/woods ("forest") — sauf s'il y entre par une
-   *     route, une piste ou un pont précis (cf. `edgeKind`), qui reste
-   *     toujours praticable même à travers un tel terrain.
+   *  2. l'arête est déclarée `vehicles: false` : pour Arnhem, RUISSEAU À GUÉ
+   *     ou RIVIÈRE PAR BAC sans route ni piste dessus — un véhicule ne peut
+   *     les franchir, contrairement à l'infanterie et assimilés (cf.
+   *     `terrainCost`, surcoût pour eux) ; il lui faut une route/piste
+   *     (ruisseau) ou un PONT (rivière — jamais un simple bac).
+   *  3. `h` est d'un terrain interdit aux véhicules (`rules.
+   *     impassableForVehicles` — rough/broken/woods pour Arnhem) — sauf s'il
+   *     y entre par une arête déclarée `vehicles: true` (route, piste ou
+   *     pont précis), qui reste toujours praticable même à travers un tel
+   *     terrain.
    *
    *  Exportée (cf. `return` plus bas) pour être réutilisée par
    *  lib/useDebug.js (portée de déplacement en mode debug : un hex/une
    *  arête interdit(e) ne doit pas apparaître comme "traversable", véhicule
    *  ou pas selon le cas, même en passant au travers sans s'y arrêter). */
   function canEnterTerrain(counter, hex, from) {
-    const kind = edgeKind(from, hex)
-    if (kind === 'river') return false
+    const edge = edges.kindOf(edgeKind(from, hex))
+    if (edge?.impassable) return false
     if (!rules.vehicleTypes.has(counter?.type)) return true
-    if (kind === 'stream' || kind === 'ferry') return false
-    if (rules.impassableForVehicles.has(terrain?.grid?.[hexId(hex.c + 1, hex.r)])) return kind != null
+    if (edge?.vehicles === false) return false
+    if (rules.impassableForVehicles.has(terrain?.grid?.[hexId(hex.c + 1, hex.r)])) return edge?.vehicles === true
     return true
   }
 
@@ -1102,15 +1064,13 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
 
   /** Coût de BASE pour ENTRER EN JEU sur `h` (arrivée depuis "hors carte" —
    *  contrairement à `terrainCost`, il n'y a pas de "from", donc pas d'arête
-   *  from->h précise à tester) : celui de la route si `h` touche une route
-   *  par au moins un de ses côtés (cf. `roadTouchedHexes`) ; sinon celui de
-   *  la piste si `h` en touche une (cf. `trailTouchedHexes`) ; sinon le coût
-   *  de terrain normal de `h`. */
+   *  from->h précise à tester) : on demande seulement si `h` est DESSERVI,
+   *  par au moins un de ses côtés, par une arête à coût fixe (cf.
+   *  `edges.entryKind` — pour Arnhem : d'abord une route, sinon une piste),
+   *  et on paie alors ce coût ; sinon le coût de terrain normal de `h`. */
   function entryBaseCost(hex) {
-    const hId = hexId(hex.c + 1, hex.r)
-    if (roadTouchedHexes.has(hId)) return terrain?.types?.road?.mp ?? terrainAreaCost(hex)
-    if (trailTouchedHexes.has(hId)) return terrain?.types?.trail?.mp ?? terrainAreaCost(hex)
-    return terrainAreaCost(hex)
+    const kind = edges.entryKind(hexId(hex.c + 1, hex.r))
+    return kind ? edges.kindOf(kind).mp : terrainAreaCost(hex)
   }
 
   /** Coût RÉEL pour que la PROCHAINE unité entre en jeu sur `h` ce tour-ci :
@@ -1186,5 +1146,5 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   }
 
   return { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, setPhase, setSpentMp, resetTurnState }
+    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, setPhase, setSpentMp, resetTurnState }
 }

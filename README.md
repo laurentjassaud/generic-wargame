@@ -99,7 +99,7 @@ Champs du JSON (cf. `arnhem.json`) :
 | `sides` | Camps jouables → factions (`{"allies": ["commonwealth","us","pol"], "german": ["german"]}`) |
 | `turnTrack` | `turns`, `order` des camps, libellé et marqueur de chaque camp |
 | `supportTrack` | Tablette de soutien : pions par tour (`byTurn`) |
-| `terrain` | `types` (libellé, coût en MP), `grid` (hex → type) et les couches d'arêtes `roads`, `trails`, `rivers`, `streams`, `ferries`, `canalBridges`, `railroadBridges`, `highwayBridges` (`"AAAA-BBBB"`) |
+| `terrain` | `types` (libellé, coût en MP), `grid` (hex → type), les couches d'arêtes (`roads`, `rivers`… : listes `"AAAA-BBBB"`) et `edges`, qui déclare ce que vaut chaque couche : coût fixe ou surcoût, infranchissable, interdite ou ouverte aux véhicules, coupe la ZOC ou l'attaque, et l'ordre de priorité quand plusieurs se superposent (mouvement / combat) — cf. `src/lib/edges.js` |
 | `counters` | Par faction : `id`, `name`, `code`, `type`, `atk`/`def`/`mov` (ou `bar`/`fpf`/`range` pour l'artillerie), `src`, `turn` d'arrivée, `setup` |
 
 `setup` (hex d'entrée) : `"0604"` (cet hex), `"0901-2301"` (plage de bord de
@@ -133,6 +133,7 @@ src/
     ├── useArnhem.js     règles particulières du module Arnhem (patron pour d'autres modules)
     ├── rules.js         paramètres des règles génériques (module.rules) et leurs défauts
     ├── setup.js         notation `setup` des pions (hex, plage, largage)
+    ├── edges.js         nature des hexsides (terrain.edges) : mouvement, ZOC, combat
     ├── useDebug.js      affichages de debug (coûts, portée, congestion)
     ├── units.js         qu'est-ce qu'une unité / un marqueur / un pion de soutien
     ├── hex.js, mapShape.js, calibration.js   géométrie de la grille
@@ -190,8 +191,7 @@ room jamais lancée, 72 h pour une partie lancée).
 
 - « Placement libre » et « Météo » sont proposés grisés : le moteur ne les
   applique pas encore.
-- Plusieurs valeurs propres à Arnhem restent codées dans le moteur
-  (sémantique des couches d'arêtes, structure des phases) : un second module
-  demandera de les déplacer dans le JSON.
+- La structure du tour (phases) reste codée dans le moteur : un second
+  module demandera de la déplacer dans le JSON.
 - Pas de suite de tests automatisée dans le dépôt (les vérifications se font
   par scripts ad hoc et navigateur automatisé).

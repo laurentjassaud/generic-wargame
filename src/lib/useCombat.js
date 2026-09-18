@@ -79,6 +79,9 @@
 //     | null` (cf. useAssisted.js::combatEdgeKind) — nature de l'hexside
 //     franchi par un attaquant, qui peut soit INTERDIRE l'attaque (rivière
 //     sans pont), soit remplacer la ligne de terrain (pont/ruisseau).
+//   - `edgeBlocksAttack` : fonction `(from, h) => bool` (cf.
+//     useAssisted.js::edgeBlocksAttack) — l'hexside interdit-il l'attaque
+//     (rivière sans pont, pour Arnhem) ? Aucune interdiction à défaut.
 //   - `table` : table de combat du module, vérifiée (cf. lib/combatTable.js
 //     ::resolveCombatTable — `module.combat`), ou `null` : pas de table, pas
 //     de combat (la phase Combat se déroule sans combat possible).
@@ -132,7 +135,7 @@ function isAdjacent(positionA, positionB) {
   return neighborsOf(positionA.col, positionA.row).some((neighbor) => neighbor.col === positionB.col && neighbor.row === positionB.row)
 }
 
-export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind, table = null) {
+export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind, table = null, edgeBlocksAttack = () => false) {
   // Hex CIBLES du combat en cours, dans l'ordre où ils ont été désignés —
   // chacun `{ col, row }`. On mémorise des HEX et non des pions : c'est l'hex
   // qu'on attaque, et TOUTES les unités ennemies qui s'y trouvent défendent
@@ -246,7 +249,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   function canReachHex(counter, targetHex) {
     if (!isFighter(counter) || !canControl(counter)) return false
     if (!isAdjacent(counter, targetHex)) return false
-    return combatEdgeKind({ c: counter.col, r: counter.row }, { c: targetHex.col, r: targetHex.row }) !== 'river'
+    return !edgeBlocksAttack({ c: counter.col, r: counter.row }, { c: targetHex.col, r: targetHex.row })
   }
 
   /** L'unité `c` peut-elle attaquer TOUS les hex de `list` à la fois ?

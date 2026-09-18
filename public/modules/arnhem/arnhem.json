@@ -1468,6 +1468,28 @@
     "advanceAfterCombat": true
   },
   "terrain": {
+    "edges": {
+      "layers": {
+        "roads": "road",
+        "trails": "trail",
+        "canalBridges": "bridge",
+        "railroadBridges": "bridge",
+        "highwayBridges": "bridge",
+        "ferries": "ferry",
+        "rivers": "river",
+        "streams": "stream"
+      },
+      "kinds": {
+        "road": { "mp": 0.5, "vehicles": true },
+        "trail": { "mp": 1, "vehicles": true },
+        "bridge": { "vehicles": true },
+        "ferry": { "extraMp": 3, "vehicles": false },
+        "river": { "impassable": true, "blocksZoc": true, "blocksAttack": true },
+        "stream": { "extraMp": 3, "vehicles": false }
+      },
+      "movementPriority": ["road", "trail", "bridge", "ferry", "river", "stream"],
+      "combatPriority": ["bridge", "river", "road", "trail", "stream"]
+    },
     "types": {
       "mixed": {
         "label": "Mixed",
@@ -1491,14 +1513,6 @@
       },
       "town": {
         "label": "Town",
-        "mp": 1
-      },
-      "road": {
-        "label": "Road",
-        "mp": 0.5
-      },
-      "trail": {
-        "label": "Trail",
         "mp": 1
       }
     },
