@@ -1,4 +1,4 @@
-import { RoomError, getGame, joinGame, recordMove, advanceTurn, recordPhase, recordGameOver, appendJournal, removeJournal, recordDeployment, isPlayersTurn, mayLog, setPlayerConnectionBySocket, toPublic } from './rooms.js'
+import { RoomError, getGame, joinGame, recordMove, advanceTurn, recordPhase, recordGameOver, appendJournal, removeJournal, recordDeployment, isPlayersTurn, mayLog, setPlayerConnectionBySocket, toPublic, recordFpfRequest, recordFpfReply, cancelFpfRequest } from './rooms.js'
 
 export function registerSocketHandlers(io) {
   io.on('connection', (socket) => {
@@ -125,6 +125,41 @@ export function registerSocketHandlers(io) {
         ack?.({ ok: true, entries: recorded.entries })
       } catch {
         ack?.({ ok: false })
+      }
+    })
+
+    // --- FPF en ligne (cf. rooms.js, section FPF) : le joueur actif soumet
+    // son combat, le DÉFENSEUR (qui n'a pas la main) répond, chacun relayé
+    // aux autres joueurs.
+    socket.on('game:fpf-request', ({ gameId, request } = {}) => {
+      if (!hasTurn(gameId)) return
+      try {
+        const recorded = recordFpfRequest(gameId, request)
+        socket.to(`game:${gameId}`).emit('game:fpf-request', { request: recorded })
+      } catch {
+        // Partie pas lancée ou demande invalide : on ignore.
+      }
+    })
+
+    socket.on('game:fpf-reply', ({ gameId, requestId, fpfIds } = {}) => {
+      // Réservé à un joueur de la partie qui n'a PAS la main : le défenseur.
+      if (socket.data.gameId !== gameId) return
+      const game = getGame(gameId)
+      if (!game || isPlayersTurn(game, socket.data.playerId)) return
+      try {
+        const reply = recordFpfReply(gameId, { requestId, fpfIds })
+        socket.to(`game:${gameId}`).emit('game:fpf-reply', reply)
+      } catch {
+        // Plus de demande en attente (annulée, déjà répondue) : on ignore.
+      }
+    })
+
+    socket.on('game:fpf-cancel', ({ gameId, requestId } = {}) => {
+      if (!hasTurn(gameId)) return
+      try {
+        if (cancelFpfRequest(gameId, requestId)) socket.to(`game:${gameId}`).emit('game:fpf-cancel', { id: requestId })
+      } catch {
+        // Partie pas lancée : on ignore.
       }
     })
 

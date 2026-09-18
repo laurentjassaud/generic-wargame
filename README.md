@@ -82,6 +82,13 @@ fois), `/room/:id` la rejoint (pseudo, camp, code). La partie démarre quand
 tous les sièges sont pris. Le serveur reçoit l'ordre des camps à la création
 et **refuse tout coup du joueur qui n'a pas la main** ; l'interface bloque de
 même les actions hors tour. La liste des joueurs indique qui est en ligne.
+Seule exception : le **FPF** de l'artillerie, choisi par le défenseur. Quand
+un combat peut en recevoir un, l'attaquant le soumet d'abord au défenseur
+(`game:fpf-request`). Celui-ci choisit ses artilleries sur son écran et
+répond (`game:fpf-reply`), puis l'attaquant lance le dé. L'attaquant peut
+renoncer tant que la réponse n'est pas arrivée (`game:fpf-cancel`). Le
+serveur garde la négociation en cours (`fpfRequest`) pour qu'une page
+rechargée la retrouve.
 
 ## Anatomie d'un module
 

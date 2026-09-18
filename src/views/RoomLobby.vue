@@ -116,6 +116,17 @@ function attachSocketListeners() {
   socket.on('game:unlog', ({ uid }) => {
     hexMapRef.value?.removeRemoteEntry(uid)
   })
+  // FPF en ligne (cf. HexMap.vue, section "FPF en ligne") : combat soumis au
+  // défenseur, sa réponse, ou l'abandon de la demande.
+  socket.on('game:fpf-request', ({ request }) => {
+    hexMapRef.value?.applyRemoteFpfRequest(request)
+  })
+  socket.on('game:fpf-reply', ({ id, fpfIds }) => {
+    hexMapRef.value?.applyRemoteFpfReply(id, fpfIds)
+  })
+  socket.on('game:fpf-cancel', ({ id }) => {
+    hexMapRef.value?.applyRemoteFpfCancel(id)
+  })
   socket.on('connect', () => {
     // Reconnexion (auto par socket.io après coupure réseau) : on rejoint à
     // nouveau avec les mêmes identifiants pour que le serveur nous remarque
@@ -174,6 +185,20 @@ function onLocalUnlog(uid) {
   getSocket().emit('game:unlog', { gameId: props.id, uid })
 }
 
+// FPF en ligne : le joueur actif soumet son combat au défenseur, ou y
+// renonce ; le défenseur répond (cf. HexMap.vue, section "FPF en ligne").
+function onFpfRequest(request) {
+  getSocket().emit('game:fpf-request', { gameId: props.id, request })
+}
+
+function onFpfCancel(requestId) {
+  getSocket().emit('game:fpf-cancel', { gameId: props.id, requestId })
+}
+
+function onFpfReply({ requestId, fpfIds }) {
+  getSocket().emit('game:fpf-reply', { gameId: props.id, requestId, fpfIds })
+}
+
 // Déploiement initial (et tour de départ) proposés par le plateau : ceux que
 // le serveur retient (les premiers proposés par l'un des joueurs) sont
 // appliqués ici.
@@ -214,6 +239,9 @@ onUnmounted(() => {
   socket.off('game:over')
   socket.off('game:log')
   socket.off('game:unlog')
+  socket.off('game:fpf-request')
+  socket.off('game:fpf-reply')
+  socket.off('game:fpf-cancel')
   socket.off('connect')
 })
 </script>
@@ -289,6 +317,7 @@ onUnmounted(() => {
       :initial-phase-elapsed-ms="room.phaseElapsedMs ?? 0"
       :initial-blitz-used-ms="room.blitzUsedMs ?? {}"
       :initial-blitz-loser="room.blitzLoser ?? null"
+      :initial-fpf-request="room.fpfRequest ?? null"
       :local-side="mySide"
       online
       :initial-journal="sharedJournal"
@@ -302,6 +331,9 @@ onUnmounted(() => {
       @unlog="onLocalUnlog"
       @deploy="onDeploy"
       @restart-with="onRestartWith"
+      @fpf-request="onFpfRequest"
+      @fpf-cancel="onFpfCancel"
+      @fpf-reply="onFpfReply"
     />
   </div>
 </template>

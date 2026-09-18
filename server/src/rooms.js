@@ -120,6 +120,11 @@ export function createGame({ moduleId, scenarioId, variants, settings, maxPlayer
     // qui (re)joint la partie, pour qu'il la reconstitue.
     journal: [],
     journalBytes: 0, // taille JSON cumulée de `journal` (cf. MAX_JOURNAL_BYTES)
+    // Combat soumis au défenseur pour son FPF ("final protective fire", cf.
+    // `recordFpfRequest`) — `{ id, targets, attackerIds, fpfIds }`, `fpfIds`
+    // à `null` tant qu'il n'a pas répondu — ou `null`. Conservé pour qu'un
+    // joueur qui recharge la page retrouve la négociation en cours.
+    fpfRequest: null,
   }
   games.set(id, game)
   return game
@@ -162,6 +167,7 @@ export function toPublic(game) {
     phaseElapsedMs: Date.now() - game.phaseSince,
     blitzUsedMs: game.blitzUsedMs,
     blitzLoser: game.blitzLoser,
+    fpfRequest: game.fpfRequest,
   }
 }
 
@@ -274,6 +280,7 @@ export function advanceTurn(id) {
   game.turnStep += 1
   game.phase = null
   game.phaseSince = Date.now()
+  game.fpfRequest = null
   touch(game)
   return game
 }
@@ -290,6 +297,7 @@ export function recordPhase(id, { phase, step, blitzUsed }) {
   if (step !== game.turnStep) throw new RoomError('stale-step')
   game.phase = phase
   game.phaseSince = Date.now()
+  game.fpfRequest = null
   const cleanBlitz = sanitizeBlitz(blitzUsed)
   if (cleanBlitz) game.blitzUsedMs = cleanBlitz
   touch(game)
@@ -335,7 +343,75 @@ export function appendJournal(id, entry) {
   if (!clean) throw new RoomError('bad-entry')
   if (game.journal.some((existing) => existing.uid === clean.uid)) return null
   pushJournal(game, [clean])
+  // Combat joué : la négociation de son FPF est close (cf. recordFpfRequest).
+  if (clean.kind === 'combat') game.fpfRequest = null
   return clean
+}
+
+// --- FPF en ligne ---------------------------------------------------------------
+// Le FPF ("final protective fire", cf. src/lib/useArtillery.js) est choisi
+// par le DÉFENSEUR, qui n'a pas la main : le joueur actif lui SOUMET son
+// combat (`recordFpfRequest`), le défenseur RÉPOND (`recordFpfReply`), puis le
+// joueur actif lance le dé. Le serveur ne fait que relayer et garder la
+// négociation en cours (cf. `game.fpfRequest`) — il ne connaît pas les
+// règles : c'est le client de l'attaquant qui ne retient, dans la réponse,
+// que les artilleries éligibles.
+
+const MAX_FPF_IDS = 32
+
+/** Liste d'ids de pions reçue d'un client : chaînes/nombres courts, au plus
+ *  `MAX_FPF_IDS`. `null` si invalide. */
+function sanitizeIds(ids) {
+  if (!Array.isArray(ids) || ids.length > MAX_FPF_IDS) return null
+  const ok = ids.every((id) => (typeof id === 'string' || typeof id === 'number') && String(id).length <= 64)
+  return ok ? ids.map((id) => (typeof id === 'number' ? id : String(id))) : null
+}
+
+/** Le joueur actif soumet son combat au défenseur. `request` : `{ id,
+ *  targets: [{ col, row }], attackerIds }`. Renvoie la demande assainie
+ *  (celle qui est relayée). */
+export function recordFpfRequest(id, request) {
+  const game = startedGame(id)
+  if (game.blitzLoser) throw new RoomError('game-over')
+  const requestId = request?.id
+  const targets = Array.isArray(request?.targets) ? request.targets : null
+  const attackerIds = sanitizeIds(request?.attackerIds)
+  const validTargets = targets && targets.length >= 1 && targets.length <= 6 && targets.every((target) =>
+    Number.isInteger(target?.col) && Number.isInteger(target?.row) && target.col >= 0 && target.row >= 0 && target.col < 1000 && target.row < 1000)
+  if (typeof requestId !== 'string' || !requestId || requestId.length > 64 || !validTargets || !attackerIds?.length) {
+    throw new RoomError('bad-fpf')
+  }
+  game.fpfRequest = {
+    id: requestId,
+    targets: targets.map((target) => ({ col: target.col, row: target.row })),
+    attackerIds,
+    fpfIds: null,
+  }
+  touch(game)
+  return game.fpfRequest
+}
+
+/** Le défenseur répond à la demande `requestId` avec ses artilleries
+ *  `fpfIds`. Refusé s'il n'y a pas (ou plus) de demande en attente sous cet
+ *  id. Renvoie `{ id, fpfIds }`, relayé au joueur actif. */
+export function recordFpfReply(id, { requestId, fpfIds }) {
+  const game = startedGame(id)
+  const pending = game.fpfRequest
+  const ids = sanitizeIds(fpfIds)
+  if (!pending || pending.id !== requestId || pending.fpfIds || !ids) throw new RoomError('bad-fpf')
+  pending.fpfIds = ids
+  touch(game)
+  return { id: requestId, fpfIds: ids }
+}
+
+/** Le joueur actif renonce à la demande `requestId` (pas encore de réponse).
+ *  `true` si elle a été retirée. */
+export function cancelFpfRequest(id, requestId) {
+  const game = startedGame(id)
+  if (!game.fpfRequest || game.fpfRequest.id !== requestId || game.fpfRequest.fpfIds) return false
+  game.fpfRequest = null
+  touch(game)
+  return true
 }
 
 /** Retire une entrée du journal partagé (retour arrière). `true` si retirée. */

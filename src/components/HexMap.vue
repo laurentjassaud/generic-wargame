@@ -70,6 +70,10 @@ const props = defineProps({
   // Timing "Blitz" : camp ayant déjà perdu au temps (partie en ligne
   // terminée, cf. server/src/rooms.js::recordGameOver), ou `null`.
   initialBlitzLoser: { type: String, default: null },
+  // Combat soumis au défenseur pour son FPF, en attente ou déjà répondu
+  // (partie en ligne reprise en route, cf. server/src/rooms.js::
+  // recordFpfRequest) — `{ id, targets, attackerIds, fpfIds }`, ou `null`.
+  initialFpfRequest: { type: Object, default: null },
   // Camp du joueur sur ce navigateur (multijoueur, cf. RoomLobby.vue) :
   // l'alerte "Temps imparti terminé" n'est montrée qu'au joueur actif.
   // Vide en solo/démo (un seul navigateur pour tous les camps).
@@ -109,7 +113,12 @@ const props = defineProps({
 // `restart-with` : `{ settings, entries, message }` — un journal à reprendre
 // a été joué avec d'autres réglages : la page doit relancer la partie avec
 // eux (cf. DemoPlay.vue, JournalPanel.vue::startReplay).
-const emit = defineEmits(['move', 'turn', 'phase', 'game-over', 'log', 'unlog', 'deploy', 'restart-with'])
+// FPF en ligne (cf. section "FPF en ligne") : `fpf-request` — `{ id, targets,
+// attackerIds }`, combat soumis au défenseur ; `fpf-cancel` — id de la
+// demande abandonnée ; `fpf-reply` — `{ requestId, fpfIds }`, choix du
+// défenseur.
+const emit = defineEmits(['move', 'turn', 'phase', 'game-over', 'log', 'unlog', 'deploy', 'restart-with',
+  'fpf-request', 'fpf-cancel', 'fpf-reply'])
 
 const map = computed(() => props.module.map)
 
@@ -713,10 +722,14 @@ const fpfView = computed(() => {
     strength: fpfStrength.value,
   }
   if (combatResult.value) return units.length ? { ...view, mode: 'done' } : null
+  // Négociation en ligne en cours (cf. section "FPF en ligne").
+  if (fpfStatus.value === 'defending') return { ...view, mode: 'defender' }
+  if (fpfStatus.value === 'waiting') return { ...view, mode: 'waiting' }
+  if (fpfStatus.value === 'answered') return { ...view, mode: 'answered' }
   if (fpfCandidates.value.length === 0) return null
-  // En ligne, le défenseur choisit sur son propre écran : pas encore géré.
-  if (props.online) return null
-  return { ...view, mode: 'local' }
+  // En ligne, le défenseur choisit sur son propre écran : l'attaquant doit
+  // d'abord lui soumettre le combat.
+  return { ...view, mode: props.online ? 'request' : 'local' }
 })
 
 /** Les artilleries éligibles au FPF se choisissent-elles sur CET écran ? */
@@ -730,6 +743,96 @@ const isFpfCandidateHex = (hex) => fpfChoosable.value
 /** Modale : le défenseur coche/décoche l'artillerie `id` pour son FPF. */
 function onToggleFpf(id) {
   toggleFpf(counters.value.find((counter) => String(counter.id) === String(id)))
+}
+
+// --- FPF en ligne ------------------------------------------------------------
+// Le défenseur joue sur un autre navigateur et n'a pas la main (cf.
+// `inputLocked`) : l'attaquant lui SOUMET son combat (`onRequestFpf`), son
+// écran l'affiche (`applyRemoteFpfRequest`), il choisit et valide
+// (`onSendFpf`), l'attaquant reçoit ce choix (`applyRemoteFpfReply`) et lance
+// le dé. Les messages passent par RoomLobby.vue et le serveur (cf.
+// server/src/rooms.js, section FPF), qui garde la négociation en cours pour
+// un joueur qui recharge sa page (cf. `restoreFpfRequest`). La règle —
+// quelles artilleries sont éligibles, composition figée pendant l'attente —
+// vit dans lib/useCombat.js (`requestFpf`, `answerFpf`, `openDefense`).
+
+// Attaquant : id de la demande en cours. Défenseur : id de la demande affichée.
+let fpfRequestId = null
+let defendingRequestId = null
+
+/** Camp (clé de `module.sides`) de l'unité `counter` — sa faction à défaut
+ *  de `sides` (même repli que RoomLobby.vue). */
+function sideOfCounter(counter) {
+  const sides = props.module.sides
+  if (!counter) return null
+  if (!sides) return counter.faction ?? null
+  return Object.keys(sides).find((side) => sides[side]?.includes(counter.faction)) ?? null
+}
+
+/** Attaquant : soumet le combat composé au défenseur. */
+function onRequestFpf() {
+  const payload = requestFpf()
+  if (!payload) return
+  fpfRequestId = newUid()
+  emit('fpf-request', { id: fpfRequestId, ...payload })
+}
+
+/** Attaquant : renonce à la demande (réponse pas encore reçue). */
+function onCancelFpfRequest() {
+  if (cancelFpfRequest()) emit('fpf-cancel', fpfRequestId)
+}
+
+/** Croix de la modale : ferme le combat — en renonçant d'abord à une demande
+ *  de FPF en attente (la croix est grisée une fois la réponse reçue). */
+function onCombatClose() {
+  if (fpfStatus.value === 'waiting') emit('fpf-cancel', fpfRequestId)
+  cancelCombat()
+}
+
+/** Défenseur : valide son choix de FPF (éventuellement aucun). */
+function onSendFpf() {
+  if (defendingRequestId == null) return
+  emit('fpf-reply', { requestId: defendingRequestId, fpfIds: chosenFpfIds() })
+  defendingRequestId = null
+  cancelCombat()
+}
+
+/** Combat soumis par l'attaquant (cf. RoomLobby.vue, `game:fpf-request`) :
+ *  affiché sur l'écran du DÉFENSEUR seulement — le camp des unités attaquées. */
+function applyRemoteFpfRequest(request) {
+  if (!props.online || !request) return
+  if (!openDefense(request)) return
+  if (!combatDefenders.value.some((defender) => sideOfCounter(defender) === props.localSide)) {
+    cancelCombat()
+    return
+  }
+  defendingRequestId = request.id
+}
+
+/** Réponse du défenseur (cf. RoomLobby.vue, `game:fpf-reply`). */
+function applyRemoteFpfReply(id, fpfIds) {
+  if (id !== fpfRequestId) return
+  answerFpf(fpfIds)
+}
+
+/** Demande abandonnée par l'attaquant (cf. RoomLobby.vue, `game:fpf-cancel`). */
+function applyRemoteFpfCancel(id) {
+  if (fpfStatus.value !== 'defending' || id !== defendingRequestId) return
+  defendingRequestId = null
+  cancelCombat()
+}
+
+/** Page (re)chargée en pleine négociation (cf. `applyServerState`) :
+ *  l'attaquant retrouve son combat soumis — en attente ou répondu —, le
+ *  défenseur retrouve le combat auquel il n'a pas encore répondu. */
+function restoreFpfRequest(request) {
+  if (!props.online || !request?.attackerIds?.length || combatActive.value) return
+  const firstAttacker = counters.value.find((counter) => String(counter.id) === String(request.attackerIds[0]))
+  if (sideOfCounter(firstAttacker) === props.localSide) {
+    if (openDefense(request, request.fpfIds ? 'answered' : 'waiting', request.fpfIds ?? [])) fpfRequestId = request.id
+  } else if (!request.fpfIds) {
+    applyRemoteFpfRequest(request)
+  }
 }
 
 /** Total de MP déjà dépensés par `c` pendant ce tour-ci (cf.
@@ -768,8 +871,9 @@ function onPhaseNext() {
   // bouton est déjà désactivé dans ces cas, cf. `inputLocked`).
   if (inputLocked.value) return
   // Retraite en cours (cf. lib/useRetreat.js) : elle doit être terminée
-  // avant de pouvoir changer de phase.
-  if (retreatActive.value) return
+  // avant de pouvoir changer de phase. De même, en ligne, un combat dont le
+  // défenseur a déjà choisi son FPF est engagé : il doit être joué.
+  if (retreatActive.value || fpfStatus.value === 'answered') return
   if (phase.value === 0 && stackedHexes.value.length > 0) {
     showPhaseBlocked.value = true
     return
@@ -843,7 +947,7 @@ onMounted(() => {
   // sans effet, hormis le démarrage des pendules.
   applyServerState({
     turnStep: props.initialTurnStep, phase: props.initialPhase, phaseElapsedMs: props.initialPhaseElapsedMs,
-    blitzUsedMs: props.initialBlitzUsedMs, blitzLoser: props.initialBlitzLoser,
+    blitzUsedMs: props.initialBlitzUsedMs, blitzLoser: props.initialBlitzLoser, fpfRequest: props.initialFpfRequest,
   })
   // Partie relancée avec les réglages d'une sauvegarde (cf. DemoPlay.vue) :
   // on rejoue maintenant le journal mis de côté — APRÈS `initPhase`, que le
@@ -1642,7 +1746,7 @@ function removeRemoteEntry(uid) {
 /** Aligne pas courant, phase, pendules et fin de partie sur l'état du
  *  serveur (`toPublic`, cf. server/src/rooms.js) — au montage (props) comme
  *  après une reconnexion (cf. resyncFromServer). */
-function applyServerState({ turnStep, phase: serverPhase, phaseElapsedMs, blitzUsedMs: serverBlitz, blitzLoser: serverLoser }) {
+function applyServerState({ turnStep, phase: serverPhase, phaseElapsedMs, blitzUsedMs: serverBlitz, blitzLoser: serverLoser, fpfRequest }) {
   if (turnTrackerRef.value && turnStep != null && turnTrackerRef.value.currentStep !== turnStep) applyRemoteTurn(turnStep)
   // Phase déjà atteinte par le joueur actif (cf. server/src/rooms.js::
   // recordPhase) — `null` : phase de départ du camp, déjà recalculée.
@@ -1653,6 +1757,8 @@ function applyServerState({ turnStep, phase: serverPhase, phaseElapsedMs, blitzU
   syncMoveTimer(phaseElapsedMs ?? 0)
   blitzUsedMs.value = { ...(serverBlitz ?? {}) }
   if (serverLoser) declareBlitzLoss(serverLoser, { remote: true })
+  // Négociation de FPF en cours (cf. section "FPF en ligne").
+  restoreFpfRequest(fpfRequest)
 }
 
 /** En ligne, après une RECONNEXION : le serveur fait foi. Le journal partagé
@@ -1668,7 +1774,8 @@ function resyncFromServer(list, room) {
   applyServerState(room ?? {})
 }
 
-defineExpose({ applyRemoteMove, applyRemoteTurn, applyRemotePhase, applyRemoteGameOver, applyRemoteEntry, removeRemoteEntry, resyncFromServer })
+defineExpose({ applyRemoteMove, applyRemoteTurn, applyRemotePhase, applyRemoteGameOver, applyRemoteEntry, removeRemoteEntry, resyncFromServer,
+  applyRemoteFpfRequest, applyRemoteFpfReply, applyRemoteFpfCancel })
 
 /** Reçoit le journal chargé (cf. JournalPanel.vue, évènement `loaded`) en
  *  ordre chronologique et remet la carte au déploiement initial pour
@@ -2200,8 +2307,9 @@ function onMapDragEnd() {
       :attack-strength="attackStrength" :defense-strength="defenseStrength" :differential="differential"
       :terrain-row="combatTerrainRow" :column="combatColumn" :combat-result="combatResult"
       :crt-rows="crtRows" :crt-results="crtResults" :retreat="retreatInfo" :retreat-notes="retreatNotes"
-      :advance="advanceInfo" @close="cancelCombat" @fight="onCombatFight" @end-advance="endAdvance"
-      @reduce-retreat="reduceRetreat" @cancel-push="cancelPush" :fpf="fpfView" @toggle-fpf="onToggleFpf" />
+      :advance="advanceInfo" @close="onCombatClose" @fight="onCombatFight" @end-advance="endAdvance"
+      @reduce-retreat="reduceRetreat" @cancel-push="cancelPush" :fpf="fpfView" @toggle-fpf="onToggleFpf"
+      @request-fpf="onRequestFpf" @cancel-fpf-request="onCancelFpfRequest" @send-fpf="onSendFpf" />
 
     <!-- cf. onPhaseNext — changement de phase refusé : unités empilées en fin
          de Mouvement (cf. lib/useAssisted.js::stackedHexes) ou combats
