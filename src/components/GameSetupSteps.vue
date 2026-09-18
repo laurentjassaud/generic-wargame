@@ -1,6 +1,6 @@
 <script setup>
 import { ref, watch, onMounted } from 'vue'
-import { SCENARIO_OPTIONS, PARTY_OPTIONS, TIMING_OPTIONS, TIMING_HINTS, timingNeedsValue } from '../lib/gameSettings.js'
+import { SCENARIO_OPTIONS, PARTY_OPTIONS, TIMING_OPTIONS, TIMING_HINTS, TIMING_LOCKED_HINT, WEATHER_AVAILABLE, timingNeedsValue, timingAllowed } from '../lib/gameSettings.js'
 
 // Étapes 1 à 4 de la création d'une partie, communes au local
 // (LocalGameSetup.vue) et à l'en ligne (CreateGame.vue) : module, scénario,
@@ -30,6 +30,13 @@ watch(scenario, (val) => {
 // change de timing pour éviter de renvoyer une ancienne valeur incohérente.
 watch(timing, () => {
   timingValue.value = null
+})
+
+// Le chronomètre n'existe qu'en partie Assistée (cf. gameSettings.js::
+// timingAllowed) : repasser en Libre remet le timing à "Libre", les autres
+// choix étant grisés (cf. template).
+watch(party, (val) => {
+  if (!timingAllowed(val)) timing.value = 'libre'
 })
 
 watch([scenario, weather, party, timing, timingValue], () => {
@@ -76,8 +83,10 @@ function chooseModule(mod) {
     <h2>2. Choisir le scénario</h2>
     <ul class="choice-list">
       <li v-for="opt in SCENARIO_OPTIONS" :key="opt.id">
-        <button type="button" :class="{ selected: scenario === opt.id }" @click="scenario = opt.id">
+        <button type="button" :class="{ selected: scenario === opt.id }" :disabled="opt.available === false"
+          @click="scenario = opt.id">
           {{ opt.label }}
+          <span v-if="opt.available === false" class="badge">Bientôt disponible</span>
         </button>
       </li>
     </ul>
@@ -85,11 +94,13 @@ function chooseModule(mod) {
 
   <section v-else-if="step === 3">
     <h2>3. Options</h2>
-    <label class="checkbox-choice" :class="{ disabled: scenario === 'placement-libre' }">
-      <input type="checkbox" v-model="weather" :disabled="scenario === 'placement-libre'" />
+    <label class="checkbox-choice" :class="{ disabled: !WEATHER_AVAILABLE || scenario === 'placement-libre' }">
+      <input type="checkbox" v-model="weather" :disabled="!WEATHER_AVAILABLE || scenario === 'placement-libre'" />
       Météo
+      <span v-if="!WEATHER_AVAILABLE" class="badge">Bientôt disponible</span>
     </label>
-    <p v-if="scenario === 'placement-libre'" class="hint">Obligatoire pour le placement libre.</p>
+    <p v-if="!WEATHER_AVAILABLE" class="hint">Les règles de météo ne sont pas encore appliquées par le moteur.</p>
+    <p v-else-if="scenario === 'placement-libre'" class="hint">Obligatoire pour le placement libre.</p>
   </section>
 
   <section v-else-if="step === 4">
@@ -108,12 +119,13 @@ function chooseModule(mod) {
     <h3>Timing</h3>
     <ul class="choice-list">
       <li v-for="opt in TIMING_OPTIONS" :key="opt.id">
-        <label class="checkbox-choice">
-          <input type="radio" name="timing" :value="opt.id" v-model="timing" />
+        <label class="checkbox-choice" :class="{ disabled: opt.id !== 'libre' && !timingAllowed(party) }">
+          <input type="radio" name="timing" :value="opt.id" v-model="timing" :disabled="opt.id !== 'libre' && !timingAllowed(party)" />
           {{ opt.label }}
         </label>
       </li>
     </ul>
+    <p v-if="!timingAllowed(party)" class="hint">{{ TIMING_LOCKED_HINT }}</p>
     <div v-if="timingNeedsValue(timing)" class="timing-value">
       <label>
         {{ timing === 'limite' ? 'Durée de la phase de mouvement (minutes)' : 'Temps total de mouvement par joueur (minutes)' }}

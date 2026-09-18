@@ -15,6 +15,8 @@
 // JournalPanel.vue::resumePending).
 
 /** Clé de l'auto-save (un seul emplacement, écrasé à chaque mutation). */
+import { resolveSettings, RULE_SETTING_KEYS } from './gameSettings.js'
+
 export const AUTOSAVE_KEY = 'generic-wargame:journal-autosave'
 
 const PENDING_KEY = 'generic-wargame:pending-replay'
@@ -29,13 +31,21 @@ export function normalizeSettings(settings) {
   return Object.fromEntries(SETTING_KEYS.map((settingKey) => [settingKey, settings[settingKey] == null ? '' : String(settings[settingKey])]))
 }
 
-/** Les réglages `a` et `b` sont-ils identiques ? Si l'un des deux est
- *  inconnu (sauvegarde antérieure à cet ajout, partie multijoueur sans
- *  réglages), on ne peut pas comparer : considérés compatibles. */
+/** Les réglages `a` et `b` donnent-ils la MÊME partie ? Comparés une fois
+ *  RÉSOLUS (cf. lib/gameSettings.js::resolveSettings — une option indisponible
+ *  ou un chronomètre en partie Libre y sont neutralisés) et seulement sur les
+ *  clés qui changent les règles (`RULE_SETTING_KEYS`) : une sauvegarde qui
+ *  ne diffère que par un réglage sans effet se reprend directement, sans
+ *  relancer la partie. Comparer les valeurs brutes relançait la partie pour
+ *  rien — et, la relance se résolvant aux mêmes réglages, la carte n'était
+ *  pas remontée et le journal mis de côté restait en attente sans être
+ *  rejoué. Si l'un des deux est inconnu (sauvegarde antérieure à cet ajout,
+ *  partie multijoueur sans réglages), on ne peut pas comparer : considérés
+ *  compatibles. */
 export function sameSettings(settingsA, settingsB) {
-  const na = normalizeSettings(settingsA), nb = normalizeSettings(settingsB)
-  if (!na || !nb) return true
-  return SETTING_KEYS.every((settingKey) => na[settingKey] === nb[settingKey])
+  if (!settingsA || !settingsB) return true
+  const ra = resolveSettings(settingsA), rb = resolveSettings(settingsB)
+  return RULE_SETTING_KEYS.every((settingKey) => ra[settingKey] === rb[settingKey])
 }
 
 /** Met de côté un journal à rejouer après la relance de la partie. */

@@ -98,7 +98,8 @@ const props = defineProps({
 // En ligne uniquement (journal partagé, cf. `log`) :
 //  - `log` : `{ uid, t, kind, text, data }` — entrée ajoutée localement ;
 //  - `unlog` : uid d'une entrée retirée (retour arrière) ;
-//  - `deploy` : entrée `setup` proposée au lancement (cf. onMounted).
+//  - `deploy` : `{ setup, turn }` — entrées `setup` et `turn` de départ
+//    proposées au lancement (cf. startSharedJournal).
 // `restart-with` : `{ settings, entries, message }` — un journal à reprendre
 // a été joué avec d'autres réglages : la page doit relancer la partie avec
 // eux (cf. DemoPlay.vue, JournalPanel.vue::startReplay).
@@ -143,7 +144,25 @@ function logDeploymentOnce() {
   if (deploymentLogged || isReplaying.value || !journalRef.value) return
   deploymentLogged = true
   journalRef.value.log('setup', 'Déploiement initial', { positions: initialDeployment })
+  // Puis le tour de départ (cf. `initialTurnEntry`) : TurnTracker.vue
+  // l'annonce (évènement `change`) pendant son propre montage, AVANT que le
+  // journal ne soit monté — onTurnChange ne peut donc pas l'inscrire, on le
+  // rattrape ici, juste après le déploiement et avant le premier évènement.
+  if (initialTurnEntry) journalRef.value.log(initialTurnEntry.kind, initialTurnEntry.text, initialTurnEntry.data)
 }
+
+/** Entrée de journal d'un changement de tour (cf. onTurnChange) — factorisée
+ *  pour l'entrée du tour de DÉPART de la partie (cf. `initialTurnEntry`). */
+function turnEntryOf(info) {
+  const label = props.module.turnTrack?.sides?.[info.activeSideKey]?.label ?? info.activeSideKey
+  return { kind: 'turn', text: `Tour ${info.turn} — ${label}`, data: { step: info.step } }
+}
+// Tour en cours au lancement de la partie, figé au montage (cf. onMounted —
+// `turnInfo` est alors déjà renseigné par TurnTracker.vue), pour être inscrit
+// au journal avec le déploiement (en local, cf. logDeploymentOnce) ou
+// partagé avec lui (en ligne, cf. startSharedJournal). `null` sans piste de
+// tour.
+let initialTurnEntry = null
 
 // --- Retour arrière : annule le dernier déplacement d'un pion déjà posé sur
 // la carte (onHex / onCounterDragEnd ci-dessous) et efface son entrée de
@@ -362,11 +381,16 @@ function onTurnChange(info) {
   // chargé, la rejouer ne doit que faire bouger la carte, pas dupliquer le
   // journal.
   if (isReplaying.value) return
+  // Le tour de DÉPART n'est jamais inscrit ici mais avec le déploiement (cf.
+  // `initialTurnEntry`) : au montage, le journal n'existe pas encore, et
+  // l'inscrire plus tard déclencherait l'auto-save qui écraserait la
+  // sauvegarde proposée en reprise (cf. logDeploymentOnce).
+  if (info.step === props.initialTurnStep) return
   // En ligne, seul le navigateur qui a fait avancer le tour l'inscrit au
   // journal partagé ; les autres le reçoivent (cf. applyRemoteEntry).
   if (props.online && info.step !== localTurnStep) return
-  const label = props.module.turnTrack?.sides?.[info.activeSideKey]?.label ?? info.activeSideKey
-  log('turn', `Tour ${info.turn} — ${label}`, { step: info.step })
+  const entry = turnEntryOf(info)
+  log(entry.kind, entry.text, entry.data)
 }
 // Dernier pas atteint par une avance LOCALE (cf. onTurnChange, en ligne).
 let localTurnStep = null
@@ -721,6 +745,7 @@ watch(phase, (newPhase) => {
 // actif, tour courant) doit déjà être monté.
 onMounted(() => {
   initPhase()
+  if (props.module.turnTrack) initialTurnEntry = turnEntryOf(turnInfo.value)
   if (props.online) startSharedJournal()
   // Partie en ligne reprise en route : phase déjà atteinte par le joueur
   // actif (cf. server/src/rooms.js::recordPhase)...
@@ -757,9 +782,12 @@ function startSharedJournal() {
       applyRemoteTurn(props.initialTurnStep)
     }
   } else {
+    // Déploiement ET tour de départ (cf. `initialTurnEntry`), retenus ou
+    // rejetés ensemble par le serveur (premier arrivé).
+    const t = new Date().toLocaleTimeString('fr-FR')
     emit('deploy', {
-      uid: newUid(), t: new Date().toLocaleTimeString('fr-FR'), kind: 'setup', text: 'Déploiement initial',
-      data: { positions: initialDeployment },
+      setup: { uid: newUid(), t, kind: 'setup', text: 'Déploiement initial', data: { positions: initialDeployment } },
+      turn: initialTurnEntry ? { uid: newUid(), t, ...initialTurnEntry } : null,
     })
   }
 }

@@ -170,11 +170,12 @@ function onLocalUnlog(uid) {
   getSocket().emit('game:unlog', { gameId: props.id, uid })
 }
 
-// Déploiement initial proposé par le plateau : celui que le serveur retient
-// (le premier proposé par l'un des joueurs) est appliqué ici.
-function onDeploy(entry) {
-  getSocket().emit('game:deploy', { gameId: props.id, entry }, (ack) => {
-    if (ack?.entry) hexMapRef.value?.applyRemoteEntry(ack.entry)
+// Déploiement initial (et tour de départ) proposés par le plateau : ceux que
+// le serveur retient (les premiers proposés par l'un des joueurs) sont
+// appliqués ici.
+function onDeploy({ setup, turn }) {
+  getSocket().emit('game:deploy', { gameId: props.id, entry: setup, turnEntry: turn }, (ack) => {
+    for (const entry of ack?.entries ?? []) hexMapRef.value?.applyRemoteEntry(entry)
   })
 }
 

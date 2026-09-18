@@ -275,19 +275,25 @@ export function removeJournal(id, uid) {
   return true
 }
 
-/** Déploiement initial proposé par un joueur au lancement : retenu
- *  seulement si le journal est encore vide (le premier arrivé fait foi).
- *  Renvoie `{ entry, created }` — `entry` : le déploiement qui fait foi
- *  (`null` si le journal a déjà commencé sans en avoir). */
-export function recordDeployment(id, entry) {
+/** Déploiement initial (et, optionnellement, entrée `turn` du tour de
+ *  départ) proposés par un joueur au lancement : retenus seulement si le
+ *  journal est encore vide (le premier arrivé fait foi). Renvoie
+ *  `{ entries, created }` — `entries` : ce qui fait foi (vide si le journal
+ *  a déjà commencé sans déploiement). */
+export function recordDeployment(id, entry, turnEntry) {
   const game = startedGame(id)
-  const existing = game.journal.find((journalEntry) => journalEntry.kind === 'setup')
-  if (existing) return { entry: existing, created: false }
-  if (game.journal.length) return { entry: null, created: false }
+  const index = game.journal.findIndex((journalEntry) => journalEntry.kind === 'setup')
+  if (index !== -1) {
+    const follow = game.journal[index + 1]
+    return { entries: [game.journal[index], ...(follow?.kind === 'turn' ? [follow] : [])], created: false }
+  }
+  if (game.journal.length) return { entries: [], created: false }
   const clean = sanitizeEntry(entry)
   if (!clean || clean.kind !== 'setup') throw new RoomError('bad-entry')
-  game.journal.push(clean)
-  return { entry: clean, created: true }
+  const cleanTurn = turnEntry ? sanitizeEntry(turnEntry) : null
+  const entries = cleanTurn?.kind === 'turn' ? [clean, cleanTurn] : [clean]
+  game.journal.push(...entries)
+  return { entries, created: true }
 }
 
 /** Blitz : la pendule de `loser` est tombée à 0, il perd la partie. Seule

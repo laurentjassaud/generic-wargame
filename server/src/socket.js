@@ -112,14 +112,17 @@ export function registerSocketHandlers(io) {
       }
     })
 
-    socket.on('game:deploy', ({ gameId, entry } = {}, ack) => {
-      // Déploiement initial : le premier proposé fait foi, renvoyé à
-      // l'émetteur (ack) et transmis aux autres joueurs s'il est nouveau.
+    socket.on('game:deploy', ({ gameId, entry, turnEntry } = {}, ack) => {
+      // Déploiement initial (+ tour de départ) : le premier proposé fait foi,
+      // renvoyé à l'émetteur (ack) et transmis aux autres joueurs s'il est
+      // nouveau.
       if (socket.data.gameId !== gameId) return ack?.({ ok: false })
       try {
-        const recorded = recordDeployment(gameId, entry)
-        if (recorded.created) socket.to(`game:${gameId}`).emit('game:log', { entry: recorded.entry })
-        ack?.({ ok: true, entry: recorded.entry })
+        const recorded = recordDeployment(gameId, entry, turnEntry)
+        if (recorded.created) {
+          for (const logged of recorded.entries) socket.to(`game:${gameId}`).emit('game:log', { entry: logged })
+        }
+        ack?.({ ok: true, entries: recorded.entries })
       } catch {
         ack?.({ ok: false })
       }
