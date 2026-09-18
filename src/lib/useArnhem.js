@@ -57,7 +57,7 @@
 //         ["commonwealth","us","pol"] }) — sert à reconnaître les factions
 //         alliées SANS les lister en dur ici (le JSON reste la source de
 //         vérité sur la composition des camps).
-//       • `isUnit` : `(counter) => bool` (cf. HexMap.vue::isUnit) — un vrai
+//       • `isUnit` : `(counter) => bool` (cf. lib/units.js::isUnit) — un vrai
 //         pion combattant, par opposition à un MARQUEUR (type "marker", ex.
 //         les zones de largage "DZ ..."). La distinction est au cœur de la
 //         règle de déploiement ci-dessous.

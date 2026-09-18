@@ -27,6 +27,7 @@ import { useDebug } from '../lib/useDebug.js'
 import { useCombat } from '../lib/useCombat.js'
 import { useRetreat } from '../lib/useRetreat.js'
 import { useArnhem } from '../lib/useArnhem.js'
+import { isUnit, isFighter, isSupport } from '../lib/units.js'
 import CalibrationPanel from './CalibrationPanel.vue'
 import Counter from './Counter.vue'
 import TurnTracker from './TurnTracker.vue'
@@ -252,7 +253,7 @@ function setSelectedCounter(id) {
   if (previous != null && previous !== id) {
     const prev = counters.value.find((counter) => String(counter.id) === String(previous))
     if (isOverstacked(prev)) {
-      const units = counters.value.filter((counter) => counter.col === prev.col && counter.row === prev.row && isUnit(counter) && counter.kind !== 'support')
+      const units = counters.value.filter((counter) => counter.col === prev.col && counter.row === prev.row && isFighter(counter))
       unitStackBlock.value = { key: prev.col + ',' + prev.row, hex: hexId(prev.col + 1, prev.row), units: units.map((unit) => unit.name) }
       return false
     }
@@ -518,16 +519,14 @@ function pickArrivalHex(col, row, occupied) {
 // `null` et le moteur générique ci-dessous s'applique tel quel.
 const arnhem = useArnhem(toRef(props, 'moduleId'), {
   sides: props.module.sides,
-  isUnit: (counter) => isUnit(counter),
+  isUnit,
   assisted: toRef(props, 'assisted'),
   terrain: props.module.terrain,
 })
 
-// Les marqueurs (ex. zones de largage "DZ", type "marker") ne sont pas des
-// unités : ils n'occupent jamais un hex au sens du jeu, n'importe combien de
-// pions peuvent partager leur case librement, et ils prennent directement
-// leur hex déclaré sans jamais être redirigés vers un voisin.
-const isUnit = (counter) => counter.type !== 'marker'
+// Marqueurs / pions de soutien / unités combattantes : cf. lib/units.js
+// (`isUnit`, `isFighter`, `isSupport`, importés plus haut) — seule
+// définition de ce qu'est une "vraie unité" pour tout le moteur.
 
 // Un pion est posé sur la carte au chargement s'il a un `setup` (hex de
 // départ) ET arrive au tour 1 (ou sans `turn` — rétrocompatible avec les
@@ -761,19 +760,14 @@ watch(phase, (newPhase) => {
 onMounted(() => {
   initPhase()
   if (props.module.turnTrack) initialTurnEntry = turnEntryOf(turnInfo.value)
-  if (props.online) startSharedJournal()
-  // Partie en ligne reprise en route : phase déjà atteinte par le joueur
-  // actif (cf. server/src/rooms.js::recordPhase)...
-  if (props.initialPhase != null) setPhase(props.initialPhase)
-  // ... et compteurs des timings "Limité"/"Blitz" repris là où ils en
-  // étaient (le temps écoulé depuis le chargement n'est pas décompté deux fois).
-  moveTimerStartedAt.value = null
-  syncMoveTimer(props.initialPhaseElapsedMs)
-  blitzUsedMs.value = { ...props.initialBlitzUsedMs }
-  if (props.initialBlitzLoser) {
-    declareBlitzLoss(props.initialBlitzLoser, { remote: true })
-    showGameOver.value = true
-  }
+  if (props.online) startSharedJournal(props.initialJournal)
+  // État de la partie côté serveur — pas, phase, pendules, fin de partie
+  // (cf. applyServerState). En solo/démo, les props valent leurs défauts :
+  // sans effet, hormis le démarrage des pendules.
+  applyServerState({
+    turnStep: props.initialTurnStep, phase: props.initialPhase, phaseElapsedMs: props.initialPhaseElapsedMs,
+    blitzUsedMs: props.initialBlitzUsedMs, blitzLoser: props.initialBlitzLoser,
+  })
   // Partie relancée avec les réglages d'une sauvegarde (cf. DemoPlay.vue) :
   // on rejoue maintenant le journal mis de côté — APRÈS `initPhase`, que le
   // rejeu doit pouvoir corriger. Jamais en ligne (la reprise en attente
@@ -781,21 +775,19 @@ onMounted(() => {
   if (!props.online) journalRef.value?.resumePending()
 })
 
-/** En ligne, au montage : rejoue d'un coup le journal partagé déjà
- *  enregistré (reconnexion, rechargement de la page) pour reconstituer la
- *  partie — éliminations, phase, MP, pendules... — puis s'aligne sur le pas
- *  courant du serveur. Partie qui démarre (aucun déploiement enregistré) :
- *  propose le sien au serveur ; seul le PREMIER proposé est retenu et
- *  appliqué chez tous les joueurs (cf. RoomLobby.vue::onDeploy), pour que
- *  les unités tirées au hasard dans leur zone de départ soient au même
- *  endroit pour tout le monde. */
-function startSharedJournal() {
-  if (props.initialJournal.length) {
-    journalRef.value?.loadShared(props.initialJournal)
+/** En ligne : rejoue d'un coup le journal partagé `list` déjà enregistré par
+ *  le serveur (rechargement de la page, reconnexion) pour reconstituer la
+ *  partie — positions, éliminations, phase, MP, pendules... Le plateau est
+ *  d'abord remis au déploiement (cf. onJournalLoaded), donc tout ce que ce
+ *  navigateur aurait de plus que le serveur est abandonné. Partie qui
+ *  démarre (journal vide) : propose son déploiement au serveur ; seul le
+ *  PREMIER proposé est retenu et appliqué chez tous les joueurs (cf.
+ *  RoomLobby.vue::onDeploy), pour que les unités tirées au hasard dans leur
+ *  zone de départ soient au même endroit pour tout le monde. */
+function startSharedJournal(list) {
+  if (list.length) {
+    journalRef.value?.loadShared(list)
     fastForwardReplay()
-    if (turnTrackerRef.value && turnTrackerRef.value.currentStep !== props.initialTurnStep) {
-      applyRemoteTurn(props.initialTurnStep)
-    }
   } else {
     // Déploiement ET tour de départ (cf. `initialTurnEntry`), retenus ou
     // rejetés ensemble par le serveur (premier arrivé).
@@ -1010,7 +1002,7 @@ function isEdgeHex(hex) {
 // (ni ennemis ni amis au sens de cette règle).
 function isEntryHexBlocked(reinforcement, hex) {
   const occupants = counters.value.filter(
-    (counter) => counter.col === hex.col && counter.row === hex.row && isUnit(counter) && counter.kind !== 'support'
+    (counter) => counter.col === hex.col && counter.row === hex.row && isFighter(counter)
   )
   return occupants.some((counter) => isEnemyOf(reinforcement, counter) || enemyZocSet(counter).has(counter.col + ',' + counter.row))
     || entryWouldStack(reinforcement, hex)
@@ -1034,7 +1026,7 @@ function entryWouldStack(reinforcement, hex) {
 // garde-fou.
 function airborneLandingBlocked(hex) {
   if (!props.assisted) return false
-  return counters.value.some((counter) => counter.col === hex.col && counter.row === hex.row && isUnit(counter) && counter.kind !== 'support')
+  return counters.value.some((counter) => counter.col === hex.col && counter.row === hex.row && isFighter(counter))
 }
 
 // Hex de repli pour un `setup` "ref seule" (cf. `entryHexSet`) dont l'hex de
@@ -1055,7 +1047,7 @@ function fallbackEntryHexes(reinforcement, ref) {
     .filter((neighbor) => isEdgeHex(neighbor) && !isEntryHexBlocked(reinforcement, neighbor))
   if (!candidates.length) return []
   const friendlies = counters.value.filter(
-    (counter) => isUnit(counter) && counter.kind !== 'support' && !isEnemyOf(reinforcement, counter)
+    (counter) => isFighter(counter) && !isEnemyOf(reinforcement, counter)
   )
   if (!friendlies.length) return candidates
   const distanceToFriendlies = (hex) => Math.min(...friendlies.map((friendly) => hexDistance(hex, friendly)))
@@ -1165,7 +1157,7 @@ function hexCenterPx(col, row) {
 const supportStackBadges = computed(() => {
   const counts = new Map()
   for (const counter of counters.value) {
-    if (counter.kind !== 'support') continue
+    if (!isSupport(counter)) continue
     const key = counter.col + ',' + counter.row
     const entry = counts.get(key) ?? { col: counter.col, row: counter.row, count: 0 }
     entry.count += 1
@@ -1400,18 +1392,18 @@ function onCounterDragStart(id, ev) {
   // ressource commune, pas rattachée à un camp — toujours glissables, que ce
   // soit depuis la tablette ou déjà posés sur la carte, sans passer par
   // canControl (ni par le tour actif).
-  if (counter?.kind !== 'support' && !canControl(counter)) { ev?.preventDefault(); return }
+  if (!isSupport(counter) && !canControl(counter)) { ev?.preventDefault(); return }
   // cf. lib/useAssisted.js::draggable — en mode Assisté, une UNITÉ (pion déjà
   // sur la carte ou renfort pas encore posé) ne se glisse plus du tout : elle
   // ne peut entrer en jeu ou se déplacer que par clic (sélection, puis clic
   // sur l'hex de destination — cf. onHex/onCounterSelect/onReinforcementSelect
   // plus haut). Les pions de soutien restent exemptés, comme pour canControl
   // ci-dessus : ce ne sont pas des "unités" soumises aux règles de tour/camp.
-  if (counter?.kind !== 'support' && !draggable.value) { ev?.preventDefault(); return }
+  if (!isSupport(counter) && !draggable.value) { ev?.preventDefault(); return }
   // Un renfort pas encore posé sur la carte ne peut être glissé qu'à partir
   // de son tour d'arrivée (cf. `canEnterThisTurn`) — un pion déjà sur la
   // carte (mouvement) ou un pion de soutien (tablette) n'est pas concerné.
-  if (!onMap && counter?.kind !== 'support' && !canEnterThisTurn(counter)) { ev?.preventDefault(); return }
+  if (!onMap && !isSupport(counter) && !canEnterThisTurn(counter)) { ev?.preventDefault(); return }
   draggedCounterId.value = id
   if (ev?.dataTransfer) {
     // Glisser natif HTML5 (pion pas encore sur la carte : <img> de la
@@ -1456,9 +1448,9 @@ function onCounterDragEnd(ev) {
     const from = { col: counter.col, row: counter.row }
     counter.col = hex.col; counter.row = hex.row
     emit('move', { counterId: counter.id, col: counter.col, row: counter.row })
-    const journalId = log(counter.kind === 'support' ? 'support' : 'move', `${counter.name} déplacé de ${fromLabel} vers ${hexId(counter.col + 1, counter.row)}`, { counterId: counter.id, col: counter.col, row: counter.row })
+    const journalId = log(isSupport(counter) ? 'support' : 'move', `${counter.name} déplacé de ${fromLabel} vers ${hexId(counter.col + 1, counter.row)}`, { counterId: counter.id, col: counter.col, row: counter.row })
     pushMoveHistory(counter.id, from, { col: counter.col, row: counter.row }, journalId)
-    if (counter.kind !== 'support') markMoved(counter.id, from)
+    if (!isSupport(counter)) markMoved(counter.id, from)
   }
 }
 
@@ -1537,7 +1529,7 @@ function applyRemoteMove(counterId, col, row) {
   if (counter) {
     const from = { col: counter.col, row: counter.row }
     counter.col = col; counter.row = row
-    if (counter.kind !== 'support' && (from.col !== col || from.row !== row)) markMoved(counter.id, from)
+    if (!isSupport(counter) && (from.col !== col || from.row !== row)) markMoved(counter.id, from)
     return
   }
   // Un autre joueur a posé un renfort pas encore présent localement (glissé
@@ -1566,13 +1558,36 @@ function removeRemoteEntry(uid) {
   journalRef.value?.removeByUid(uid)
 }
 
-/** En ligne, après une reconnexion : rattrape les entrées manquées pendant
- *  la coupure (celles déjà présentes sont ignorées). */
-function syncJournal(list) {
-  for (const entry of list ?? []) applyRemoteEntry(entry)
+/** Aligne pas courant, phase, pendules et fin de partie sur l'état du
+ *  serveur (`toPublic`, cf. server/src/rooms.js) — au montage (props) comme
+ *  après une reconnexion (cf. resyncFromServer). */
+function applyServerState({ turnStep, phase: serverPhase, phaseElapsedMs, blitzUsedMs: serverBlitz, blitzLoser: serverLoser }) {
+  if (turnTrackerRef.value && turnStep != null && turnTrackerRef.value.currentStep !== turnStep) applyRemoteTurn(turnStep)
+  // Phase déjà atteinte par le joueur actif (cf. server/src/rooms.js::
+  // recordPhase) — `null` : phase de départ du camp, déjà recalculée.
+  if (serverPhase != null) setPhase(serverPhase)
+  // Compteurs des timings "Limité"/"Blitz" repris là où ils en étaient (le
+  // temps écoulé depuis le chargement n'est pas décompté deux fois).
+  moveTimerStartedAt.value = null
+  syncMoveTimer(phaseElapsedMs ?? 0)
+  blitzUsedMs.value = { ...(serverBlitz ?? {}) }
+  if (serverLoser) declareBlitzLoss(serverLoser, { remote: true })
 }
 
-defineExpose({ applyRemoteMove, applyRemoteTurn, applyRemotePhase, applyRemoteGameOver, applyRemoteEntry, removeRemoteEntry, syncJournal })
+/** En ligne, après une RECONNEXION : le serveur fait foi. Le journal partagé
+ *  complet est rejoué depuis le déploiement (cf. startSharedJournal), ce qui
+ *  rattrape à la fois les entrées manquées pendant la coupure ET celles que
+ *  l'adversaire a retirées entre-temps (retour arrière) — un simple ajout des
+ *  entrées manquantes laissait ces dernières dans le journal local. Ce que ce
+ *  navigateur a pu jouer HORS LIGNE n'a jamais atteint le serveur : c'est
+ *  abandonné, pour rester aligné sur les autres joueurs. `room` : l'état
+ *  courant renvoyé par le serveur (pas, phase, pendules, fin de partie). */
+function resyncFromServer(list, room) {
+  startSharedJournal(list ?? [])
+  applyServerState(room ?? {})
+}
+
+defineExpose({ applyRemoteMove, applyRemoteTurn, applyRemotePhase, applyRemoteGameOver, applyRemoteEntry, removeRemoteEntry, resyncFromServer })
 
 /** Reçoit le journal chargé (cf. JournalPanel.vue, évènement `loaded`) en
  *  ordre chronologique et remet la carte au déploiement initial pour
@@ -1600,6 +1615,8 @@ function resetBoardForReplay() {
   moveHistory.value = []
   clearAllMoved()
   clearRetreat()
+  // Un combat resté ouvert n'a plus de sens sur un plateau remis à zéro.
+  cancelCombat()
   turnTrackerRef.value?.applyRemoteTurn(0)
   // Phase Mouvement, aucun MP dépensé, aucune congestion d'entrée — et, par
   // le retour en phase 0, plus aucune unité "ayant combattu" ni combat

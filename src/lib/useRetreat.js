@@ -100,13 +100,10 @@
 //     appliquée d'office seulement si, sans elle, l'unité serait éliminée.
 import { computed, ref, watch } from 'vue'
 import { hexDistance, neighborsOf } from './hex.js'
+import { isFighter } from './units.js'
 
-/** Seules les vraies unités comptent (occupation d'un hex, ennemis...) — ni
- *  les marqueurs (DZ...), ni les pions de soutien. Même définition que
- *  useCombat.js::isFighter. */
-function isFighter(counter) {
-  return !!counter && counter.type !== 'marker' && counter.kind !== 'support'
-}
+// Seules les vraies unités comptent (occupation d'un hex, ennemis...) — ni
+// les marqueurs (DZ...), ni les pions de soutien : cf. lib/units.js::isFighter.
 
 const keyOf = (col, row) => `${col},${row}`
 

@@ -132,6 +132,7 @@
 import { computed, ref, watch } from 'vue'
 import { hexId } from './calibration.js'
 import { neighborsOf } from './hex.js'
+import { isFighter } from './units.js'
 
 /** Construit, une seule fois, l'ensemble des arêtes route/piste/ruisseau
  *  d'un module sous forme de clés "hexIdA-hexIdB" ET "hexIdB-hexIdA" (les
@@ -565,7 +566,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   //
   // Chaque pion a un total de MP fixe déclaré dans le module JSON (`c.mov`,
   // ex. 7 pour l'infanterie allemande d'Arnhem) — cf. arnhem.json. Certains
-  // pions (marqueurs, cf. HexMap.vue::isUnit) n'ont pas de `mov` du tout :
+  // pions (marqueurs, cf. lib/units.js::isUnit) n'ont pas de `mov` du tout :
   // dans ce cas, `remainingMp` ci-dessous répond systématiquement "illimité"
   // plutôt que "zéro MP", pour ne jamais bloquer un pion que le module ne
   // fait pas participer au système de MP.
@@ -783,7 +784,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     const set = new Set()
     if (!counter) return set
     for (const other of counters.value) {
-      if (other.type === 'marker' || other.kind === 'support') continue
+      if (!isFighter(other)) continue
       if (!isEnemyOf(counter, other)) continue
       for (const neighbor of neighborsOf(other.col, other.row)) {
         if (riverBlocksZoc(other, neighbor)) continue
@@ -812,7 +813,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  complète en mode debug) — même définition partout. */
   function hasFriendlyOccupant(counter, hex) {
     return counters.value.some(
-      (other) => other.col === hex.c && other.row === hex.r && other.type !== 'marker' && other.kind !== 'support' && !isEnemyOf(counter, other)
+      (other) => other.col === hex.c && other.row === hex.r && isFighter(other) && !isEnemyOf(counter, other)
     )
   }
 
@@ -882,10 +883,10 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  soutien ne comptent jamais (ni amis ni ennemis, cf.
    *  `hasFriendlyOccupant`). Toujours faux hors mode Assisté. */
   function isOverstacked(counter) {
-    if (!assisted.value || !counter || counter.type === 'marker' || counter.kind === 'support') return false
+    if (!assisted.value || !isFighter(counter)) return false
     return counters.value.some((otherCounter) =>
       otherCounter.id !== counter.id && otherCounter.col === counter.col && otherCounter.row === counter.row
-      && otherCounter.type !== 'marker' && otherCounter.kind !== 'support' && !isEnemyOf(counter, otherCounter))
+      && isFighter(otherCounter) && !isEnemyOf(counter, otherCounter))
   }
 
   /** EMPILEMENTS EN ATTENTE — filet de sécurité de la même règle, vérifié
@@ -916,7 +917,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     // Regroupement des unités du camp actif par hex ("col,row" -> pions).
     const byHex = new Map()
     for (const counter of counters.value) {
-      if (counter.type === 'marker' || counter.kind === 'support' || !canControl(counter)) continue
+      if (!isFighter(counter) || !canControl(counter)) continue
       const key = counter.col + ',' + counter.row
       if (!byHex.has(key)) byHex.set(key, [])
       byHex.get(key).push(counter)

@@ -92,11 +92,22 @@ def classify(rgb):
 
 def main():
     im = Image.open(MAP_PATH).convert('RGB')
+    mod = json.loads(MODULE_PATH.read_text(encoding='utf-8'))
+    # Forme réelle de la carte (cf. src/lib/mapShape.js) : les hexs retirés
+    # (`map.removedHexes`) et la dernière ligne des colonnes décalées
+    # (`map.evenColMinus` — colonnes 1-based PAIRES) n'existent pas, on ne
+    # leur attribue aucun terrain.
+    map_cfg = mod.get('map', {})
+    removed = {h.strip() for h in str(map_cfg.get('removedHexes', '')).split(',') if h.strip()}
+    even_col_minus = bool(map_cfg.get('evenColMinus'))
     grid = {}
     rows_out = []
     for col in range(1, COLS + 1):
-        for row in range(1, ROWS + 1):
+        last_row = ROWS - 1 if even_col_minus and col % 2 == 0 else ROWS
+        for row in range(1, last_row + 1):
             hex_id = f'{col:02d}{row:02d}'
+            if hex_id in removed:
+                continue
             if hex_id in SETTLEMENTS:
                 terrain = SETTLEMENTS[hex_id]
                 source = 'manual'
@@ -112,8 +123,9 @@ def main():
                 'edges': '', 'source': source,
             })
 
-    mod = json.loads(MODULE_PATH.read_text(encoding='utf-8'))
-    mod['terrain'] = {'types': TERRAIN_TYPES, 'grid': grid}
+    # Les couches d'arêtes ajoutées depuis (routes, pistes, rivières, ponts,
+    # bacs...) sont conservées : seuls `types` et `grid` sont régénérés.
+    mod['terrain'] = {**mod.get('terrain', {}), 'types': TERRAIN_TYPES, 'grid': grid}
     MODULE_PATH.write_text(json.dumps(mod, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 
     with CSV_PATH.open('w', newline='', encoding='utf-8-sig') as f:

@@ -1,91 +1,187 @@
 # Generic Wargame
 
-Un moteur générique de wargame hexagonal (Vue 3 + Vite) : la carte, la grille
-d'hex, le zoom/pan et les pions sont gérés par un seul composant réutilisable
-(`HexMap.vue`), et chaque **jeu** (carte, pions, coûts de terrain...) est une
-**boîte de jeu** — un module JSON servi statiquement, interchangeable sans
-toucher au code du moteur.
+Moteur générique de wargame hexagonal, jouable **en local** (un navigateur pour
+tous les camps) ou **en ligne** (une room par partie, un joueur par camp).
 
-## Premier module : Arnhem
+- **Front** : Vue 3 + Vite (`src/`). Le plateau, la grille d'hex, le zoom/pan,
+  les pions et toutes les règles vivent dans un composant réutilisable
+  (`HexMap.vue`) et ses composables (`src/lib/`).
+- **Serveur** (parties en ligne) : Node + Express + Socket.IO (`server/`). Il
+  ne connaît ni les règles ni les pions : il conserve l'état d'une room
+  (positions, tour, phase, pendules, journal partagé) et le rediffuse.
+- **Modules** : chaque **boîte de jeu** (carte, pions, terrain, camps, tours…)
+  est un dossier JSON servi statiquement (`public/modules/<id>/`),
+  interchangeable sans toucher au moteur.
 
-`public/modules/arnhem/` implémente *A Bridge Too Far: Arnhem* (Opération
-Market-Garden, septembre 1944) :
+## Modules disponibles
 
-- la carte hexagonale (39×26 hex, image haute résolution) ;
-- 38 pions allemands (infanterie/reco + artillerie), avec leurs stats
-  attaque/défense/mouvement (ou barrage/fpf/portée pour l'artillerie) ;
-- une grille de coût de mouvement par hex (Mixed/Woods/Broken/Rough/City/Town),
-  classée automatiquement par couleur puis corrigée à la main ;
-- une favicon et un titre de page propres au module.
+`public/modules/index.json` liste les modules ; seul **Arnhem** (*A Bridge Too
+Far: Arnhem* — Opération Market-Garden, septembre 1944) est actif, les autres
+(Hürtgen, Bastogne, Remagen) sont annoncés « Bientôt disponible ».
 
-D'autres modules (autre carte, autre camp, autre jeu) peuvent être ajoutés en
-suivant la même structure, sans modifier `HexMap.vue`.
+## Modes de jeu
 
-## Comment ça marche
+Choisis à la création de la partie (assistant en 4 étapes en local, 5 en ligne
+avec le nombre de joueurs) — cf. `src/lib/gameSettings.js`.
 
-Un module est un dossier sous `public/modules/<nom>/` contenant :
+| Réglage | Valeurs | Effet |
+|---|---|---|
+| Scénario | Historique (*Placement libre* : bientôt) | Déploiement du module |
+| Météo | *bientôt disponible* | — (pas encore appliquée par le moteur) |
+| Partie | **Libre** / **Assisté** | Voir ci-dessous |
+| Timing | Libre / **Limité** / **Blitz** | Chronomètre de la phase de Mouvement — partie Assistée uniquement |
+
+**Partie Libre** : un bac à sable. Glisser-déposer libre de tous les pions,
+aucune restriction de tour ni de règle, dé libre.
+
+**Partie Assistée** : l'application applique les règles.
+- grille affichable, sélection au clic, contrôle limité au camp dont c'est le
+  tour ;
+- tour joué en phases : **Airborne** (pose des aéroportés, si le camp en a) →
+  **Mouvement** → **Combat** → *Fin de tour* (dernier camp de l'ordre) ;
+- points de mouvement et coûts de terrain (routes, pistes, ponts, bacs,
+  rivières, ruisseaux), terrains interdits aux véhicules, zones de contrôle,
+  empilement (une unité par hex en fin de mouvement), congestion des hex
+  d'entrée des renforts, retour arrière et annulation de mouvement ;
+- combat : désignation des cibles (plusieurs hex) et des attaquants, table de
+  combat (CRT) avec dé, combats obligatoires, retraites hex par hex,
+  éliminations, avance après combat ;
+- règles particulières au module (cf. `src/lib/useArnhem.js` : déploiement
+  initial, allocation réduite des aéroportés à l'arrivée, réduction des
+  retraites en ville).
+
+**Timings** (partie Assistée) : *Limité* accorde N minutes à **chaque** phase
+de Mouvement (compte à rebours, clignote sous 20 s, alerte à zéro) ; *Blitz*
+donne à chaque camp un temps total pour toutes ses phases de Mouvement
+(pendule d'échecs, une par camp, toujours visible) — à zéro, le camp **perd
+la partie**.
+
+## Journal de partie
+
+Onglet « Journal » du panneau latéral (`JournalPanel.vue`) : chaque évènement
+(déploiement, tour, phase, déplacement avec MP, entrée en jeu, combat,
+retraite, avance, élimination…) y est inscrit avec de quoi le **rejouer**.
+- **Local** : sauvegarde automatique (navigateur) proposée en reprise au
+  chargement suivant ; export/import JSON ; lecteur de rejeu (pas à pas ou
+  avance rapide). Une sauvegarde faite avec d'autres réglages relance la
+  partie avec les siens.
+- **En ligne** : journal **partagé**, conservé par le serveur et identique
+  chez tous les joueurs (déploiement tiré une seule fois, éliminations,
+  retours arrière…) ; un joueur qui recharge la page ou se reconnecte est
+  réaligné sur le serveur. Export JSON toujours possible.
+
+## Parties en ligne
+
+`/` liste les parties, `/create` en crée une (code d'accès affiché une seule
+fois), `/room/:id` la rejoint (pseudo, camp, code). La partie démarre quand
+tous les sièges sont pris. Le serveur reçoit l'ordre des camps à la création
+et **refuse tout coup du joueur qui n'a pas la main** ; l'interface bloque de
+même les actions hors tour. La liste des joueurs indique qui est en ligne.
+
+## Anatomie d'un module
 
 ```
-public/modules/<nom>/
-├── <nom>.json          # nom, carte, pions, terrain, favicon...
+public/modules/<id>/
+├── <id>.json          # tout ce qui suit
 ├── favicon.ico
-└── images/
-    ├── <carte>.jpg
-    └── counters/<camp>/*.png
+└── images/            # carte, marqueurs, tables, counters/<faction>/*.png
 ```
 
-`App.vue` charge le module par son URL (`MODULE_URL`), puis :
+Champs du JSON (cf. `arnhem.json`) :
 
-- passe son `map` (image + dimensions + cols/rows) à `HexMap.vue` ;
-- applique `module.name` au titre de la page et `module.favicon` à l'icône
-  d'onglet — chaque module contrôle ces deux éléments sans toucher au code.
+| Champ | Contenu |
+|---|---|
+| `boardGame`, `name`, `favicon` | Identité (titre de page, icône d'onglet) |
+| `movementChart`, `combatChart` | Images des tables, affichables en jeu |
+| `map` | `url`, `imageWidth/Height`, `cols`, `rows`, `evenColMinus` (colonnes décalées amputées d'une ligne), `removedHexes` |
+| `sides` | Camps jouables → factions (`{"allies": ["commonwealth","us","pol"], "german": ["german"]}`) |
+| `turnTrack` | `turns`, `order` des camps, libellé et marqueur de chaque camp |
+| `supportTrack` | Tablette de soutien : pions par tour (`byTurn`) |
+| `terrain` | `types` (libellé, coût en MP), `grid` (hex → type) et les couches d'arêtes `roads`, `trails`, `rivers`, `streams`, `ferries`, `canalBridges`, `railroadBridges`, `highwayBridges` (`"AAAA-BBBB"`) |
+| `counters` | Par faction : `id`, `name`, `code`, `type`, `atk`/`def`/`mov` (ou `bar`/`fpf`/`range` pour l'artillerie), `src`, `turn` d'arrivée, `setup` |
 
-`HexMap.vue` lit `module.counters` : seuls les pions qui déclarent un `setup`
-(hex de départ, ex. `"setup": "0604"`) sont placés sur la carte au chargement
-— pas de placement aléatoire.
+`setup` (hex d'entrée) : `"0604"` (cet hex), `"0901-2301"` (plage de bord de
+carte), `"3719+adj"` (largage : l'hex ou l'un de ses 6 voisins — c'est ce
+suffixe qui fait d'un pion un **aéroporté**). Un pion `type: "marker"` (zones
+de largage « DZ ») n'est pas une unité (cf. `src/lib/units.js`).
 
-## Fonctionnalités de la carte
+La **calibration** pixel de la grille (`src/lib/calibration.js`) est
+ajustable en direct via le panneau « calibration » ; ses valeurs par défaut
+sont celles de la carte d'Arnhem.
 
-- **Zoom** à la molette, **pan** au clic droit maintenu.
-- Grille d'hex cliquable, avec panneau de calibration (`CalibrationPanel.vue`)
-  pour ajuster l'alignement grille/image en direct.
-- **Pions (`Counter.vue`)** : clic pour sélectionner (contour vert) / clic à
-  nouveau pour désélectionner ; glisser-déposer libre sur un hex (il se centre
-  dessus) ; une fois sélectionné, ses 6 hex voisins sont surlignés en vert et
-  un clic dessus le déplace d'un pas.
+## Organisation du code
 
-## Scripts
-
-Le dossier `scripts/` contient les générateurs utilisés pour construire le
-module Arnhem (relançables si les données source changent) :
-
-- `apply-german-counters.mjs` — installe les images de pions dans
-  `images/counters/german/` et regénère `counters.german` dans le JSON.
-- `gen-terrain-grid.py` — classe le terrain de chaque hex par échantillonnage
-  de couleur sur l'image de carte, écrit `module.terrain` et un CSV
-  (`movement-grid-arnhem.csv`) pour correction manuelle.
-- `gen-terrain-artifact.mjs` — génère une page HTML autonome (carte + grille
-  colorée + coûts affichés) pour vérifier visuellement le classement.
-
-## Limites connues
-
-- Seul le coût **de zone** par hex est modélisé (Mixed/Woods/Broken/Rough/
-  City/Town). Les éléments de **bordure** (route, sentier, rivière, ruisseau,
-  bac, frontière, ponts) ne sont pas encore encodés — colonne `edges` du CSV
-  laissée vide.
-- Aucun pion allemand n'a de `setup` renseigné pour l'instant : la carte
-  s'affiche donc vide au chargement tant que les positions de départ du
-  scénario n'ont pas été ajoutées dans `arnhem.json`.
+```
+src/
+├── views/        GamesList, CreateGame, LocalGameSetup, DemoPlay (plateau local), RoomLobby (plateau en ligne)
+├── components/   HexMap (plateau et orchestration), TurnTracker, SupportTracker, Counter,
+│                 ReinforcementsPanel, EliminatedPanel, JournalPanel, SidePanel, CombatModal,
+│                 PhaseBlockedModal, MoveTimer, RollModal, MovementChartModal, CombatChartModal,
+│                 CalibrationPanel, ContextMenu, GameSetupSteps
+└── lib/
+    ├── useAssisted.js   mode Assisté : phases, MP/terrain, ZOC, empilement, congestion
+    ├── useCombat.js     table de combat, cibles/attaquants, combats obligatoires
+    ├── useRetreat.js    retraites, éliminations, avance après combat
+    ├── useArnhem.js     règles particulières du module Arnhem (patron pour d'autres modules)
+    ├── useDebug.js      affichages de debug (coûts, portée, congestion)
+    ├── units.js         qu'est-ce qu'une unité / un marqueur / un pion de soutien
+    ├── hex.js, mapShape.js, calibration.js   géométrie de la grille
+    ├── gameSettings.js, journalStorage.js    réglages de partie, sauvegarde/reprise
+    └── api.js, socket.js                     accès au serveur
+server/src/
+├── index.js      Express + Socket.IO, purge périodique des parties
+├── rooms.js      état des rooms (en mémoire), contrôle de tour, journal partagé
+├── socket.js     évènements temps réel (join, move, turn, phase, log, deploy, over)
+└── routes/games.js   API REST : créer / lister / lire une partie
+```
 
 ## Développement
 
 ```sh
-npm install
-npm run dev       # serveur de développement
-npm run build     # build de production
-npm run preview   # prévisualiser le build
+npm install                 # front
+(cd server && npm install)  # serveur
+
+npm run dev                 # front sur http://localhost:5173
+(cd server && npm run dev)  # serveur sur http://localhost:3001 (rechargé à chaque modification)
+
+npm run build               # build de production (mode production, cf. .env.production)
+npm run preview
 ```
 
-Prérequis : Node `^22.18.0` ou `>=24.12.0` (voir `engines` dans
-`package.json`). Les scripts de génération de données (`scripts/*.mjs`,
-`scripts/*.py`) nécessitent respectivement Node et Python 3 + Pillow.
+Variables d'environnement : `VITE_API_URL` (front → URL du serveur, défaut
+`http://localhost:3001`) ; `PORT` et `CLIENT_ORIGIN` (serveur, défauts `3001`
+et `http://localhost:5173`). Pour un hébergement Apache, `public/.htaccess`
+relaie `/api` et `/socket.io` vers le serveur Node (port 8080) et assure le
+repli SPA.
+
+Prérequis : Node `^22.18.0` ou `>=24.12.0` (voir `engines`).
+
+Le serveur garde tout **en mémoire** : les parties disparaissent à son
+redémarrage, et les rooms abandonnées sont purgées (6 h sans joueur pour une
+room jamais lancée, 72 h pour une partie lancée).
+
+## Scripts
+
+`scripts/` contient les générateurs utilisés pour construire le module Arnhem
+(relançables si les données source changent) :
+
+- `apply-german-counters.mjs` — installe les images de pions allemands et
+  regénère `counters.german` dans le JSON ;
+- `gen-terrain-grid.py` — classe le terrain de chaque hex par échantillonnage
+  de couleur (Python 3 + Pillow), écrit `terrain.types`/`terrain.grid` (les
+  couches d'arêtes sont conservées) et un CSV de correction manuelle ;
+- `gen-terrain-artifact.mjs` — page HTML autonome (carte + grille colorée +
+  coûts) pour vérifier visuellement le terrain ;
+- `build-terrain-transition.mjs` — convertit l'export de cette page (routes,
+  pistes, hex retirés, corrections) en fichier de transition à relire avant
+  application.
+
+## Limites connues
+
+- « Placement libre » et « Météo » sont proposés grisés : le moteur ne les
+  applique pas encore.
+- Plusieurs valeurs propres à Arnhem restent codées dans le moteur (table de
+  combat, constantes de mouvement, notation `setup`, calibration par défaut)
+  : un second module demandera de les déplacer dans le JSON.
+- Pas de suite de tests automatisée dans le dépôt (les vérifications se font
+  par scripts ad hoc et navigateur automatisé).

@@ -82,6 +82,7 @@
 import { computed, ref, watch } from 'vue'
 import { hexId } from './calibration.js'
 import { neighborsOf } from './hex.js'
+import { isFighter } from './units.js'
 
 // --- Table de combat (CRT, cf. images/combat-chart.png, règle [7.61]) -------
 //
@@ -254,11 +255,8 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   // `null` tant que le dé n'a pas été lancé.
   const frozen = ref(null)
 
-  /** Seules les vraies unités combattent — ni les marqueurs (DZ...), ni les
-   *  pions de soutien (ressource commune sans camp, cf. SupportTracker.vue). */
-  function isFighter(counter) {
-    return !!counter && counter.type !== 'marker' && counter.kind !== 'support'
-  }
+  // Seules les vraies unités combattent — ni les marqueurs (DZ...), ni les
+  // pions de soutien : cf. lib/units.js::isFighter (importée plus haut).
 
   const combatActive = computed(() => targetHexes.value.length > 0)
 

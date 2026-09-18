@@ -8,6 +8,49 @@ const playerId = customAlphabet('23456789abcdefghjkmnpqrstuvwxyz', 12)
 // to scale across multiple server instances (see roadmap phase 0 notes).
 const games = new Map()
 
+// --- Bornes mémoire ------------------------------------------------------------
+// Tout vit en mémoire et rien ne l'écrivait jamais : sans ces limites, un
+// serveur qui tourne des semaines accumule les parties abandonnées, et un
+// client pouvait gonfler un journal sans fin.
+const MAX_GAMES = 200                          // parties simultanées (après purge)
+const MAX_JOURNAL_ENTRIES = 20000              // entrées par journal partagé
+const MAX_ENTRY_DATA_LENGTH = 50000            // taille (JSON) du `data` d'une entrée
+const MAX_JOURNAL_BYTES = 8 * 1024 * 1024      // taille (JSON) cumulée d'un journal
+const LOBBY_TTL_MS = 6 * 60 * 60 * 1000        // room jamais lancée, sans joueur connecté
+const GAME_TTL_MS = 72 * 60 * 60 * 1000        // partie lancée, tous les joueurs déconnectés
+const SWEEP_INTERVAL_MS = 15 * 60 * 1000
+
+/** Toute activité (coup, tour, journal, connexion) repousse la purge. */
+function touch(game) {
+  game.lastActivity = Date.now()
+}
+
+/** Purge les parties abandonnées : aucun joueur connecté ET aucune activité
+ *  depuis plus de `LOBBY_TTL_MS` (room jamais lancée) ou `GAME_TTL_MS`
+ *  (partie lancée). Renvoie le nombre de parties retirées. Appelée
+ *  périodiquement (cf. startSweeper) et avant de refuser une création faute
+ *  de place (cf. createGame). */
+export function sweepGames(now = Date.now()) {
+  let removed = 0
+  for (const game of games.values()) {
+    if ([...game.players.values()].some((player) => player.connected)) continue
+    const ttl = game.status === 'started' ? GAME_TTL_MS : LOBBY_TTL_MS
+    if (now - game.lastActivity > ttl) {
+      games.delete(game.id)
+      removed += 1
+    }
+  }
+  return removed
+}
+
+/** Lance la purge périodique (cf. sweepGames). Le minuteur n'empêche pas le
+ *  processus de se terminer (`unref`). */
+export function startSweeper(intervalMs = SWEEP_INTERVAL_MS) {
+  const timer = setInterval(() => sweepGames(), intervalMs)
+  timer.unref?.()
+  return timer
+}
+
 export class RoomError extends Error {
   constructor(code) {
     super(code)
@@ -36,6 +79,8 @@ function sanitizeTurnOrder(turnOrder) {
 }
 
 export function createGame({ moduleId, scenarioId, variants, settings, maxPlayers, turnOrder }) {
+  if (games.size >= MAX_GAMES) sweepGames()
+  if (games.size >= MAX_GAMES) throw new RoomError('too-many-games')
   const id = gameId()
   const game = {
     id,
@@ -50,6 +95,7 @@ export function createGame({ moduleId, scenarioId, variants, settings, maxPlayer
     passcode: passcode(),
     status: 'lobby', // 'lobby' | 'started'
     createdAt: Date.now(),
+    lastActivity: Date.now(), // cf. touch / sweepGames
     players: new Map(), // playerId -> { id, name, side, connected, socketId }
     boardState: new Map(), // counterId -> { col, row } — positions déplacées depuis le setup du module
     turnStep: 0, // index dans la séquence tours × camps du module (cf. HexMap.vue -> turnTrack)
@@ -73,6 +119,7 @@ export function createGame({ moduleId, scenarioId, variants, settings, maxPlayer
     // src/components/HexMap.vue::log). Transmis en entier à chaque joueur
     // qui (re)joint la partie, pour qu'il la reconstitue.
     journal: [],
+    journalBytes: 0, // taille JSON cumulée de `journal` (cf. MAX_JOURNAL_BYTES)
   }
   games.set(id, game)
   return game
@@ -125,17 +172,24 @@ export function joinGame(id, { passcode: code, playerId: existingPlayerId, name,
 
   const reconnecting = existingPlayerId && game.players.has(existingPlayerId)
 
+  // Pseudo et camp assainis : des chaînes courtes (ils sont rediffusés à tous
+  // les joueurs et affichés tels quels).
+  const cleanName = typeof name === 'string' ? name.trim().slice(0, 40) : ''
+  const cleanSide = typeof side === 'string' ? side.trim().slice(0, 32) : ''
+
   if (!reconnecting) {
     if (game.status !== 'lobby') throw new RoomError('already-started')
     if (game.players.size >= game.maxPlayers) throw new RoomError('room-full')
-    const sideTaken = [...game.players.values()].some((otherPlayer) => otherPlayer.side === side)
+    if (!cleanName) throw new RoomError('bad-name')
+    if (!cleanSide) throw new RoomError('bad-side')
+    const sideTaken = [...game.players.values()].some((otherPlayer) => otherPlayer.side === cleanSide)
     if (sideTaken) throw new RoomError('side-taken')
   }
 
   const id_ = reconnecting ? existingPlayerId : playerId()
   const player = reconnecting
     ? game.players.get(id_)
-    : { id: id_, name, side, connected: false, socketId: null }
+    : { id: id_, name: cleanName, side: cleanSide, connected: false, socketId: null }
 
   // Reconnexion : le siège est repris TEL QUEL — ni le pseudo ni surtout le
   // camp ne changent. Sinon un client pourrait se reconnecter sur le camp
@@ -143,6 +197,7 @@ export function joinGame(id, { passcode: code, playerId: existingPlayerId, name,
   player.connected = true
   player.socketId = socketId
   game.players.set(id_, player)
+  touch(game)
 
   if (!reconnecting && game.players.size === game.maxPlayers) {
     game.status = 'started'
@@ -197,7 +252,14 @@ export function recordMove(id, { counterId, col, row }) {
   if (!game) throw new RoomError('not-found')
   if (game.status !== 'started') throw new RoomError('not-started')
   if (game.blitzLoser) throw new RoomError('game-over')
+  // Un coup est rediffusé tel quel à tous les joueurs, qui l'appliquent sans
+  // vérification (cf. HexMap.vue::applyRemoteMove) : on exige au moins un
+  // identifiant court et des coordonnées entières plausibles.
+  const validId = (typeof counterId === 'string' || typeof counterId === 'number') && String(counterId).length <= 64
+  const validCell = Number.isInteger(col) && Number.isInteger(row) && col >= 0 && row >= 0 && col < 1000 && row < 1000
+  if (!validId || !validCell) throw new RoomError('bad-move')
   game.boardState.set(String(counterId), { col, row })
+  touch(game)
   return game
 }
 
@@ -212,6 +274,7 @@ export function advanceTurn(id) {
   game.turnStep += 1
   game.phase = null
   game.phaseSince = Date.now()
+  touch(game)
   return game
 }
 
@@ -229,11 +292,9 @@ export function recordPhase(id, { phase, step, blitzUsed }) {
   game.phaseSince = Date.now()
   const cleanBlitz = sanitizeBlitz(blitzUsed)
   if (cleanBlitz) game.blitzUsedMs = cleanBlitz
+  touch(game)
   return { game, blitzUsed: cleanBlitz }
 }
-
-const MAX_JOURNAL_ENTRIES = 20000
-const MAX_ENTRY_DATA_LENGTH = 50000
 
 /** Entrée de journal reçue d'un client, assainie — `null` si invalide. */
 function sanitizeEntry(entry) {
@@ -253,6 +314,18 @@ function startedGame(id) {
   return game
 }
 
+/** Ajoute `entries` (déjà assainies) au journal de `game`, dans les limites
+ *  de taille (cf. MAX_JOURNAL_ENTRIES / MAX_JOURNAL_BYTES). */
+function pushJournal(game, entries) {
+  const bytes = entries.reduce((sum, entry) => sum + JSON.stringify(entry).length, 0)
+  if (game.journal.length + entries.length > MAX_JOURNAL_ENTRIES || game.journalBytes + bytes > MAX_JOURNAL_BYTES) {
+    throw new RoomError('journal-full')
+  }
+  game.journal.push(...entries)
+  game.journalBytes += bytes
+  touch(game)
+}
+
 /** Ajoute une entrée au journal partagé. Renvoie l'entrée assainie, ou
  *  `null` si elle y est déjà (même `uid`). */
 export function appendJournal(id, entry) {
@@ -260,9 +333,8 @@ export function appendJournal(id, entry) {
   if (game.blitzLoser) throw new RoomError('game-over')
   const clean = sanitizeEntry(entry)
   if (!clean) throw new RoomError('bad-entry')
-  if (game.journal.length >= MAX_JOURNAL_ENTRIES) throw new RoomError('journal-full')
   if (game.journal.some((existing) => existing.uid === clean.uid)) return null
-  game.journal.push(clean)
+  pushJournal(game, [clean])
   return clean
 }
 
@@ -271,7 +343,9 @@ export function removeJournal(id, uid) {
   const game = startedGame(id)
   const index = game.journal.findIndex((entry) => entry.uid === uid)
   if (index === -1) return false
-  game.journal.splice(index, 1)
+  const [removed] = game.journal.splice(index, 1)
+  game.journalBytes -= JSON.stringify(removed).length
+  touch(game)
   return true
 }
 
@@ -292,7 +366,7 @@ export function recordDeployment(id, entry, turnEntry) {
   if (!clean || clean.kind !== 'setup') throw new RoomError('bad-entry')
   const cleanTurn = turnEntry ? sanitizeEntry(turnEntry) : null
   const entries = cleanTurn?.kind === 'turn' ? [clean, cleanTurn] : [clean]
-  game.journal.push(...entries)
+  pushJournal(game, entries)
   return { entries, created: true }
 }
 
@@ -309,7 +383,7 @@ export function recordGameOver(id, { loser, text, t }) {
   if (game.blitzLoser) return null
   game.blitzLoser = loser
   const entry = sanitizeEntry({ uid: `srv-${playerId()}`, t, kind: 'gameover', text: text || `Temps écoulé — ${loser}`, data: { loser } })
-  game.journal.push(entry)
+  pushJournal(game, [entry])
   return { game, entry }
 }
 
@@ -328,6 +402,7 @@ export function setPlayerConnectionBySocket(socketId, connected) {
     for (const player of game.players.values()) {
       if (player.socketId === socketId) {
         player.connected = connected
+        touch(game)
         return game
       }
     }

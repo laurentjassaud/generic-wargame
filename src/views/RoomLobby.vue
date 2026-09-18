@@ -55,6 +55,8 @@ const ERROR_MESSAGES = {
   'room-full': 'Cette room est déjà complète.',
   'side-taken': 'Ce camp est déjà pris par un autre joueur.',
   'already-started': 'Cette partie a déjà commencé.',
+  'bad-name': 'Pseudo invalide (1 à 40 caractères).',
+  'bad-side': 'Camp invalide.',
 }
 
 async function loadGame() {
@@ -132,10 +134,11 @@ function doJoin({ passcode, name, side, playerId }, silent = false) {
         room.value = ack.room
         joined.value = true
         mySide.value = side
-        // Plateau déjà affiché (reconnexion) : on rattrape les entrées du
-        // journal manquées pendant la coupure. Sinon, le journal sera
-        // rejoué au montage du plateau.
-        if (hexMapRef.value) hexMapRef.value.syncJournal(ack.journal)
+        // Plateau déjà affiché (reconnexion) : il se réaligne entièrement sur
+        // le serveur — journal rejoué, pas, phase, pendules (cf.
+        // HexMap.vue::resyncFromServer). Sinon, le journal sera rejoué au
+        // montage du plateau.
+        if (hexMapRef.value) hexMapRef.value.resyncFromServer(ack.journal, ack.room)
         else sharedJournal.value = ack.journal ?? []
         localStorage.setItem(storageKey, JSON.stringify({ passcode, name, side, playerId: ack.playerId }))
       } else if (!silent) {

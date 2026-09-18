@@ -16,7 +16,15 @@ gamesRouter.post('/', (req, res) => {
     return res.status(400).json({ error: 'maxPlayers must be an integer between 1 and 8' })
   }
 
-  const game = createGame({ moduleId, scenarioId, variants, settings, maxPlayers, turnOrder })
+  let game
+  try {
+    game = createGame({ moduleId, scenarioId, variants, settings, maxPlayers, turnOrder })
+  } catch (err) {
+    // Trop de parties en mémoire (cf. rooms.js::MAX_GAMES) : le serveur est
+    // plein, pas la requête fautive.
+    if (err.code === 'too-many-games') return res.status(503).json({ error: 'too-many-games' })
+    throw err
+  }
 
   // Passcode is only ever returned here, right after creation, so the
   // creator can share it with the other players.
