@@ -1,6 +1,6 @@
 <script setup>
-import { ref, watch, onMounted } from 'vue'
-import { SCENARIO_OPTIONS, PARTY_OPTIONS, TIMING_OPTIONS, TIMING_HINTS, TIMING_LOCKED_HINT, WEATHER_AVAILABLE, timingNeedsValue, timingAllowed } from '../lib/gameSettings.js'
+import { ref, computed, watch, onMounted } from 'vue'
+import { PARTY_OPTIONS, TIMING_OPTIONS, TIMING_HINTS, TIMING_LOCKED_HINT, WEATHER_AVAILABLE, timingNeedsValue, timingAllowed, scenarioOptions } from '../lib/gameSettings.js'
 
 // Étapes 1 à 4 de la création d'une partie, communes au local
 // (LocalGameSetup.vue) et à l'en ligne (CreateGame.vue) : module, scénario,
@@ -13,6 +13,10 @@ const moduleId = defineModel('moduleId', { type: String, default: '' })
 const settings = defineModel('settings', { type: Object, required: true })
 
 const modules = ref([])
+// JSON du module choisi (étape 1) — pour ses scénarios (cf.
+// gameSettings.js::scenarioOptions) ; `null` tant qu'il n'est pas chargé.
+const moduleData = ref(null)
+const scenarios = computed(() => scenarioOptions(moduleData.value))
 
 const scenario = ref(settings.value.scenario)
 const weather = ref(settings.value.weather === '1')
@@ -20,10 +24,33 @@ const party = ref(settings.value.party)
 const timing = ref(settings.value.timing)
 const timingValue = ref(settings.value.timingValue ? Number(settings.value.timingValue) : null)
 
-// La météo est optionnelle en historique, mais obligatoire en placement
-// libre (pas de conditions historiques connues à appliquer par défaut).
-watch(scenario, (val) => {
-  if (val === 'placement-libre') weather.value = true
+// Chargement du module choisi, pour lister SES scénarios à l'étape 2.
+watch([moduleId, modules], async ([id, list]) => {
+  const entry = list.find((mod) => mod.id === id)
+  if (!entry) { moduleData.value = null; return }
+  try {
+    const data = await fetch(entry.path, { cache: 'no-store' }).then((res) => res.json())
+    if (moduleId.value === id) moduleData.value = data
+  } catch {
+    moduleData.value = null
+  }
+})
+
+// Changement de module : un scénario qui n'existe pas (ou n'est pas
+// disponible) dans le nouveau module est remplacé par son premier scénario
+// disponible.
+watch(scenarios, (list) => {
+  if (!list.some((option) => option.id === scenario.value && option.available)) {
+    scenario.value = list.find((option) => option.available)?.id ?? scenario.value
+  }
+})
+
+// Un scénario peut rendre la météo obligatoire (`weather: 'required'`, ex. le
+// placement libre d'Arnhem : pas de conditions historiques connues à
+// appliquer par défaut).
+const weatherRequired = computed(() => scenarios.value.find((option) => option.id === scenario.value)?.weather === 'required')
+watch(weatherRequired, (required) => {
+  if (required) weather.value = true
 })
 
 // Une seule valeur saisie à la fois : on la réinitialise si l'utilisateur
@@ -82,7 +109,7 @@ function chooseModule(mod) {
   <section v-else-if="step === 2">
     <h2>2. Choisir le scénario</h2>
     <ul class="choice-list">
-      <li v-for="opt in SCENARIO_OPTIONS" :key="opt.id">
+      <li v-for="opt in scenarios" :key="opt.id">
         <button type="button" :class="{ selected: scenario === opt.id }" :disabled="opt.available === false"
           @click="scenario = opt.id">
           {{ opt.label }}
@@ -94,13 +121,13 @@ function chooseModule(mod) {
 
   <section v-else-if="step === 3">
     <h2>3. Options</h2>
-    <label class="checkbox-choice" :class="{ disabled: !WEATHER_AVAILABLE || scenario === 'placement-libre' }">
-      <input type="checkbox" v-model="weather" :disabled="!WEATHER_AVAILABLE || scenario === 'placement-libre'" />
+    <label class="checkbox-choice" :class="{ disabled: !WEATHER_AVAILABLE || weatherRequired }">
+      <input type="checkbox" v-model="weather" :disabled="!WEATHER_AVAILABLE || weatherRequired" />
       Météo
       <span v-if="!WEATHER_AVAILABLE" class="badge">Bientôt disponible</span>
     </label>
     <p v-if="!WEATHER_AVAILABLE" class="hint">Les règles de météo ne sont pas encore appliquées par le moteur.</p>
-    <p v-else-if="scenario === 'placement-libre'" class="hint">Obligatoire pour le placement libre.</p>
+    <p v-else-if="weatherRequired" class="hint">Obligatoire pour ce scénario.</p>
   </section>
 
   <section v-else-if="step === 4">

@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { getGame } from '../lib/api.js'
 import { getSocket } from '../lib/socket.js'
 import HexMap from '../components/HexMap.vue'
-import { resolveSettings, describeSettings } from '../lib/gameSettings.js'
+import { resolveSettings, describeSettings, scenarioOptions } from '../lib/gameSettings.js'
 
 const props = defineProps({ id: { type: String, required: true } })
 
@@ -31,8 +31,9 @@ const sharedJournal = ref([])
 
 // Réglages choisis à la création (cf. CreateGame.vue) : mêmes règles que la
 // partie en local (DemoPlay.vue) — le mode "Assisté" active les garde-fous.
-const settings = computed(() => resolveSettings(gameSummary.value?.settings))
-const settingsInfo = computed(() => describeSettings(settings.value))
+const scenarios = computed(() => (moduleData.value ? scenarioOptions(moduleData.value) : null))
+const settings = computed(() => resolveSettings(gameSummary.value?.settings, scenarios.value))
+const settingsInfo = computed(() => describeSettings(settings.value, scenarios.value))
 const isAssistedParty = computed(() => settings.value.party === 'assiste')
 
 // Un journal joué avec d'autres réglages ne peut pas être repris ici : les

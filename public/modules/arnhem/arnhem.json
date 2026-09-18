@@ -1393,6 +1393,10 @@
       }
     ]
   },
+  "scenarios": [
+    { "id": "historique", "label": "Historique", "deployment": "setup" },
+    { "id": "placement-libre", "label": "Placement libre", "deployment": "free", "weather": "required" }
+  ],
   "turnStructure": {
     "airbornePhase": true,
     "combatPhase": true,

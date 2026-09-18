@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import HexMap from '../components/HexMap.vue'
 import { stashPendingReplay } from '../lib/journalStorage.js'
-import { resolveSettings, describeSettings } from '../lib/gameSettings.js'
+import { resolveSettings, describeSettings, scenarioOptions } from '../lib/gameSettings.js'
 
 // Chargement direct d'un module en local, sans passer par le lobby
 // multijoueur — pratique pour tester le moteur de jeu (HexMap) seul.
@@ -18,8 +18,11 @@ const moduleId = ref('')
 // Réglages de la partie, lus dans l'URL. COMPUTED (et non figés au
 // chargement) : reprendre une sauvegarde faite avec d'autres réglages
 // change l'URL sans recréer cette page (cf. `restartWith`).
-const settings = computed(() => resolveSettings(route.query))
-const settingsInfo = computed(() => describeSettings(settings.value))
+// Scénarios du module (cf. lib/gameSettings.js::scenarioOptions) : un
+// scénario indisponible demandé par l'URL retombe sur le premier disponible.
+const scenarios = computed(() => (module.value ? scenarioOptions(module.value) : null))
+const settings = computed(() => resolveSettings(route.query, scenarios.value))
+const settingsInfo = computed(() => describeSettings(settings.value, scenarios.value))
 // "Assisté" est le seul mode qui active les garde-fous (grille, sélection au
 // clic, restriction de tour — cf. lib/useAssisted.js) ; toute autre valeur
 // (dont l'absence) reste "Libre", le comportement par défaut de HexMap.vue.

@@ -26,7 +26,7 @@ avec le nombre de joueurs) — cf. `src/lib/gameSettings.js`.
 
 | Réglage | Valeurs | Effet |
 |---|---|---|
-| Scénario | Historique (*Placement libre* : bientôt) | Déploiement du module |
+| Scénario | Ceux du module — Arnhem : Historique (*Placement libre* : bientôt) | Déploiement |
 | Météo | *bientôt disponible* | — (pas encore appliquée par le moteur) |
 | Partie | **Libre** / **Assisté** | Voir ci-dessous |
 | Timing | Libre / **Limité** / **Blitz** | Chronomètre de la phase de Mouvement — partie Assistée uniquement |
@@ -95,6 +95,7 @@ Champs du JSON (cf. `arnhem.json`) :
 | `movementChart`, `combatChart` | Images des tables, affichables en jeu |
 | `map` | `url`, `imageWidth/Height`, `cols`, `rows`, `evenColMinus` (colonnes décalées amputées d'une ligne), `removedHexes`, `calibration` (x0/y0/colStep/a/rowStep, en pixels de l'image) |
 | `combat` | Table de combat : `die`, colonnes de différentiel, lignes de terrain (décalage), substitutions par hexside, résultats, libellés et **effets** de chaque résultat (retraite, élimination), avance après combat — cf. `src/lib/combatTable.js` ; sans table, pas de combat |
+| `scenarios` | Scénarios proposés : `id`, `label`, `deployment` (`setup` — seul mode appliqué par le moteur ; `free` : bientôt), `weather` (`required` / `optional`) — cf. `src/lib/gameSettings.js` |
 | `turnStructure` | Phases du tour d'un camp, en plus du Mouvement : `airbornePhase`, `combatPhase`, `endOfTurnPhase` (booléens) — cf. `src/lib/rules.js` |
 | `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, `zoc` (`lockIfStarting`, `stopOnEntry`, `blocksRetreat`), `entryCongestion` (`multiply` / `none`), et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`) — cf. `src/lib/rules.js` |
 | `sides` | Camps jouables → factions (`{"allies": ["commonwealth","us","pol"], "german": ["german"]}`) |
@@ -190,7 +191,11 @@ room jamais lancée, 72 h pour une partie lancée).
 
 ## Limites connues
 
-- « Placement libre » et « Météo » sont proposés grisés : le moteur ne les
-  applique pas encore.
+- « Placement libre » (déploiement `free`) et « Météo » sont proposés grisés :
+  le moteur ne les applique pas encore.
+- Certaines règles restent propres à un module et vivent donc dans son
+  composable de règles particulières (`src/lib/useArnhem.js` : déploiement
+  initial, arrivée des aéroportés, retraite en ville) ; la sémantique des
+  résultats de combat se limite à retraite / élimination / avance.
 - Pas de suite de tests automatisée dans le dépôt (les vérifications se font
   par scripts ad hoc et navigateur automatisé).
