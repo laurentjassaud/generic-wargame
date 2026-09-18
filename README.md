@@ -44,8 +44,13 @@ aucune restriction de tour ni de règle, dé libre.
   empilement (une unité par hex en fin de mouvement), congestion des hex
   d'entrée des renforts, retour arrière et annulation de mouvement ;
 - combat : désignation des cibles (plusieurs hex) et des attaquants, table de
-  combat (CRT) avec dé, combats obligatoires, retraites hex par hex,
-  éliminations, avance après combat ;
+  combat (CRT) avec dé, combats obligatoires, retraites hex par hex (avec
+  refoulement d'amis), éliminations, avance après combat ;
+- artillerie (cf. `src/lib/useArtillery.js`) : barrage au contact ou à
+  distance (cible dans la portée et observée par une unité amie, jamais
+  affectée par le résultat), terrain de l'hex seul face à l'artillerie,
+  « final protective fire » (FPF) du défenseur pendant le tour adverse,
+  points rouge (résultat subi) et orange (refoulée) sur les pions ;
 - règles particulières au module (cf. `src/lib/useArnhem.js` : déploiement
   initial, allocation réduite des aéroportés à l'arrivée, réduction des
   retraites en ville).
@@ -128,7 +133,8 @@ src/
 │                 CalibrationPanel, ContextMenu, GameSetupSteps
 └── lib/
     ├── useAssisted.js   mode Assisté : phases, MP/terrain, ZOC, empilement, congestion
-    ├── useCombat.js     cibles/attaquants, lecture de la table, combats obligatoires
+    ├── useCombat.js     cibles/attaquants, lecture de la table, combats obligatoires, FPF
+    ├── useArtillery.js  artillerie : contact, tir à distance, FPF, résultats subis, refoulements
     ├── combatTable.js   table de combat du module (module.combat) : vérification et lecture
     ├── useRetreat.js    retraites, éliminations, avance après combat
     ├── moduleRules.js   registre des règles particulières par module

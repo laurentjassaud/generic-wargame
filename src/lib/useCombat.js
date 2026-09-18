@@ -28,6 +28,16 @@
 //   3. Il clique sur ses PROPRES unités ADJACENTES à TOUS les hex cibles
 //      pour les désigner attaquantes : leur hex passe en JAUNE et leur
 //      facteur d'attaque s'ajoute au total. Recliquer dessus les retire.
+//      Une ARTILLERIE qui n'est au contact d'aucun ennemi peut aussi être
+//      désignée si TOUS les hex cibles sont dans sa portée et observés par
+//      une unité amie (tir À DISTANCE, avec son facteur de barrage, sans
+//      jamais subir le résultat) — cf. lib/useArtillery.js, qui porte toutes
+//      les règles propres à l'artillerie.
+//   3 bis. FPF : le DÉFENSEUR peut ajouter à la défense le facteur "final
+//      protective fire" de ses artilleries éligibles (cf.
+//      useArtillery.js::canProvideFpf, et `fpfCandidates` plus bas) — sur
+//      le même écran en partie locale, par un aller-retour réseau en ligne
+//      (cf. `requestFpf`/`answerFpf`/`openDefense`, et HexMap.vue).
 //   4. Le bouton "Combattre" résout : différentiel = somme des facteurs
 //      d'ATTAQUE − somme des facteurs de DÉFENSE de TOUTES les unités
 //      ennemies des hex cibles (un hex empilé défend avec tous ses pions),
@@ -79,16 +89,15 @@
 //     | null` (cf. useAssisted.js::combatEdgeKind) — nature de l'hexside
 //     franchi par un attaquant, qui peut soit INTERDIRE l'attaque (rivière
 //     sans pont), soit remplacer la ligne de terrain (pont/ruisseau).
-//   - `edgeBlocksAttack` : fonction `(from, h) => bool` (cf.
-//     useAssisted.js::edgeBlocksAttack) — l'hexside interdit-il l'attaque
-//     (rivière sans pont, pour Arnhem) ? Aucune interdiction à défaut.
 //   - `table` : table de combat du module, vérifiée (cf. lib/combatTable.js
 //     ::resolveCombatTable — `module.combat`), ou `null` : pas de table, pas
 //     de combat (la phase Combat se déroule sans combat possible).
+//   - `artillery` : règles de l'artillerie (cf. lib/useArtillery.js) —
+//     adjacence au sens du combat, tir à distance, facteur d'attaque, FPF.
 import { computed, ref, watch } from 'vue'
 import { hexId } from './calibration.js'
 import { neighborsOf } from './hex.js'
-import { isFighter } from './units.js'
+import { isArtillery, isFighter } from './units.js'
 import { referenceColumn, rowCells } from './combatTable.js'
 
 // --- Table de combat (CRT) -----------------------------------------------------
@@ -135,7 +144,12 @@ function isAdjacent(positionA, positionB) {
   return neighborsOf(positionA.col, positionA.row).some((neighbor) => neighbor.col === positionB.col && neighbor.row === positionB.row)
 }
 
-export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind, table = null, edgeBlocksAttack = () => false) {
+// Négociation du FPF en ligne (cf. `fpfStatus`).
+const FPF_WAITING = 'waiting'     // attaquant : demande envoyée, réponse attendue
+const FPF_ANSWERED = 'answered'   // attaquant : le défenseur a choisi, reste à lancer le dé
+const FPF_DEFENDING = 'defending' // défenseur : combat adverse affiché, FPF à choisir
+
+export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind, table, artillery) {
   // Hex CIBLES du combat en cours, dans l'ordre où ils ont été désignés —
   // chacun `{ col, row }`. On mémorise des HEX et non des pions : c'est l'hex
   // qu'on attaque, et TOUTES les unités ennemies qui s'y trouvent défendent
@@ -156,6 +170,22 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
 
   /** L'unité `c` a-t-elle déjà combattu pendant cette phase ? */
   const hasFought = (counter) => !!counter && foughtIds.value.has(counter.id)
+
+  /** `c` ne peut plus attaquer pendant cette phase : il a déjà combattu, ou
+   *  c'est une artillerie refoulée par une retraite amie (cf.
+   *  useArtillery.js::isDisplaced). */
+  const isSpent = (counter) => hasFought(counter) || artillery.isDisplaced(counter)
+
+  // Artilleries du DÉFENSEUR désignées pour le FPF de ce combat (ids, en
+  // chaînes) — cf. `fpfUnits`, qui n'en retient que les éligibles.
+  const fpfIds = ref(new Set())
+
+  // Négociation du FPF d'un combat EN LIGNE (cf. HexMap.vue) : `null` hors
+  // négociation (partie locale, ou demande pas encore envoyée), sinon l'une
+  // des constantes FPF_* (en tête de fichier). Tant qu'elle n'est pas
+  // `null`, la composition du combat est FIGÉE : le défenseur choisit son
+  // FPF face à CE combat-là, qui ne doit plus changer.
+  const fpfStatus = ref(null)
 
   // Changement de phase (ou de tour, ou sortie du mode Assisté — `phase`
   // passe alors à `null`) : on repart de zéro. Les unités ayant combattu
@@ -204,6 +234,10 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
 
   const combatActive = computed(() => targetHexes.value.length > 0)
 
+  /** Composition du combat FIGÉE : dé déjà lancé, ou FPF en cours de
+   *  négociation en ligne (cf. `fpfStatus`). */
+  const locked = computed(() => !!result.value || fpfStatus.value != null)
+
   const targetKeys = computed(() => new Set(targetHexes.value.map((targetHex) => keyOf(targetHex.col, targetHex.row))))
 
   /** Numéros imprimés des hex cibles ("0512"...), pour la modale et le
@@ -229,27 +263,34 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
 
   /** L'unité `c` peut-elle attaquer l'hex `t` (`{ col, row }`) ? Il lui faut :
    *   1. être une vraie unité du camp actif (cf. `isFighter`/`canControl`) ;
-   *   2. être ADJACENTE à `t` ;
-   *   3. ne pas l'attaquer à travers un hexside de RIVIÈRE sans pont —
-   *      choix de règle validé : une rivière sans pont coupe l'attaque comme
-   *      elle coupe déjà la ZOC et le mouvement (cf.
-   *      useAssisted.js::riverBlocksZoc/canEnterTerrain).
-   *   4. ne pas avoir déjà combattu pendant cette phase (cf. `hasFought`).
+   *   2. être ADJACENTE à `t` au sens du combat, c.-à-d. sans hexside de
+   *      RIVIÈRE sans pont entre eux — choix de règle validé : une rivière
+   *      sans pont coupe l'attaque comme elle coupe déjà la ZOC et le
+   *      mouvement (cf. useArtillery.js::adjacentForCombat) ; OU, pour une
+   *      artillerie qui n'est au contact d'aucun ennemi, avoir `t` dans sa
+   *      portée et observé par une unité amie (cf. useArtillery.js::
+   *      canBombard) ;
+   *   3. ne pas avoir déjà combattu pendant cette phase, ni avoir été
+   *      refoulée si c'est une artillerie (cf. `isSpent`).
    *  C'est la brique commune aux deux règles d'adjacence du combat : celle
    *  des CIBLES (`canTargetSet`) et celle des ATTAQUANTS (`canBeAttacker`). */
   function canAttackHex(counter, targetHex) {
-    return !hasFought(counter) && canReachHex(counter, targetHex)
+    if (isSpent(counter) || !isFighter(counter) || !canControl(counter)) return false
+    if (artillery.firesAtRange(counter)) return artillery.canBombard(counter, targetHex)
+    return artillery.adjacentForCombat(counter, targetHex)
   }
 
-  /** Même règle que `canAttackHex`, SANS la condition "n'a pas déjà
-   *  combattu" : "`c` serait-il géographiquement capable d'attaquer `t` ?".
-   *  Sert à `strandedUnits`, qui simule un état de combat qui n'existe pas
-   *  encore — la vérification "a combattu" s'y fait contre un ensemble
-   *  simulé, et non contre `foughtIds`. */
+  /** `c` (unité du camp actif) est-il ADJACENT à l'hex `t` au sens du
+   *  combat, sans condition "n'a pas déjà combattu" ? C'est la relation qui
+   *  fonde les OBLIGATIONS de combat (cf. `pendingEngagements`,
+   *  `strandedUnits`, qui simule un état qui n'existe pas encore — la
+   *  vérification "a combattu" s'y fait contre un ensemble simulé). Le tir
+   *  d'artillerie à distance n'y entre pas (choix validé : il ne solde
+   *  aucune obligation) — une artillerie AU CONTACT, elle, y est soumise
+   *  comme toute unité. */
   function canReachHex(counter, targetHex) {
     if (!isFighter(counter) || !canControl(counter)) return false
-    if (!isAdjacent(counter, targetHex)) return false
-    return !edgeBlocksAttack({ c: counter.col, r: counter.row }, { c: targetHex.col, r: targetHex.row })
+    return artillery.adjacentForCombat(counter, targetHex)
   }
 
   /** L'unité `c` peut-elle attaquer TOUS les hex de `list` à la fois ?
@@ -307,9 +348,10 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  hors de portée...), pour laisser l'appelant (HexMap.vue) le traiter. */
   function toggleTarget(counter) {
     if (!combatAllowed.value || !isFighter(counter) || canControl(counter)) return false
-    // Combat déjà résolu (dé lancé, modale en train de se fermer) : il est
-    // figé, le clic est "consommé" sans rien changer.
-    if (result.value) return true
+    // Combat déjà résolu (dé lancé, modale en train de se fermer) ou FPF en
+    // cours de négociation : il est figé, le clic est "consommé" sans rien
+    // changer.
+    if (locked.value) return true
     if (targetKeys.value.has(keyOf(counter.col, counter.row))) return removeTargetHex(counter.col, counter.row)
     if (!canBeTarget(counter)) return false
     targetHexes.value = [...targetHexes.value, { col: counter.col, row: counter.row }]
@@ -323,7 +365,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  mais tout jet affiché est effacé : les forces viennent de changer. */
   function removeTargetHex(col, row) {
     if (!targetKeys.value.has(keyOf(col, row))) return false
-    if (result.value) return true // combat résolu : figé (cf. `toggleTarget`)
+    if (locked.value) return true // combat figé (cf. `toggleTarget`)
     targetHexes.value = targetHexes.value.filter((targetHex) => targetHex.col !== col || targetHex.row !== row)
     if (targetHexes.value.length === 0) { cancelCombat(); return true }
     result.value = null
@@ -336,6 +378,8 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   function cancelCombat() {
     targetHexes.value = []
     attackerIds.value = new Set()
+    fpfIds.value = new Set()
+    fpfStatus.value = null
     result.value = null
     frozen.value = null
   }
@@ -344,7 +388,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  dessus le désélectionne). Impossible une fois le combat résolu (dé
    *  lancé) : il est figé. */
   function toggleAttacker(counter) {
-    if (!combatActive.value || !counter || result.value) return false
+    if (!combatActive.value || !counter || locked.value) return false
     const next = new Set(attackerIds.value)
     if (next.has(counter.id)) next.delete(counter.id)
     else if (canBeAttacker(counter)) next.add(counter.id)
@@ -359,13 +403,63 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   const isCombatTargetHex = (hex) => targetKeys.value.has(keyOf(hex.c, hex.r))
   const isCombatAttackerHex = (hex) => attackers.value.some((attacker) => attacker.col === hex.c && attacker.row === hex.r)
 
-  // Forces en présence. `atk`/`def` viennent des données du module (cf.
-  // arnhem.json) ; le `?? 0` couvre un pion qui n'en déclarerait pas. La
-  // défense est la SOMME des facteurs de tous les défenseurs, tous hex cibles
-  // confondus (cf. `defenders`).
-  const attackStrength = computed(() => attackers.value.reduce((sum, attacker) => sum + (attacker.atk ?? 0), 0))
-  const defenseStrength = computed(() => defenders.value.reduce((sum, defender) => sum + (defender.def ?? 0), 0))
+  // --- FPF du défenseur (cf. useArtillery.js::canProvideFpf) -----------------
+
+  /** Artilleries du défenseur qui POURRAIENT apporter leur FPF à ce combat
+   *  (cf. useArtillery.js::canProvideFpf) — recalculé à chaque changement de
+   *  cibles/attaquants : un combat qui n'a plus que de l'artillerie comme
+   *  attaquant n'en propose plus aucune. Vide une fois le dé lancé. */
+  const fpfCandidates = computed(() => {
+    if (!combatActive.value || frozen.value) return []
+    const context = { targets: targetHexes.value, attackers: attackers.value, defenders: defenders.value }
+    return counters.value.filter((counter) => artillery.canProvideFpf(counter, context))
+  })
+
+  /** Artilleries dont le FPF compte dans CE combat : celles désignées (cf.
+   *  `fpfIds`) qui sont encore éligibles — ou, une fois le dé lancé, celles
+   *  de la photo du combat (cf. `frozen`). */
+  const fpfUnits = computed(() => frozen.value?.fpf
+    ?? fpfCandidates.value.filter((counter) => fpfIds.value.has(String(counter.id))))
+
+  /** Le défenseur ajoute (ou retire) l'artillerie `c` au FPF de ce combat —
+   *  en partie locale (modale ou clic sur la carte), ou sur l'écran du
+   *  défenseur en ligne (cf. `openDefense`). Refusé si `c` n'est pas
+   *  éligible, et pendant que l'attaquant attend la réponse du défenseur. */
+  function toggleFpf(counter) {
+    if (!counter || result.value || (fpfStatus.value != null && fpfStatus.value !== FPF_DEFENDING)) return false
+    const id = String(counter.id)
+    const next = new Set(fpfIds.value)
+    if (next.has(id)) next.delete(id)
+    else if (fpfCandidates.value.some((candidate) => String(candidate.id) === id)) next.add(id)
+    else return false
+    fpfIds.value = next
+    return true
+  }
+
+  // Forces en présence. `atk`/`def` (et, pour l'artillerie, `bar`/`fpf`)
+  // viennent des données du module (cf. arnhem.json) ; un facteur absent
+  // compte pour 0. L'ATTAQUE est la somme des facteurs des attaquants —
+  // barrage pour une artillerie (cf. useArtillery.js::attackFactor). La
+  // DÉFENSE est la SOMME des facteurs de tous les défenseurs, tous hex cibles
+  // confondus (cf. `defenders`), PLUS les FPF retenus (cf. `fpfUnits`).
+  const attackStrength = computed(() => attackers.value.reduce((sum, attacker) => sum + artillery.attackFactor(attacker), 0))
+  const fpfStrength = computed(() => fpfUnits.value.reduce((sum, unit) => sum + (unit.fpf ?? 0), 0))
+  const defenseStrength = computed(() => defenders.value.reduce((sum, defender) => sum + (defender.def ?? 0), 0) + fpfStrength.value)
   const differential = computed(() => attackStrength.value - defenseStrength.value)
+
+  /** Ids (chaînes) des attaquants qui tirent À DISTANCE (artillerie pas au
+   *  contact, cf. useArtillery.js::firesAtRange) : jamais affectés par le
+   *  résultat. Figés avec le combat au moment du jet. */
+  const rangedIds = computed(() => frozen.value?.rangedIds
+    ?? attackers.value.filter(artillery.firesAtRange).map((attacker) => String(attacker.id)))
+
+  /** Attaquants tels qu'affichés dans la modale : le pion, son facteur
+   *  (barrage pour une artillerie) et s'il tire à distance. */
+  const attackerDetails = computed(() => attackers.value.map((attacker) => ({
+    unit: attacker,
+    factor: artillery.attackFactor(attacker),
+    ranged: rangedIds.value.includes(String(attacker.id)),
+  })))
 
   /** COMBATS OBLIGATOIRES EN ATTENTE — règle demandée : on ne peut pas
    *  quitter la phase Combat (vers "Fin de tour" ou "Autre joueur", cf.
@@ -386,8 +480,10 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  qui les ferait sortir de cette liste sans avoir combattu.
    *
    *  Ne comptent pas : une paire séparée par une rivière sans pont (aucune
-   *  attaque possible entre elles, cf. `canAttackHex`), les marqueurs et
-   *  pions de soutien (cf. `isFighter`). Liste vide hors phase Combat.
+   *  attaque possible entre elles, cf. `canReachHex`), les marqueurs et
+   *  pions de soutien (cf. `isFighter`), une artillerie refoulée (cf.
+   *  `isSpent`) — ni le tir d'artillerie à distance, qui n'est jamais
+   *  obligatoire. Liste vide hors phase Combat.
    *  Chaque entrée : `{ key, friendly, friendlyHex, enemy, enemyHex }` (noms
    *  et numéros d'hex imprimés), pour la modale d'avertissement. */
   const pendingEngagements = computed(() => {
@@ -396,7 +492,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     const enemies = counters.value.filter((enemy) => isFighter(enemy) && !canControl(enemy) && !hasFought(enemy))
     for (const enemy of enemies) {
       for (const attacker of counters.value) {
-        if (!canAttackHex(attacker, enemy)) continue
+        if (isSpent(attacker) || !canReachHex(attacker, enemy)) continue
         list.push({
           key: `${attacker.id}-${enemy.id}`,
           friendly: attacker.name,
@@ -432,6 +528,11 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  possible. Refusé : il faut que Y attaque E1 seule et X attaque E2 (ou
    *  que X attaque E1+E2 à la fois, mais Y ne pourrait alors pas se joindre
    *  à elle — règle stricte — et Y serait alors orpheline côté (A)).
+   *
+   *  Seule l'ADJACENCE compte ici (cf. `canReachHex`) : une artillerie qui
+   *  tire à distance ne crée ni ne solde aucune obligation (choix validé),
+   *  elle n'ajoute que son barrage ; une artillerie AU CONTACT est une unité
+   *  comme les autres.
    *
    *  Algorithme — une SIMULATION locale du combat en cours, avant le dé :
    *   1. `after` = unités ayant combattu APRÈS ce combat : celles de
@@ -479,7 +580,8 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  occupants), `hex` est le numéro d'hex imprimé — pour la modale. */
   const strandedUnits = computed(() => {
     if (!combatActive.value || attackers.value.length === 0 || result.value) return []
-    const now = foughtIds.value
+    // Artilleries refoulées : comme si elles avaient déjà combattu (cf. `isSpent`).
+    const now = new Set([...foughtIds.value, ...counters.value.filter(artillery.isDisplaced).map((counter) => counter.id)])
     const after = new Set([
       ...now,
       ...attackers.value.map((attacker) => attacker.id),
@@ -523,11 +625,16 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   /** Le combat peut-il être résolu ? Il faut au moins un attaquant — la
    *  règle stricte (cf. `canBeAttacker`/`pruneAttackers`) garantit que tout
    *  attaquant désigné touche CHAQUE hex cible — et aucune unité orpheline
-   *  (cf. `strandedUnits`). */
+   *  (cf. `strandedUnits`). En ligne, pas pendant que le défenseur choisit
+   *  son FPF (cf. `fpfStatus`) — et jamais sur l'écran du défenseur. */
   const canResolve = computed(() =>
-    combatActive.value && attackers.value.length > 0 && strandedUnits.value.length === 0)
+    combatActive.value && attackers.value.length > 0 && strandedUnits.value.length === 0
+    && (fpfStatus.value == null || fpfStatus.value === FPF_ANSWERED))
 
   /** Ligne de la table pour UN hex cible `t`, et pourquoi :
+   *   - si au moins une ARTILLERIE attaque, c'est TOUJOURS le terrain de
+   *     l'hex, jamais l'hexside (règle de l'artillerie, cf.
+   *     lib/useArtillery.js) ;
    *   - si TOUS les attaquants au contact de cet hex franchissent un hexside
    *     de MÊME nature, et que la table substitue une ligne à cette nature
    *     (`table.edgeRows` — pour Arnhem : "Grove, Bridge" pour un pont,
@@ -539,8 +646,9 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  `null` (cf. useAssisted.js::combatEdgeKind) : il ne déclenche donc
    *  jamais de substitution, la règle retombe sur le terrain de l'hex. */
   function rowForTargetHex(targetHex) {
+    const withArtillery = attackers.value.some(isArtillery)
     const adjacent = attackers.value.filter((attacker) => isAdjacent(attacker, targetHex))
-    if (adjacent.length > 0) {
+    if (!withArtillery && adjacent.length > 0) {
       const kinds = adjacent.map((attacker) => combatEdgeKind({ c: attacker.col, r: attacker.row }, { c: targetHex.col, r: targetHex.row }))
       const first = kinds[0]
       const substitute = first ? table.edgeRows[first] : null
@@ -550,7 +658,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     }
     const type = terrain?.grid?.[hexId(targetHex.col + 1, targetHex.row)]
     const label = terrain?.types?.[type]?.label ?? type ?? 'non déclaré'
-    return { row: rowForTerrain(type), reason: `terrain de l'hex (${label})` }
+    return { row: rowForTerrain(type), reason: `terrain de l'hex (${label})${withArtillery ? ', attaque avec artillerie' : ''}` }
   }
 
   /** Ligne de la table applicable au combat, et pourquoi (affiché dans la
@@ -616,6 +724,8 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     frozen.value = {
       attackers: attackers.value.map((attacker) => ({ ...attacker })),
       defenders: defenders.value.map((defender) => ({ ...defender })),
+      fpf: fpfUnits.value.map((unit) => ({ ...unit })),
+      rangedIds: rangedIds.value,
       terrainRow: terrainRow.value,
       column: column.value,
     }
@@ -635,6 +745,69 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     return result.value
   }
 
+  // --- FPF en ligne : négociation entre les deux écrans (cf. HexMap.vue) ------
+  // En ligne, l'attaquant ne peut pas choisir le FPF à la place du défenseur,
+  // qui joue sur un autre navigateur. Déroulé :
+  //   1. l'attaquant compose son combat ; s'il existe au moins une artillerie
+  //      éligible (cf. `fpfCandidates`), il le SOUMET au défenseur
+  //      (`requestFpf`) au lieu de lancer le dé — la composition est figée ;
+  //   2. l'écran du défenseur affiche ce combat (`openDefense`) ; il y
+  //      choisit ses FPF (`toggleFpf`) et valide ;
+  //   3. l'attaquant reçoit ce choix (`answerFpf`) et peut lancer le dé. Il
+  //      peut aussi renoncer tant que la réponse n'est pas arrivée
+  //      (`cancelFpfRequest`), jamais après : l'attaque est engagée.
+
+  /** Attaquant : soumet le combat composé au défenseur. Renvoie de quoi le
+   *  reconstituer sur son écran (`{ targets, attackerIds }`), ou `null` si
+   *  le combat n'est pas prêt. */
+  function requestFpf() {
+    if (!canResolve.value || fpfStatus.value != null) return null
+    fpfIds.value = new Set()
+    fpfStatus.value = FPF_WAITING
+    return {
+      targets: targetHexes.value.map((targetHex) => ({ col: targetHex.col, row: targetHex.row })),
+      attackerIds: attackers.value.map((attacker) => attacker.id),
+    }
+  }
+
+  /** Attaquant : renonce à la demande en cours (réponse pas encore reçue) —
+   *  retour à la composition du combat. */
+  function cancelFpfRequest() {
+    if (fpfStatus.value !== FPF_WAITING) return false
+    fpfStatus.value = null
+    return true
+  }
+
+  /** Attaquant : le défenseur a choisi les artilleries `ids` pour son FPF.
+   *  Seules celles encore éligibles comptent (cf. `fpfUnits`). */
+  function answerFpf(ids) {
+    if (fpfStatus.value !== FPF_WAITING) return false
+    fpfIds.value = new Set((ids ?? []).map(String))
+    fpfStatus.value = FPF_ANSWERED
+    return true
+  }
+
+  /** Reconstitue un combat soumis au FPF (`{ targets, attackerIds }`, cf.
+   *  `requestFpf`) :
+   *   - `'defending'` : sur l'écran du DÉFENSEUR, qui doit choisir son FPF ;
+   *   - `'waiting'` / `'answered'` (avec `fpfIds`) : sur l'écran de
+   *     l'ATTAQUANT après un rechargement de la page. */
+  function openDefense({ targets, attackerIds: ids }, status = FPF_DEFENDING, answeredIds = []) {
+    if (!combatAllowed.value) return false
+    cancelCombat()
+    targetHexes.value = (targets ?? []).map((targetHex) => ({ col: targetHex.col, row: targetHex.row }))
+    attackerIds.value = new Set(ids ?? [])
+    fpfIds.value = new Set((answeredIds ?? []).map(String))
+    fpfStatus.value = status
+    return true
+  }
+
+  /** Défenseur : les artilleries retenues pour le FPF (ids). */
+  const chosenFpfIds = () => fpfUnits.value.map((unit) => unit.id)
+
+  /** Surlignage (cf. HexMap.vue) : hex d'une artillerie retenue pour le FPF. */
+  const isCombatFpfHex = (hex) => fpfUnits.value.some((unit) => unit.col === hex.c && unit.row === hex.r)
+
   /** Les lignes de terrain prêtes à afficher dans la mini-table de la
    *  modale : pour chacune, ses cellules d'étiquettes de différentiel (une
    *  par colonne réellement couverte — les colonnes suivantes restent vides,
@@ -644,9 +817,10 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   )
 
   return {
-    combatActive, combatAllowed, targetHexes, targetHexLabels, defenders, attackers, canBeTarget, canBeAttacker,
-    toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought, pendingEngagements,
-    isCombatTargetHex, isCombatAttackerHex,
+    combatActive, combatAllowed, targetHexes, targetHexLabels, defenders, attackers, attackerDetails, rangedIds,
+    canBeTarget, canBeAttacker, toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought,
+    pendingEngagements, isCombatTargetHex, isCombatAttackerHex, isCombatFpfHex,
+    fpfCandidates, fpfUnits, fpfStrength, fpfStatus, toggleFpf, requestFpf, cancelFpfRequest, answerFpf, openDefense, chosenFpfIds,
     attackStrength, defenseStrength, differential, canResolve, strandedUnits, terrainRow, column,
     resolveCombat, combatResult: result,
     crtRows, crtResults: table?.results ?? [],

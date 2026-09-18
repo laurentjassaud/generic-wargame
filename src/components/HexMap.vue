@@ -26,6 +26,7 @@ import { hexExists, removedHexSet } from '../lib/mapShape.js'
 import { useAssisted } from '../lib/useAssisted.js'
 import { useDebug } from '../lib/useDebug.js'
 import { useCombat } from '../lib/useCombat.js'
+import { useArtillery } from '../lib/useArtillery.js'
 import { useRetreat } from '../lib/useRetreat.js'
 import { useModuleRules } from '../lib/moduleRules.js'
 import { isUnit, isFighter, isSupport } from '../lib/units.js'
@@ -586,6 +587,16 @@ const { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIn
 // lib/combatTable.js) — `null` : module sans combat.
 const combatTable = resolveCombatTable(props.module.combat)
 
+// Règles de l'ARTILLERIE (cf. lib/useArtillery.js) : tir à distance, facteur
+// de barrage, FPF, et la mémoire qui va avec — résultats subis (point rouge)
+// et refoulements (point orange). Le pas courant de la piste de tour sert à
+// reconnaître la phase de Combat "précédente".
+const currentStep = computed(() => turnTrackerRef.value?.currentStep ?? 0)
+const artillery = useArtillery({
+  phase, step: currentStep, counters, isEnemyOf, edgeBlocksAttack,
+  resultEffect: (code) => combatTable?.effects[code] ?? null,
+})
+
 // Combat du mode Assisté (cf. lib/useCombat.js, qui porte toute la règle :
 // désignation défenseur/attaquants, lecture de la table, jet de dé). Ce
 // composant ne fait que lui brancher les clics (cf. onCounterSelect/onHex
@@ -593,12 +604,14 @@ const combatTable = resolveCombatTable(props.module.combat)
 // template).
 const {
   combatActive, combatAllowed, targetHexes: combatTargetHexes, targetHexLabels: combatTargetHexLabels, defenders: combatDefenders,
-  attackers: combatAttackers, toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought, pendingEngagements,
-  isCombatTargetHex, isCombatAttackerHex,
+  attackers: combatAttackers, attackerDetails: combatAttackerDetails, rangedIds: combatRangedIds,
+  toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought, pendingEngagements,
+  isCombatTargetHex, isCombatAttackerHex, isCombatFpfHex,
+  fpfCandidates, fpfUnits, fpfStrength, fpfStatus, toggleFpf, requestFpf, cancelFpfRequest, answerFpf, openDefense, chosenFpfIds,
   attackStrength, defenseStrength, differential, canResolve: combatCanResolve, strandedUnits: combatStrandedUnits,
   terrainRow: combatTerrainRow,
   column: combatColumn, resolveCombat, combatResult, crtRows, crtResults,
-} = useCombat(toRef(props, 'assisted'), phase, counters, canControl, props.module.terrain, combatEdgeKind, combatTable, edgeBlocksAttack)
+} = useCombat(toRef(props, 'assisted'), phase, counters, canControl, props.module.terrain, combatEdgeKind, combatTable, artillery)
 
 // Application du résultat d'un combat (retraites au clic, éliminations — cf.
 // lib/useRetreat.js, qui porte toute la règle). HexMap.vue ne lui fournit que
@@ -606,7 +619,7 @@ const {
 // éliminer une unité.
 const {
   start: startRetreat, step: stepRetreat, reduce: reduceRetreat, cancelPush, clear: clearRetreat, active: retreatActive,
-  info: retreatInfo, notes: retreatNotes, isRetreatHex, isRetreatingHex, markNoFire,
+  info: retreatInfo, notes: retreatNotes, isRetreatHex, isRetreatingHex,
   advanceInfo, selectAdvancer, stepAdvance, endAdvance, isPorHex, isAdvanceHex, isAdvancerHex,
 } = useRetreat({
   phase, counters, hexOnMap, canEnterTerrain, isEnemyOf,
@@ -624,8 +637,10 @@ const {
   },
   // Ami REFOULÉ d'un hex par une unité qui retraite : même traitement qu'un
   // pas de retraite (entrée `retreat`), avec `noFire` pour une artillerie
-  // (qui ne peut plus tirer pendant cette phase de Combat, rétabli au rejeu, cf. applyReplayEntry).
+  // (qui ne peut plus tirer pendant cette phase de Combat — point orange, cf.
+  // lib/useArtillery.js ; rétabli au rejeu, cf. applyReplayEntry).
   displaceUnit: (unit, hex, { by, noFire }) => {
+    if (noFire) artillery.markDisplaced(unit.id)
     unit.col = hex.col; unit.row = hex.row
     emit('move', { counterId: unit.id, col: unit.col, row: unit.row })
     log('retreat', `${unit.name} refoulé en ${hexId(unit.col + 1, unit.row)} pour laisser passer ${by.name}`
@@ -659,19 +674,62 @@ function onCombatFight() {
   if (!combatOutcome) return
   const diff = combatOutcome.diff > 0 ? '+' + combatOutcome.diff : String(combatOutcome.diff)
   const names = combatDefenders.value.map((defender) => defender.name).join(', ')
+  const fpf = fpfUnits.value.map((unit) => `${unit.name} +${unit.fpf}`).join(', ')
   // `data` : de quoi restaurer le combat au rejeu du journal (cf.
   // applyReplayEntry, entrée `combat`) — les unités participantes y sont
-  // remarquées "ayant combattu" (cf. lib/useCombat.js::markFought).
-  log('combat', `Combat sur ${combatTargetHexLabels.value.join(', ')} (${names}) : `
-    + `différentiel ${diff}, ${combatOutcome.rowLabel}, dé ${combatOutcome.die} → ${combatOutcome.result} (${combatOutcome.resultLabel})`, {
+  // remarquées "ayant combattu" (cf. lib/useCombat.js::markFought), et
+  // l'artillerie retrouve ses FPF faits et ses résultats subis (cf.
+  // lib/useArtillery.js::applyCombat) : `rangedIds` = artilleries qui ont
+  // tiré à distance, `fpfIds` = artilleries du FPF.
+  const data = {
     hexes: combatTargetHexLabels.value,
     attackerIds: combatAttackers.value.map((attacker) => attacker.id),
     defenderIds: combatDefenders.value.map((defender) => defender.id),
+    rangedIds: [...combatRangedIds.value],
+    fpfIds: fpfUnits.value.map((unit) => unit.id),
     diff: combatOutcome.diff, row: combatOutcome.rowKey, die: combatOutcome.die, result: combatOutcome.result,
-  })
+  }
+  log('combat', `Combat sur ${combatTargetHexLabels.value.join(', ')} (${names}${fpf ? ` ; FPF ${fpf}` : ''}) : `
+    + `différentiel ${diff}, ${combatOutcome.rowLabel}, dé ${combatOutcome.die} → ${combatOutcome.result} (${combatOutcome.resultLabel})`, data)
+  artillery.applyCombat(data)
   // APRÈS le journal du combat : les éliminations/retraites qui suivent s'y
-  // inscrivent donc bien après lui.
-  startRetreat(combatOutcome.result, [...combatAttackers.value], [...combatDefenders.value], combatTargetHexes.value)
+  // inscrivent donc bien après lui. Une artillerie qui a tiré à distance
+  // n'est jamais affectée par le résultat (cf. lib/useArtillery.js) : seuls
+  // les attaquants AU CONTACT le subissent.
+  const ranged = new Set(data.rangedIds.map(String))
+  const contactAttackers = combatAttackers.value.filter((attacker) => !ranged.has(String(attacker.id)))
+  startRetreat(combatOutcome.result, contactAttackers, [...combatDefenders.value], combatTargetHexes.value)
+}
+
+// --- FPF du défenseur (cf. lib/useCombat.js, section FPF) : ce que la modale
+// de combat en montre (cf. CombatModal.vue, prop `fpf` — `mode` y est
+// détaillé), `null` quand il n'y a rien à en dire.
+const fpfView = computed(() => {
+  const units = fpfUnits.value
+  const view = {
+    candidates: fpfCandidates.value,
+    selectedIds: units.map((unit) => String(unit.id)),
+    units,
+    strength: fpfStrength.value,
+  }
+  if (combatResult.value) return units.length ? { ...view, mode: 'done' } : null
+  if (fpfCandidates.value.length === 0) return null
+  // En ligne, le défenseur choisit sur son propre écran : pas encore géré.
+  if (props.online) return null
+  return { ...view, mode: 'local' }
+})
+
+/** Les artilleries éligibles au FPF se choisissent-elles sur CET écran ? */
+const fpfChoosable = computed(() => fpfView.value?.mode === 'local' || fpfView.value?.mode === 'defender')
+
+/** Surlignage (bleu pointillé) des artilleries éligibles, quand le FPF se
+ *  choisit sur cet écran. */
+const isFpfCandidateHex = (hex) => fpfChoosable.value
+  && fpfCandidates.value.some((unit) => unit.col === hex.c && unit.row === hex.r)
+
+/** Modale : le défenseur coche/décoche l'artillerie `id` pour son FPF. */
+function onToggleFpf(id) {
+  toggleFpf(counters.value.find((counter) => String(counter.id) === String(id)))
 }
 
 /** Total de MP déjà dépensés par `c` pendant ce tour-ci (cf.
@@ -1225,14 +1283,18 @@ function onCounterSelect(id) {
   //      (même effet qu'un clic sur l'hex, cf. onHex : le pion recouvre le
   //      polygone de son propre hex, les deux doivent donc faire pareil) ;
   //   2. c'est une unité à soi, adjacente à TOUS les hex cibles (règle
-  //      stricte) -> la désigne (ou la retire si elle l'était déjà) comme
-  //      attaquante.
+  //      stricte) ou une artillerie qui les a tous à portée -> la désigne (ou
+  //      la retire si elle l'était déjà) comme attaquante ;
+  //   3. partie LOCALE seulement : c'est une artillerie du défenseur éligible
+  //      au FPF de ce combat -> le défenseur l'y ajoute (ou l'en retire), cf.
+  //      lib/useCombat.js::toggleFpf. En ligne, le défenseur choisit sur son
+  //      propre écran (cf. `onFpfRequested`).
   // Dans TOUS les autres cas, le clic ne fait rien : en phase Combat, une
   // unité amie ne se sélectionne jamais "normalement" — ni avant d'avoir
   // désigné une cible, ni si elle est hors de portée, ni si elle a déjà
   // combattu (cf. lib/useCombat.js::hasFought, qui la rend inéligible).
   if (combatAllowed.value) {
-    if (!toggleTarget(counter)) toggleAttacker(counter)
+    if (!toggleTarget(counter) && !toggleAttacker(counter) && !props.online) toggleFpf(counter)
     return
   }
   if (selectedCounterId.value != null && selectedCounterId.value !== id && isAdjacent({ c: counter.col, r: counter.row })) {
@@ -1634,6 +1696,9 @@ function resetBoardForReplay() {
   moveHistory.value = []
   clearAllMoved()
   clearRetreat()
+  // Mémoire de l'artillerie (résultats subis, refoulements, FPF) : rétablie
+  // par les entrées rejouées.
+  artillery.reset()
   // Un combat resté ouvert n'a plus de sens sur un plateau remis à zéro.
   cancelCombat()
   turnTrackerRef.value?.applyRemoteTurn(0)
@@ -1657,7 +1722,11 @@ function resetBoardForReplay() {
  *     qui a bougé (`move`) est de plus VERROUILLÉE : elle ne peut plus être
  *     sélectionnée une fois le journal rechargé (cf. `lockedFromSelectionIds`) ;
  *   - `phase` : phase en cours (cf. lib/useAssisted.js::setPhase) ;
- *   - `combat` : unités ayant combattu (cf. lib/useCombat.js::markFought).
+ *   - `combat` : unités ayant combattu (cf. lib/useCombat.js::markFought),
+ *     FPF faits et résultats subis par l'artillerie (cf.
+ *     lib/useArtillery.js::applyCombat) ;
+ *   - `retreat` : artillerie refoulée par une retraite amie (`d.noFire`,
+ *     cf. lib/useArtillery.js::markDisplaced).
  *  Les champs absents (journaux enregistrés avant cet ajout) sont ignorés. */
 function applyReplayEntry(entry) {
   const entryData = entry.data
@@ -1714,8 +1783,8 @@ function applyReplayEntry(entry) {
     const counter = counters.value.find((counter) => String(counter.id) === String(entryData.counterId))
     if (counter) { counter.col = entryData.col; counter.row = entryData.row }
     // Artillerie refoulée par une retraite amie : plus de tir pendant cette
-    // phase de Combat.
-    if (entryData.noFire) markNoFire(entryData.counterId)
+    // phase de Combat (point orange, cf. lib/useArtillery.js).
+    if (entryData.noFire) artillery.markDisplaced(entryData.counterId)
   } else if (entry.kind === 'phase') {
     setPhase(entryData.phase)
     if (entryData.blitzUsed) blitzUsedMs.value = { ...entryData.blitzUsed }
@@ -1723,6 +1792,8 @@ function applyReplayEntry(entry) {
     blitzLoser.value = entryData.loser ?? null
   } else if (entry.kind === 'combat') {
     markFought([...(entryData.attackerIds ?? []), ...(entryData.defenderIds ?? [])])
+    // FPF faits et résultats subis par l'artillerie (cf. lib/useArtillery.js).
+    artillery.applyCombat(entryData)
   } else if (entry.kind === 'support') {
     if (counters.value.some((counter) => String(counter.id) === String(entryData.counterId))) {
       applyRemoteMove(entryData.counterId, entryData.col, entryData.row)
@@ -2024,6 +2095,13 @@ function onMapDragEnd() {
             :points="hex.pts" vector-effect="non-scaling-stroke" />
           <polygon v-for="hex in hexes.filter((hex) => isCombatTargetHex(hex))" :key="'def' + hex.id" class="hex-defender"
             :points="hex.pts" vector-effect="non-scaling-stroke" @click="onHex(hex)" />
+          <!-- FPF du défenseur (cf. lib/useCombat.js) : artilleries éligibles
+               en pointillé bleu (quand le choix se fait sur cet écran),
+               artilleries retenues en bleu plein. -->
+          <polygon v-for="hex in hexes.filter(isFpfCandidateHex)" :key="'fpfc' + hex.id" class="hex-fpf-candidate"
+            :points="hex.pts" vector-effect="non-scaling-stroke" />
+          <polygon v-for="hex in hexes.filter((hex) => isCombatFpfHex(hex))" :key="'fpf' + hex.id" class="hex-fpf"
+            :points="hex.pts" vector-effect="non-scaling-stroke" />
         </g>
 
         <!-- cf. lib/useRetreat.js — avance après combat : chemin de retraite
@@ -2080,6 +2158,7 @@ function onMapDragEnd() {
           <Counter v-for="counter in counters.filter(isUnit)" :key="counter.id" :id="counter.id" :src="counter.src" :col="counter.col"
             :row="counter.row" :calibration="calibration" :selected="selectedCounterId === counter.id" :selectable="selectable"
             :moved="movedThisTurnIds.has(String(counter.id))" :spent="hasFought(counter)"
+            :disrupted="artillery.isDisrupted(counter)" :displaced="artillery.isDisplaced(counter)"
             :offset="stackOffsets.get(counter.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === counter.id ? dragCurrentPx : null"
             @select="onCounterSelect" @dragstart="onCounterDragStart" @contextmenu="onCounterContextMenu" />
         </g>
@@ -2117,12 +2196,12 @@ function onMapDragEnd() {
          unité ennemie en phase Combat. Non bloquante : la carte reste
          cliquable pour y désigner les unités attaquantes. -->
     <CombatModal v-if="combatActive" :target-hexes="combatTargetHexLabels" :defenders="combatDefenders"
-      :attackers="combatAttackers" :can-resolve="combatCanResolve" :stranded-units="combatStrandedUnits"
+      :attacker-details="combatAttackerDetails" :can-resolve="combatCanResolve" :stranded-units="combatStrandedUnits"
       :attack-strength="attackStrength" :defense-strength="defenseStrength" :differential="differential"
       :terrain-row="combatTerrainRow" :column="combatColumn" :combat-result="combatResult"
       :crt-rows="crtRows" :crt-results="crtResults" :retreat="retreatInfo" :retreat-notes="retreatNotes"
       :advance="advanceInfo" @close="cancelCombat" @fight="onCombatFight" @end-advance="endAdvance"
-      @reduce-retreat="reduceRetreat" @cancel-push="cancelPush" />
+      @reduce-retreat="reduceRetreat" @cancel-push="cancelPush" :fpf="fpfView" @toggle-fpf="onToggleFpf" />
 
     <!-- cf. onPhaseNext — changement de phase refusé : unités empilées en fin
          de Mouvement (cf. lib/useAssisted.js::stackedHexes) ou combats
@@ -2384,6 +2463,24 @@ polygon.hex.entry:hover {
 .hex-attacker {
   fill: rgba(232, 196, 104, 0.45);
   stroke: #e8c468;
+  stroke-width: 2.5;
+  pointer-events: none;
+}
+
+/* cf. lib/useCombat.js — FPF du défenseur : artillerie éligible (pointillé
+   bleu) et artillerie retenue (bleu plein). Les clics traversent : c'est le
+   pion qui les reçoit (cf. onCounterSelect). */
+.hex-fpf-candidate {
+  fill: none;
+  stroke: #5aa9e6;
+  stroke-width: 2.5;
+  stroke-dasharray: 6 4;
+  pointer-events: none;
+}
+
+.hex-fpf {
+  fill: rgba(90, 169, 230, 0.4);
+  stroke: #5aa9e6;
   stroke-width: 2.5;
   pointer-events: none;
 }

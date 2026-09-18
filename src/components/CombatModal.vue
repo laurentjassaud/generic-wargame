@@ -9,7 +9,7 @@
 // unités attaquantes — un overlay modal classique l'en empêcherait. Elle est
 // déplaçable pour la même raison : elle ne doit jamais masquer
 // définitivement l'hex qu'on veut cliquer.
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
   // Numéros des hex cibles ("0512"...) — cf. useCombat.js::targetHexLabels.
@@ -17,8 +17,11 @@ const props = defineProps({
   // Toutes les unités ennemies des hex cibles, dont les facteurs de défense
   // s'additionnent — cf. useCombat.js::defenders.
   defenders: { type: Array, default: () => [] },
-  // Pions attaquants désignés, dans l'ordre de sélection — cf. useCombat.js::attackers.
-  attackers: { type: Array, default: () => [] },
+  // Attaquants désignés, dans l'ordre de sélection : `{ unit, factor,
+  // ranged }` — facteur de barrage pour une artillerie, `ranged` si elle
+  // tire à distance (jamais affectée par le résultat) — cf.
+  // useCombat.js::attackerDetails.
+  attackerDetails: { type: Array, default: () => [] },
   // Le combat est-il résoluble (au moins un attaquant, aucune unité
   // orpheline) ? — cf. useCombat.js::canResolve.
   canResolve: { type: Boolean, default: false },
@@ -51,15 +54,40 @@ const props = defineProps({
   // count }` (unité choisie ou `null`, nombre d'unités pouvant avancer), ou
   // `null` hors avance.
   advance: { type: Object, default: null },
+  // FPF du défenseur (cf. useCombat.js, section FPF, et HexMap.vue::fpfView)
+  // — `{ mode, candidates, selectedIds, units, strength }`, ou `null` s'il
+  // n'y a rien à en montrer. `candidates` : artilleries éligibles ; `units` :
+  // celles retenues ; `selectedIds` : leurs ids (chaînes). `mode` :
+  //   - 'local' : partie sur un seul écran, le défenseur les coche ici ;
+  //   - 'request' : en ligne, écran de l'attaquant — un FPF est possible, le
+  //     combat doit être soumis au défenseur avant le jet ;
+  //   - 'waiting' : en ligne, attaquant — réponse du défenseur attendue ;
+  //   - 'answered' : en ligne, attaquant — le défenseur a choisi ;
+  //   - 'defender' : en ligne, écran du défenseur — il coche puis valide ;
+  //   - 'done' : combat résolu (seul le rappel des FPF retenus subsiste).
+  fpf: { type: Object, default: null },
 })
 
 // `end-advance` : bouton "Terminer l'avance" (cf. useRetreat.js::endAdvance).
 // `reduce-retreat` : bouton de réduction de retraite (cf. useRetreat.js::reduce).
 // `cancel-push` : abandon d'un refoulement d'ami en cours de choix (cf.
 // useRetreat.js::cancelPush).
-const emit = defineEmits(['close', 'fight', 'end-advance', 'reduce-retreat', 'cancel-push'])
+// FPF (cf. prop `fpf`) : `toggle-fpf` (id d'une artillerie cochée/décochée),
+// `request-fpf` (soumettre le combat au défenseur), `cancel-fpf-request`
+// (renoncer à cette demande), `send-fpf` (le défenseur valide son choix).
+const emit = defineEmits(['close', 'fight', 'end-advance', 'reduce-retreat', 'cancel-push',
+  'toggle-fpf', 'request-fpf', 'cancel-fpf-request', 'send-fpf'])
+
+const fpfMode = computed(() => props.fpf?.mode ?? null)
+
+// La composition du combat se modifie-t-elle encore depuis la carte ? Non une
+// fois le dé lancé, ni pendant la négociation du FPF en ligne (cf.
+// useCombat.js::fpfStatus), ni, bien sûr, sur l'écran du défenseur.
+const composing = computed(() => !props.combatResult && !['waiting', 'answered', 'defender'].includes(fpfMode.value))
 
 const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
+
+const RANGED_TITLE = "Tir d'artillerie à distance : jamais affectée par le résultat"
 
 // Animation du dé : purement décorative. La VALEUR retenue est celle tirée
 // par useCombat.js::resolveCombat (émise via `fight` à la fin du roulement),
@@ -141,10 +169,13 @@ onUnmounted(() => {
   <div class="combat-modal" :class="{ dragging }" :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
     @pointerdown="onDragStart">
     <header class="cm-head">
-      <span class="cm-title">Combat</span>
+      <span class="cm-title">{{ fpfMode === 'defender' ? 'Combat adverse — FPF' : 'Combat' }}</span>
       <!-- Pas de fermeture pendant une retraite ou une avance : elles doivent
-           aller à leur terme (l'avance se termine par son propre bouton). -->
-      <button class="cm-close" title="Annuler le combat" :disabled="!!retreat || !!advance" @click="$emit('close')">&times;</button>
+           aller à leur terme (l'avance se termine par son propre bouton) — ni
+           une fois que le défenseur a répondu au FPF : l'attaque est engagée.
+           Le défenseur, lui, doit répondre (éventuellement sans FPF). -->
+      <button v-if="fpfMode !== 'defender'" class="cm-close" title="Annuler le combat"
+        :disabled="!!retreat || !!advance || fpfMode === 'answered'" @click="$emit('close')">&times;</button>
     </header>
 
     <div class="cm-forces">
@@ -159,36 +190,49 @@ onUnmounted(() => {
             <span class="cm-factor" title="Facteur de défense">{{ defender.def ?? 0 }}</span>
             <figcaption>{{ defender.name }}</figcaption>
           </figure>
+          <!-- Artilleries dont le FPF s'ajoute à la défense (cf. prop `fpf`). -->
+          <figure v-for="unit in fpf?.units ?? []" :key="'fpf' + unit.id" class="cm-unit cm-fpf-unit"
+            title="Final protective fire : jamais affectée par le résultat">
+            <img :src="unit.src" :alt="unit.name" />
+            <span class="cm-factor" title="Facteur de FPF">{{ unit.fpf ?? 0 }}</span>
+            <figcaption>FPF {{ unit.name }}</figcaption>
+          </figure>
         </div>
-        <p class="cm-total">Défense <b>{{ defenseStrength }}</b></p>
+        <p class="cm-total">
+          Défense <b>{{ defenseStrength }}</b>
+          <span v-if="fpf?.strength" class="cm-fpf-note">dont FPF +{{ fpf.strength }}</span>
+        </p>
       </section>
 
       <!-- Attaquants : ajoutés/retirés en cliquant sur la carte (leur hex
-           passe en jaune), jamais depuis cette modale. -->
+           passe en jaune), jamais depuis cette modale. Une artillerie qui
+           tire à distance est signalée : elle ne subira pas le résultat. -->
       <section class="cm-side cm-attackers">
         <h4>Attaquants</h4>
         <div class="cm-units">
-          <figure v-for="attacker in attackers" :key="attacker.id" class="cm-unit">
-            <img :src="attacker.src" :alt="attacker.name" />
-            <span class="cm-factor" title="Facteur d'attaque">{{ attacker.atk ?? 0 }}</span>
-            <figcaption>{{ attacker.name }}</figcaption>
+          <figure v-for="detail in attackerDetails" :key="detail.unit.id" class="cm-unit"
+            :title="detail.ranged ? RANGED_TITLE : null">
+            <img :src="detail.unit.src" :alt="detail.unit.name" />
+            <span class="cm-factor" title="Facteur d'attaque (barrage pour une artillerie)">{{ detail.factor }}</span>
+            <figcaption>{{ detail.unit.name }}</figcaption>
+            <span v-if="detail.ranged" class="cm-ranged-tag">à distance</span>
           </figure>
-          <p v-if="attackers.length === 0" class="cm-hint">
-            Cliquez sur vos unités adjacentes à toutes les cibles.
+          <p v-if="attackerDetails.length === 0" class="cm-hint">
+            Cliquez sur vos unités adjacentes à toutes les cibles, ou sur une artillerie qui les a toutes à portée.
           </p>
         </div>
         <p class="cm-total">Attaque <b>{{ attackStrength }}</b></p>
       </section>
     </div>
 
-    <p class="cm-hint cm-tip">
+    <p v-if="composing" class="cm-hint cm-tip">
       Cliquez sur une autre unité ennemie pour ajouter son hex au combat (chaque attaquant doit
       toucher tous les hex cibles), ou sur un hex cible pour le retirer.
     </p>
 
     <!-- Règle de participation (cf. useCombat.js::strandedUnits) : ce combat
          laisserait ces unités sans adversaire — "Combattre" reste grisé. -->
-    <div v-if="strandedUnits.length" class="cm-stranded">
+    <div v-if="strandedUnits.length && fpfMode !== 'defender'" class="cm-stranded">
       <p>Combat impossible, il laisserait sans adversaire :</p>
       <ul>
         <li v-for="unit in strandedUnits" :key="unit.id">
@@ -198,6 +242,40 @@ onUnmounted(() => {
       </ul>
       <p>Modifiez les attaquants ou les cibles.</p>
     </div>
+
+    <!-- FPF du défenseur (cf. prop `fpf`) : choix sur cet écran (partie
+         locale, ou écran du défenseur en ligne), ou étapes de la demande
+         faite au défenseur en ligne. -->
+    <section v-if="fpf && fpfMode !== 'done'" class="cm-fpf">
+      <template v-if="fpfMode === 'local' || fpfMode === 'defender'">
+        <p>
+          Tir de protection (FPF) —
+          {{ fpfMode === 'local' ? 'au défenseur de choisir ses artilleries :' : 'choisissez vos artilleries, puis validez :' }}
+        </p>
+        <div class="cm-fpf-list">
+          <button v-for="unit in fpf.candidates" :key="unit.id" type="button" class="cm-fpf-choice"
+            :class="{ on: fpf.selectedIds.includes(String(unit.id)) }" @click="$emit('toggle-fpf', unit.id)">
+            <img :src="unit.src" :alt="unit.name" />
+            {{ unit.name }} <b>+{{ unit.fpf }}</b>
+          </button>
+        </div>
+        <p v-if="fpfMode === 'local'" class="cm-hint">Ou cliquez sur l'artillerie sur la carte.</p>
+        <p v-if="!fpf.candidates.length" class="cm-hint">Aucune de vos artilleries ne peut tirer sur ce combat.</p>
+      </template>
+      <p v-else-if="fpfMode === 'request'">
+        Le défenseur peut répondre par un tir de protection (FPF) :
+        soumettez-lui le combat avant de lancer le dé.
+      </p>
+      <template v-else-if="fpfMode === 'waiting'">
+        <p>En attente du choix du défenseur (FPF)…</p>
+        <button type="button" class="cm-end-advance" @click="$emit('cancel-fpf-request')">Annuler la demande</button>
+      </template>
+      <p v-else-if="fpfMode === 'answered'">
+        <template v-if="fpf.units.length">FPF du défenseur : {{ fpf.units.map((unit) => unit.name).join(', ') }}.</template>
+        <template v-else>Le défenseur n'utilise pas de FPF.</template>
+        Vous pouvez lancer le dé.
+      </p>
+    </section>
 
     <p class="cm-diff">
       Différentiel <b>{{ differential > 0 ? '+' + differential : differential }}</b>
@@ -234,7 +312,14 @@ onUnmounted(() => {
           <b>{{ combatResult.result }}</b> — {{ combatResult.resultLabel }}
         </span>
       </div>
-      <button class="cm-fight" :disabled="rolling || !canResolve || !!combatResult" @click="fight">
+      <!-- Bouton principal : lancer le dé — sauf, en ligne, soumettre d'abord
+           le combat au défenseur (FPF possible), ou, sur son écran, valider
+           son choix de FPF. -->
+      <button v-if="fpfMode === 'defender'" class="cm-fight" @click="$emit('send-fpf')">Valider le FPF</button>
+      <button v-else-if="fpfMode === 'request'" class="cm-fight" :disabled="!canResolve" @click="$emit('request-fpf')">
+        Soumettre au défenseur
+      </button>
+      <button v-else class="cm-fight" :disabled="rolling || !canResolve || !!combatResult" @click="fight">
         {{ combatResult && !rolling ? 'Combat résolu' : 'Combattre' }}
       </button>
     </footer>
@@ -462,6 +547,70 @@ onUnmounted(() => {
 
 .cm-defender .cm-factor {
   background: #ff8c00;
+}
+
+/* Artillerie du FPF, dans la colonne du défenseur : bleu, comme son hex sur
+   la carte (cf. HexMap.vue, .hex-fpf). */
+.cm-defender .cm-fpf-unit .cm-factor {
+  background: #5aa9e6;
+}
+
+.cm-fpf-note {
+  font-size: 0.72rem;
+  color: #5aa9e6;
+  margin-left: 4px;
+}
+
+/* Artillerie qui tire à distance (cf. prop `attackerDetails`). */
+.cm-ranged-tag {
+  display: block;
+  font-size: 0.55rem;
+  color: #e8c468;
+  font-style: italic;
+}
+
+.cm-fpf {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border-left: 3px solid #5aa9e6;
+  background: rgba(90, 169, 230, 0.1);
+  font-size: 0.8rem;
+}
+
+.cm-fpf p {
+  margin: 0 0 4px;
+}
+
+.cm-fpf-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.cm-fpf-choice {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 3px;
+  border: 1px solid #5aa9e6;
+  border-radius: 6px;
+  background: transparent;
+  color: #ece4d0;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.cm-fpf-choice img {
+  width: 24px;
+  height: 24px;
+  border-radius: 2px;
+}
+
+.cm-fpf-choice.on {
+  background: #5aa9e6;
+  color: #1c2530;
 }
 
 .cm-hexes {

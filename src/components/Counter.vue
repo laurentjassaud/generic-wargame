@@ -23,6 +23,13 @@ const props = defineProps({
   // Vrai si ce pion a déjà combattu pendant la phase en cours (cf.
   // lib/useCombat.js::hasFought) — désaturé et à 0.75 d'opacité.
   spent: { type: Boolean, default: false },
+  // Artillerie (cf. lib/useArtillery.js) : a subi un résultat de combat
+  // pendant cette phase de Combat ou la précédente — POINT ROUGE en haut à
+  // droite, plus de FPF possible.
+  disrupted: { type: Boolean, default: false },
+  // Artillerie refoulée par une retraite amie pendant cette phase de Combat
+  // — POINT ORANGE : elle ne peut plus tirer (ni barrage, ni FPF).
+  displaced: { type: Boolean, default: false },
   size: { type: Number, default: 0.8 },         // taille du pion, fraction du pas de ligne (rowStep)
   // Faux (marqueurs type DZ, cf. HexMap.vue) : pas de sélection ni de
   // déplacement par clic sur hex adjacent — reste librement déplaçable en
@@ -52,6 +59,25 @@ const center = computed(() => {
 })
 const counterSizePx = computed(() => props.calibration.rowStep * props.size)
 
+// Points d'état de l'artillerie (cf. props `disrupted`/`displaced`), alignés
+// sur le coin haut droit du pion : rouge au coin, orange juste à sa gauche.
+const dotRadius = computed(() => counterSizePx.value * 0.09)
+const dots = computed(() => {
+  const radius = dotRadius.value
+  const list = []
+  if (props.disrupted) list.push({ key: 'hit', cls: 'dot-disrupted' })
+  if (props.displaced) list.push({ key: 'pushed', cls: 'dot-displaced' })
+  return list.map((dot, index) => ({
+    ...dot,
+    cx: center.value.x + counterSizePx.value / 2 - radius - 1 - index * radius * 2.4,
+    cy: center.value.y - counterSizePx.value / 2 + radius + 1,
+  }))
+})
+const dotTitle = computed(() => [
+  props.disrupted ? 'A subi un résultat de combat (cette phase de Combat ou la précédente) : pas de FPF' : null,
+  props.displaced ? 'Refoulée par une retraite amie : ne peut plus tirer pendant cette phase' : null,
+].filter(Boolean).join(' — '))
+
 function onClick() {
   if (props.selectable) emit('select', props.id)
 }
@@ -69,6 +95,7 @@ function onMouseDown(ev) {
 
 <template>
   <g class="counter" :class="{ selected, spent }">
+    <title v-if="dotTitle">{{ dotTitle }}</title>
     <image :href="src" :x="center.x - counterSizePx / 2" :y="center.y - counterSizePx / 2" :width="counterSizePx" :height="counterSizePx" class="counter-img"
       @mousedown="onMouseDown" @click.stop="onClick"
       @contextmenu.prevent.stop="emit('contextmenu', id, $event)" />
@@ -76,6 +103,7 @@ function onMouseDown(ev) {
       :height="counterSizePx + 6" rx="5" ry="5" />
     <rect v-if="moved" class="counter-moved-ring" :x="center.x - counterSizePx / 2" :y="center.y - counterSizePx / 2" :width="counterSizePx" :height="counterSizePx"
       rx="3" ry="3" />
+    <circle v-for="dot in dots" :key="dot.key" :class="['counter-dot', dot.cls]" :cx="dot.cx" :cy="dot.cy" :r="dotRadius" />
   </g>
 </template>
 
@@ -98,6 +126,21 @@ function onMouseDown(ev) {
   stroke-width: 4;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
+}
+
+.counter-dot {
+  stroke: #1a1a1a;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.dot-disrupted {
+  fill: #e02b2b;
+}
+
+.dot-displaced {
+  fill: #ff8c00;
 }
 
 .counter-moved-ring {

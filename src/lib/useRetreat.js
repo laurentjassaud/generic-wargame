@@ -58,8 +58,9 @@
 //     possible jusqu'au bout (cf. `pushPlans`, `viableMoves`) ; s'il n'y en
 //     a qu'un, il est appliqué d'office ;
 //   - une ARTILLERIE refoulée ne peut plus tirer pendant la phase de Combat
-//     en cours — en particulier plus de "final protective fire" en défense
-//     (cf. `cannotFire` — exposé pour les futures règles d'artillerie).
+//     en cours — ni barrage, ni "final protective fire" en défense : c'est
+//     signalé par `displaceUnit` (`noFire`), et tenu par lib/useArtillery.js
+//     (point orange sur le pion).
 //
 // "L'hex de combat" dont il faut s'éloigner (choix de règle) :
 //   - pour un DÉFENSEUR : l'hex qu'il occupait pendant le combat ;
@@ -129,7 +130,7 @@
 //   - `displaceUnit` : `(unit, { col, row }, { by, noFire }) => void` — même
 //     chose, pour un ami REFOULÉ par l'unité `by` qui retraite (cf. l'en-tête).
 //     `noFire` : c'est une artillerie, qui ne pourra plus tirer pendant
-//     cette phase de Combat.
+//     cette phase de Combat (cf. lib/useArtillery.js::markDisplaced).
 //   - `resultEffect` : `(code) => effet | null` — ce que fait le résultat
 //     `code` de la table (cf. `module.combat.effects`, en-tête). Un code
 //     inconnu ne fait rien.
@@ -187,12 +188,6 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
   // Unités dont l'avance est TERMINÉE (on est passé à une autre après
   // qu'elles ont bougé) : elles ne peuvent plus avancer.
   const doneIds = ref(new Set())
-
-  // Artilleries REFOULÉES par une retraite amie (cf. l'en-tête) : elles ne
-  // peuvent plus tirer jusqu'à la fin de la phase de Combat en cours. Ids
-  // (chaînes). Vidé au changement de phase (cf. le watcher de `phase` plus
-  // bas) — mais PAS par `clear`, appelé à chaque nouveau combat de la phase.
-  const noFireIds = ref(new Set())
 
   // Refoulement EN ATTENTE du choix du joueur (cf. l'en-tête) : `null`, ou
   // `{ hex, chosen }` — `hex` : l'hex ami où l'unité en tête de file veut
@@ -518,8 +513,10 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
 
   /** Applique le résultat `code` d'un combat qui vient d'être résolu, selon
    *  l'effet que le module lui donne (cf. `resultEffect`). `attackers`/
-   *  `defenders` : les pions du combat ; `targetHexes` : ses hex cibles
-   *  ({ col, row }). Les éliminations sont immédiates ; les retraites sont
+   *  `defenders` : les pions du combat — attaquants AU CONTACT seulement :
+   *  une artillerie qui tire à distance n'est jamais affectée par le
+   *  résultat, ni ne compte parmi les vainqueurs qui avancent (cf.
+   *  lib/useArtillery.js) ; `targetHexes` : ses hex cibles ({ col, row }). Les éliminations sont immédiates ; les retraites sont
    *  mises en file (défenseurs d'abord) et se jouent ensuite au clic (cf.
    *  `step`). */
   function start(code, attackers, defenders, targetHexes) {
@@ -621,7 +618,6 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
         const friend = unitOf(id)
         if (!friend) continue
         const silenced = isArtillery(friend)
-        if (silenced) noFireIds.value = new Set(noFireIds.value).add(String(friend.id))
         notes.value = [...notes.value,
           `${friend.name} refoulé d'un hex pour laisser passer ${unit.name}${silenced ? ' (ne pourra plus tirer pendant cette phase)' : ''}`]
         displaceUnit(friend, push.to, { by: unit, noFire: silenced })
@@ -744,26 +740,7 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
     pending.value = null
   }
 
-  // Changement de phase : tout est abandonné, et les artilleries refoulées
-  // pendant la phase de Combat qui s'achève peuvent de nouveau tirer.
-  // `flush: 'sync'` : au rejeu d'un journal, les entrées de la phase suivante
-  // (cf. `markNoFire`) arrivent dans le même élan.
-  watch(phase, () => {
-    clear()
-    noFireIds.value = new Set()
-  }, { flush: 'sync' })
-
-  /** L'artillerie `counter` a-t-elle été refoulée pendant la phase de Combat
-   *  en cours (et ne peut donc plus tirer — ni "final protective fire") ?
-   *  Pour les futures règles d'artillerie. */
-  const cannotFire = (counter) => !!counter && noFireIds.value.has(String(counter.id))
-
-  /** Rejeu du journal : l'unité `id` a été refoulée pendant cette phase de
-   *  Combat (cf. HexMap.vue::applyReplayEntry, entrée `retreat` avec
-   *  `noFire`). */
-  function markNoFire(id) {
-    noFireIds.value = new Set(noFireIds.value).add(String(id))
-  }
+  watch(phase, clear, { flush: 'sync' })
 
   /** L'hex `h` ({ c, r }, format des hex de HexMap.vue) est-il proposé
    *  (rouge, cliquable) — pas de retraite, ou hex de refoulement d'un ami ? */
@@ -789,7 +766,7 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
     : null))
 
   return {
-    start, step, reduce, cancelPush, clear, active, retreating, info, notes, isRetreatHex, isRetreatingHex, cannotFire, markNoFire,
+    start, step, reduce, cancelPush, clear, active, retreating, info, notes, isRetreatHex, isRetreatingHex,
     advancing, advanceInfo, selectAdvancer, stepAdvance, endAdvance, isPorHex, isAdvanceHex, isAdvancerHex,
   }
 }
