@@ -169,6 +169,14 @@ let initialTurnEntry = null
 // journal correspondante. Ne couvre volontairement que les déplacements —
 // pas les entrées en jeu, éliminations, etc., qui ont leurs propres
 // mécanismes de retour (menu contextuel "Replacer le pion").
+// L'historique ne vaut que pour la phase de Mouvement EN COURS : il est vidé
+// à chaque changement de phase (cf. watcher de `phase`) et de tour (cf.
+// `clearAllMoved`). Sinon, en phase Combat, "Retour arrière" renvoyait à sa
+// position d'avant mouvement une unité qui avait déjà combattu, voire avancé
+// après combat — le journal la disait encore là où elle avait avancé, les
+// règles la voyaient ailleurs, et les retraites suivantes passaient par
+// l'hex qu'elle était censée tenir. Au tour suivant, l'adversaire pouvait de
+// même annuler le dernier mouvement du joueur précédent.
 const moveHistory = ref([])
 function pushMoveHistory(counterId, from, to, journalId) {
   if (journalId == null) return
@@ -205,6 +213,8 @@ function clearAllMoved() {
   turnStartPositions.clear()
   movedThisTurnIds.value = new Set()
   lockedFromSelectionIds.value = new Set()
+  // Nouveau tour/camp : plus rien à annuler du tour écoulé (cf. `moveHistory`).
+  moveHistory.value = []
   // Les règles particulières du module qui ne valent que pour le tour écoulé
   // s'effacent au même moment (cf. lib/useArnhem.js::clearTurnState — les
   // aéroportés largués ce tour-ci, dont l'allocation de mouvement est
@@ -283,9 +293,11 @@ function cancelMovement(id) {
 // --- Retour arrière (bouton de la barre d'outils) : disponible UNIQUEMENT
 // en mode Assisté (cf. `v-if="assisted"` sur le bouton plus bas) — en mode
 // Libre, aucun garde-fou de tour/MP n'existe, "annuler" un glisser-déposer
-// libre n'aurait pas vraiment de sens dans un bac à sable.
+// libre n'aurait pas vraiment de sens dans un bac à sable — et seulement en
+// phase Mouvement (cf. `moveHistory`) : passé cette phase, les déplacements
+// sont acquis (combats, retraites et avances en dépendent).
 function undoLastMove() {
-  if (!props.assisted || inputLocked.value) return
+  if (!props.assisted || inputLocked.value || phase.value !== 0) return
   const last = moveHistory.value.pop()
   if (!last) return
   const counter = counters.value.find((counter) => String(counter.id) === String(last.counterId))
@@ -732,6 +744,9 @@ const selectedCounterId = ref(null)
 // attaquante.
 watch(phase, (newPhase) => {
   if (newPhase === 1) selectedCounterId.value = null
+  // Les déplacements de la phase qui s'achève sont acquis : plus rien à
+  // annuler (cf. `moveHistory`).
+  moveHistory.value = []
   // Tout changement de phase désélectionne un renfort choisi dans le
   // panneau : il n'est peut-être plus plaçable dans la nouvelle phase (cf.
   // lib/useAssisted.js::canPlaceReinforcementNow — un aéroporté choisi en
@@ -888,7 +903,10 @@ function onCounterContextMenu(id, ev) {
     { label: 'Replacer le pion', action: () => returnCounterToReinforcements(id) },
     { label: 'Éliminé', action: () => eliminateCounter(id) },
   ]
-  if (movedThisTurnIds.value.has(String(id))) {
+  // Phase Mouvement uniquement (ou partie Libre, sans phases : `phase` vaut
+  // `null`) — même raison que "Retour arrière" (cf. `moveHistory`) : en phase
+  // Combat, l'unité a pu combattre, retraiter ou avancer depuis.
+  if (movedThisTurnIds.value.has(String(id)) && (phase.value === null || phase.value === 0)) {
     items.push({ label: 'Annuler le mouvement', action: () => cancelMovement(id) })
   }
   openContextMenu(ev, items)
@@ -1897,7 +1915,7 @@ function onMapDragEnd() {
           @click="showCounters = !showCounters">
           {{ showCounters ? 'Cacher les pions' : 'Afficher les pions' }}
         </button>
-        <button v-if="assisted" type="button" class="toggle-btn" :disabled="!moveHistory.length || inputLocked"
+        <button v-if="assisted" type="button" class="toggle-btn" :disabled="!moveHistory.length || inputLocked || phase !== 0"
           @click="undoLastMove">
           ↩ Retour arrière
         </button>
