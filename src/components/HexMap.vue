@@ -605,8 +605,8 @@ const {
 // les deux actions concrètes sur la carte : avancer une unité d'un hex, et
 // éliminer une unité.
 const {
-  start: startRetreat, step: stepRetreat, reduce: reduceRetreat, clear: clearRetreat, active: retreatActive,
-  info: retreatInfo, notes: retreatNotes, isRetreatHex, isRetreatingHex,
+  start: startRetreat, step: stepRetreat, reduce: reduceRetreat, cancelPush, clear: clearRetreat, active: retreatActive,
+  info: retreatInfo, notes: retreatNotes, isRetreatHex, isRetreatingHex, markNoFire,
   advanceInfo, selectAdvancer, stepAdvance, endAdvance, isPorHex, isAdvanceHex, isAdvancerHex,
 } = useRetreat({
   phase, counters, hexOnMap, canEnterTerrain, isEnemyOf,
@@ -621,6 +621,16 @@ const {
     // dépense de MP — cf. applyReplayEntry.
     log('retreat', `${unit.name} retraite en ${hexId(unit.col + 1, unit.row)} (${done}/${total})`,
       { counterId: unit.id, col: unit.col, row: unit.row })
+  },
+  // Ami REFOULÉ d'un hex par une unité qui retraite : même traitement qu'un
+  // pas de retraite (entrée `retreat`), avec `noFire` pour une artillerie
+  // (qui ne peut plus tirer pendant cette phase de Combat, rétabli au rejeu, cf. applyReplayEntry).
+  displaceUnit: (unit, hex, { by, noFire }) => {
+    unit.col = hex.col; unit.row = hex.row
+    emit('move', { counterId: unit.id, col: unit.col, row: unit.row })
+    log('retreat', `${unit.name} refoulé en ${hexId(unit.col + 1, unit.row)} pour laisser passer ${by.name}`
+      + (noFire ? ' (ne pourra plus tirer pendant cette phase)' : ''),
+      { counterId: unit.id, col: unit.col, row: unit.row, displaced: true, ...(noFire ? { noFire: true } : {}) })
   },
   eliminateUnit: (unit, reason) => eliminateCounter(unit.id, reason),
   // Effet de chaque résultat et avance après combat : déclarés par la table
@@ -1703,6 +1713,9 @@ function applyReplayEntry(entry) {
     // `moveUnit`/`advanceUnit` dans l'appel à useRetreat plus haut).
     const counter = counters.value.find((counter) => String(counter.id) === String(entryData.counterId))
     if (counter) { counter.col = entryData.col; counter.row = entryData.row }
+    // Artillerie refoulée par une retraite amie : plus de tir pendant cette
+    // phase de Combat.
+    if (entryData.noFire) markNoFire(entryData.counterId)
   } else if (entry.kind === 'phase') {
     setPhase(entryData.phase)
     if (entryData.blitzUsed) blitzUsedMs.value = { ...entryData.blitzUsed }
@@ -2109,7 +2122,7 @@ function onMapDragEnd() {
       :terrain-row="combatTerrainRow" :column="combatColumn" :combat-result="combatResult"
       :crt-rows="crtRows" :crt-results="crtResults" :retreat="retreatInfo" :retreat-notes="retreatNotes"
       :advance="advanceInfo" @close="cancelCombat" @fight="onCombatFight" @end-advance="endAdvance"
-      @reduce-retreat="reduceRetreat" />
+      @reduce-retreat="reduceRetreat" @cancel-push="cancelPush" />
 
     <!-- cf. onPhaseNext — changement de phase refusé : unités empilées en fin
          de Mouvement (cf. lib/useAssisted.js::stackedHexes) ou combats

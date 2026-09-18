@@ -41,7 +41,8 @@ const props = defineProps({
   // Les lignes de résultats (une par face du dé) — cf. useCombat.js::crtResults.
   crtResults: { type: Array, default: () => [] },
   // Retraite EN COURS après le jet (cf. useRetreat.js::info) — `{ name,
-  // side, step, total, waiting }`, ou `null` s'il n'y en a pas (ou plus).
+  // side, step, total, waiting, pushes, pushing, reduction }`, ou `null`
+  // s'il n'y en a pas (ou plus).
   retreat: { type: Object, default: null },
   // Ce qui s'est passé en appliquant le résultat (éliminations, retraites
   // terminées) — cf. useRetreat.js::notes.
@@ -54,7 +55,9 @@ const props = defineProps({
 
 // `end-advance` : bouton "Terminer l'avance" (cf. useRetreat.js::endAdvance).
 // `reduce-retreat` : bouton de réduction de retraite (cf. useRetreat.js::reduce).
-const emit = defineEmits(['close', 'fight', 'end-advance', 'reduce-retreat'])
+// `cancel-push` : abandon d'un refoulement d'ami en cours de choix (cf.
+// useRetreat.js::cancelPush).
+const emit = defineEmits(['close', 'fight', 'end-advance', 'reduce-retreat', 'cancel-push'])
 
 const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
 
@@ -239,9 +242,20 @@ onUnmounted(() => {
     <!-- Application du résultat (cf. useRetreat.js) : unité qui retraite
          maintenant, et ce qui s'est déjà passé. -->
     <section v-if="combatResult && !rolling && (retreat || advance || retreatNotes.length)" class="cm-retreat">
-      <p v-if="retreat" class="cm-retreat-now">
+      <!-- Refoulement d'un ami en attente de choix (cf. useRetreat.js::pending). -->
+      <p v-if="retreat?.pushing" class="cm-retreat-now">
+        Pour laisser passer <b>{{ retreat.name }}</b>, choisissez où refouler <b>{{ retreat.pushing }}</b> :
+        cliquez sur un hex <span class="cm-red">rouge</span>.
+      </p>
+      <button v-if="retreat?.pushing" class="cm-end-advance" @click="$emit('cancel-push')">
+        Choisir un autre hex de retraite
+      </button>
+      <p v-else-if="retreat" class="cm-retreat-now">
         Retraite de <b>{{ retreat.name }}</b> ({{ retreat.side === 'defender' ? 'défenseur' : 'attaquant' }}) —
         hex {{ retreat.step }}/{{ retreat.total }} : cliquez sur un hex <span class="cm-red">rouge</span>.
+        <span v-if="retreat.pushes" class="cm-retreat-wait">
+          Seuls des hex amis sont accessibles : leur occupant sera refoulé d'un hex pour laisser la place.
+        </span>
         <span v-if="retreat.waiting" class="cm-retreat-wait">
           Ensuite : {{ retreat.waiting }} autre{{ retreat.waiting > 1 ? 's' : '' }} unité{{ retreat.waiting > 1 ? 's' : '' }}.
         </span>
