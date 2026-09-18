@@ -132,7 +132,7 @@ import { hexId } from './calibration.js'
 import { neighborsOf } from './hex.js'
 import { isFighter } from './units.js'
 import { isAirborneEntry } from './setup.js'
-import { resolveRules } from './rules.js'
+import { resolveRules, resolveTurnStructure } from './rules.js'
 import { resolveEdges } from './edges.js'
 
 // Les types d'unité motorisées/blindées, les terrains qui leur sont
@@ -148,8 +148,13 @@ import { resolveEdges } from './edges.js'
 
 //   - `rules` : règles génériques paramétrées par le module (cf.
 //     lib/rules.js::resolveRules — `vehicleTypes`, `impassableForVehicles`,
-//     `stackingLimit`). À défaut, les valeurs par défaut du moteur.
-export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap, getReinforcements, rules = resolveRules(null)) {
+//     `stackingLimit`, `zoc`, `entryCongestion`). À défaut, les valeurs par
+//     défaut du moteur.
+//   - `structure` : structure du tour d'un camp (cf. lib/rules.js::
+//     resolveTurnStructure — `airbornePhase`, `combatPhase`,
+//     `endOfTurnPhase`), cf. section "Phases" plus bas. À défaut, toutes les
+//     phases.
+export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap, getReinforcements, rules = resolveRules(null), structure = resolveTurnStructure(null)) {
   // --- Arêtes (hexsides) du module -------------------------------------------
   // Interprète des arêtes, construit UNE SEULE FOIS (cf. lib/edges.js) :
   // `terrain` ne change pas en cours de partie, inutile de reconstruire les
@@ -248,11 +253,20 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   }
 
   // --- Phases Mouvement / Combat / Fin de tour --------------------------------
-  // En mode Assisté, chaque camp actif (déterminé par TurnTracker.vue) joue
-  // son tour en 2 PHASES successives et obligatoires : d'abord Mouvement,
-  // puis Combat. Concrètement, ça se traduit par 2 marqueurs affichés sous
-  // la piste de tour (cf. TurnTracker.vue), et par UN SEUL bouton "suivant"
-  // qui, selon où on en est, déclenche l'une de ces 4 actions :
+  // Les phases qui composent le tour d'un camp sont DÉCLARÉES par le module
+  // (`module.turnStructure`, cf. paramètre `structure` et lib/rules.js::
+  // resolveTurnStructure) : le Mouvement existe toujours ; la phase Airborne
+  // (avant lui), la phase Combat (après lui) et la Fin de tour (après le
+  // dernier camp de l'ordre) sont chacune facultatives. Un module qui en
+  // retire une voit simplement le bouton "suivant" la sauter (cf. `advance`,
+  // `nextLabel`) et son marqueur disparaître (cf. `phaseLabels`).
+  //
+  // Avec toutes les phases (cas d'Arnhem), chaque camp actif (déterminé par
+  // TurnTracker.vue) joue son tour en 2 PHASES successives et obligatoires :
+  // d'abord Mouvement, puis Combat. Concrètement, ça se traduit par 2
+  // marqueurs affichés sous la piste de tour (cf. TurnTracker.vue), et par UN
+  // SEUL bouton "suivant" qui, selon où on en est, déclenche l'une de ces 4
+  // actions :
   //
   //   1. Mouvement → Combat          (même camp, même tour)   — "Nouvelle phase"
   //   2. Combat → Mouvement          (camp SUIVANT, même tour) — "Autre joueur"
@@ -342,7 +356,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  Au rejeu, le résultat est le même qu'en jeu : à l'entrée `turn`, les
    *  aéroportés posés PENDANT ce tour ne sont pas encore rejoués. */
   function startSidePhase() {
-    phaseStep.value = airbornePending() ? PHASE_AIRBORNE : 0
+    // Module SANS phase Airborne (`structure.airbornePhase` faux) : on
+    // commence toujours directement par le Mouvement.
+    phaseStep.value = structure.airbornePhase && airbornePending() ? PHASE_AIRBORNE : 0
     airborneThisStep.value = phaseStep.value === PHASE_AIRBORNE
   }
 
@@ -350,9 +366,11 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  Airborne, uniquement les aéroportés ; dans toute autre phase,
    *  uniquement les NON aéroportés (cf. règle ci-dessus). Le tour d'arrivée
    *  et le camp sont vérifiés à part (cf. HexMap.vue::canEnterThisTurn/
-   *  `canControl`). Toujours vrai hors mode Assisté. */
+   *  `canControl`). Toujours vrai hors mode Assisté — et pour un module SANS
+   *  phase Airborne : ses aéroportés se posent alors comme n'importe quel
+   *  renfort, sans quoi ils ne pourraient jamais entrer en jeu. */
   function canPlaceReinforcementNow(counter) {
-    if (!assisted.value) return true
+    if (!assisted.value || !structure.airbornePhase) return true
     return phaseStep.value === PHASE_AIRBORNE ? isAirborneEntry(counter) : !isAirborneEntry(counter)
   }
 
@@ -369,28 +387,32 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   const phase = computed(() => (assisted.value ? phaseStep.value : null))
 
   // Libellés des marqueurs de la ligne "phases" (cf. TurnTracker.vue, qui ne
-  // fait qu'afficher CETTE liste en surlignant l'entrée d'index `phase`,
-  // sans connaître elle-même le sens de "Fin de tour"). 2 marqueurs pour un
-  // camp qui n'est pas le dernier de l'ordre (Mouvement/Combat, comme
-  // avant) ; 3 pour le DERNIER camp de l'ordre (German dans Arnhem), qui
-  // seul voit sa phase Combat suivie d'une "Fin de tour" (cf. section
-  // ci-dessus pour le détail des 4 transitions).
+  // fait qu'afficher CETTE liste en surlignant l'entrée d'index `phaseIndex`,
+  // sans connaître elle-même le sens de "Fin de tour"). Avec toutes les
+  // phases : 2 marqueurs pour un camp qui n'est pas le dernier de l'ordre
+  // (Mouvement/Combat) ; 3 pour le DERNIER camp de l'ordre (German dans
+  // Arnhem), qui seul voit sa phase Combat suivie d'une "Fin de tour" (cf.
+  // section ci-dessus pour le détail des 4 transitions). Une phase que le
+  // module ne déclare pas (cf. `structure`) n'a pas de marqueur.
+  const PHASE_LABEL = { [PHASE_AIRBORNE]: 'Airborne', 0: 'Mouvement', 1: 'Combat', 2: 'Fin de tour' }
   const phaseLabels = computed(() => {
     if (!assisted.value) return []
-    const labels = ['Mouvement', 'Combat']
-    if (turnTrackerRef.value?.isLastSideOfTurn) labels.push('Fin de tour')
+    const labels = ['Mouvement']
+    if (structure.combatPhase) labels.push('Combat')
+    if (structure.endOfTurnPhase && turnTrackerRef.value?.isLastSideOfTurn) labels.push('Fin de tour')
     // Tour commencé par une phase Airborne : son marqueur en tête.
     if (airborneThisStep.value) labels.unshift('Airborne')
     return labels
   })
 
   // Index du marqueur ALLUMÉ dans `phaseLabels` (cf. TurnTracker.vue, prop
-  // `phaseIndex`) : égal à la phase, décalé de 1 quand le marqueur
-  // "Airborne" occupe la 1re place (-1 -> 0, 0 -> 1, 1 -> 2...). `null`
-  // hors mode Assisté.
+  // `phaseIndex`) : la position du libellé de la phase en cours dans cette
+  // liste — qui dépend des marqueurs présents (Airborne en tête décale tout
+  // d'un cran ; une phase Combat absente fait remonter la Fin de tour).
+  // `null` hors mode Assisté.
   const phaseIndex = computed(() => {
     if (!assisted.value) return null
-    return phaseStep.value + (airborneThisStep.value ? 1 : 0)
+    return phaseLabels.value.indexOf(PHASE_LABEL[phaseStep.value])
   })
 
   // Dès que le camp/tour actif change — que ce soit via NOTRE propre appel
@@ -456,19 +478,38 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   const nextLabel = computed(() => {
     if (!assisted.value) return null
     // Airborne -> Mouvement, ou Mouvement -> Combat : même camp, même tour.
-    if (phaseStep.value === PHASE_AIRBORNE || phaseStep.value === 0) return 'Nouvelle phase'
-    if (phaseStep.value === 1) {
-      // Dernier camp de l'ordre (German) : la Combat ne rend plus la main
-      // directement au camp suivant, elle ouvre d'abord la Fin de tour
-      // (cas 3 ci-dessus) — les autres camps gardent le comportement
-      // historique (cas 2).
-      return turnTrackerRef.value?.isLastSideOfTurn ? 'Fin de tour' : 'Autre joueur'
-    }
+    if (phaseStep.value === PHASE_AIRBORNE) return 'Nouvelle phase'
+    if (phaseStep.value === 0) return structure.combatPhase ? 'Nouvelle phase' : sideEndLabel()
+    // Fin de la dernière phase du camp (Combat) : cf. `sideEndLabel`.
+    if (phaseStep.value === 1) return sideEndLabel()
     // phaseStep === 2 : Fin de tour, uniquement atteignable pour le dernier
     // camp de l'ordre (cf. `advance` ci-dessous) — le clic suivant boucle
     // forcément sur le 1er camp de l'ordre, donc sur un nouveau tour.
     return 'Nouveau tour'
   })
+
+  /** Libellé du bouton quand le camp actif termine SA DERNIÈRE PHASE (le
+   *  Combat, ou le Mouvement pour un module sans phase Combat) : le dernier
+   *  camp de l'ordre (German dans Arnhem) ouvre la Fin de tour si le module
+   *  en a une (cas 3 ci-dessus), sinon il fait directement commencer le tour
+   *  suivant ; les autres camps rendent la main au camp suivant (cas 2). */
+  function sideEndLabel() {
+    if (!turnTrackerRef.value?.isLastSideOfTurn) return 'Autre joueur'
+    return structure.endOfTurnPhase ? 'Fin de tour' : 'Nouveau tour'
+  }
+
+  /** Ce que fait le bouton quand le camp actif termine SA DERNIÈRE PHASE (cf.
+   *  `sideEndLabel` pour les mêmes cas) : ouvrir la Fin de tour (dernier camp
+   *  de l'ordre, module qui en a une) — le pas courant de TurnTracker.vue ne
+   *  bouge PAS encore, c'est le clic SUIVANT qui le fera avancer — ou bien
+   *  redemander directement à TurnTracker.vue d'avancer au camp suivant. */
+  function endSide() {
+    if (structure.endOfTurnPhase && turnTrackerRef.value?.isLastSideOfTurn) {
+      phaseStep.value = 2
+      return
+    }
+    turnTrackerRef.value?.nextTurn()
+  }
 
   // Gestionnaire de clic pour le bouton "suivant" de la ligne "phases"
   // (branché sur l'évènement `phase-next` émis par TurnTracker.vue — cf.
@@ -482,25 +523,17 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     }
     if (phaseStep.value === 0) {
       // Cas 1 : on ne fait QUE passer à la phase Combat du même camp — le
-      // pas courant de TurnTracker.vue ne bouge pas.
-      phaseStep.value = 1
+      // pas courant de TurnTracker.vue ne bouge pas. Module SANS phase
+      // Combat : le Mouvement était la dernière phase du camp (cf. `endSide`).
+      if (structure.combatPhase) phaseStep.value = 1
+      else endSide()
       return
     }
     if (phaseStep.value === 1) {
-      if (turnTrackerRef.value?.isLastSideOfTurn) {
-        // Cas 3 : la Combat du DERNIER camp de l'ordre vient de se
-        // terminer — on ouvre la Fin de tour (phase du TOUR entier, pas
-        // d'un camp) avant de rendre la main au camp suivant. Le pas
-        // courant de TurnTracker.vue ne bouge PAS encore ici : c'est le
-        // clic SUIVANT (phaseStep === 2 ci-dessous) qui le fera avancer.
-        phaseStep.value = 2
-        return
-      }
-      // Cas 2 : la Combat d'un camp qui n'est PAS le dernier de l'ordre
-      // est terminée — on redemande directement à TurnTracker.vue
-      // d'avancer au camp suivant (même tour), comme avant l'ajout de la
-      // Fin de tour.
-      turnTrackerRef.value?.nextTurn()
+      // Cas 3 (dernier camp de l'ordre : on ouvre la Fin de tour, phase du
+      // TOUR entier, avant de rendre la main) ou cas 2 (autre camp : on
+      // avance directement au camp suivant, même tour) — cf. `endSide`.
+      endSide()
       return
     }
     // Cas 4 (phaseStep === 2, Fin de tour) : elle se termine, on redemande
@@ -663,9 +696,18 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // partant d'un hex hors ZOC) doit s'y arrêter — aucun déplacement
   // supplémentaire ce tour-ci, même s'il lui reste des MP.
   //
-  // Ces deux formulations se ramènent en fait à UNE SEULE règle, appliquée
-  // dans `canEnterHex` plus bas : "si l'hex QUITTÉ (`from`) est sous ZOC
-  // ennemie, aucun déplacement n'est autorisé, quel que soit `h`" :
+  // Ces deux règles sont déclarées par le module (`rules.zoc`, cf.
+  // lib/rules.js) : `lockIfStarting` pour la 1re, `stopOnEntry` pour la 2e —
+  // un module peut n'en garder qu'une. Pour les distinguer, on regarde si
+  // l'unité a DÉJÀ BOUGÉ ce tour-ci (cf. `hasMovedThisTurn` : des MP ont
+  // été dépensés — mouvement, entrée en jeu, atterrissage) : si non, elle
+  // COMMENCE son mouvement là (1re règle) ; si oui, elle vient d'y ENTRER (2e
+  // règle). Cf. `isZocFrozen`.
+  //
+  // Avec les deux règles (cas d'Arnhem), elles se ramènent en fait à UNE
+  // SEULE, appliquée dans `canEnterHex` plus bas : "si l'hex QUITTÉ (`from`)
+  // est sous ZOC ennemie, aucun déplacement n'est autorisé, quel que soit
+  // `h`" :
   //   - en tout DÉBUT de tour, `from` = la position actuelle du pion (il n'a
   //     encore rien parcouru) -> s'il y est déjà en ZOC ennemie, ce test
   //     bloque IMMÉDIATEMENT tout déplacement (1re règle) ;
@@ -733,6 +775,34 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  de portée : un hex sous ZOC ennemie ne laisse plus continuer le
    *  chemin au-delà de lui) — calculée UNE SEULE FOIS par ces appelants
    *  plutôt qu'à chaque hex testé individuellement. */
+  /** `c` a-t-il déjà bougé ce tour-ci ? Oui dès qu'il a dépensé des MP
+   *  (déplacement, coût d'entrée en jeu, MP d'atterrissage d'un aéroporté —
+   *  cf. `spentMp`) ; "Annuler le mouvement" le remet à zéro (cf. `resetMp`).
+   *  Sert à distinguer, pour la ZOC, une unité qui COMMENCE son mouvement en
+   *  ZOC ennemie d'une unité qui vient d'y ENTRER (cf. `isZocFrozen`). Un pion
+   *  sans MP déclarés (`mov` absent) n'en dépense jamais : il est toujours
+   *  considéré comme "au départ". */
+  function hasMovedThisTurn(counter) {
+    return (spentMp.value.get(String(counter?.id)) ?? 0) > 0
+  }
+
+  /** La règle de ZOC du module fige-t-elle `c` dans l'hex `hexKey` ("col,row"),
+   *  s'il y est sous ZOC ennemie ? `lockIfStarting` s'il n'a pas encore bougé
+   *  ce tour-ci, `stopOnEntry` s'il vient d'y entrer (cf. en-tête de section). */
+  function zocLocks(counter) {
+    return hasMovedThisTurn(counter) ? rules.zoc.stopOnEntry : rules.zoc.lockIfStarting
+  }
+
+  /** `c` (DÉJÀ posé sur la carte) est-il FIGÉ sur place par une ZOC ennemie ?
+   *  Il faut qu'il soit dans une ZOC ennemie ET que la règle du module l'y
+   *  retienne (cf. `zocLocks`). Exportée pour HexMap.vue (un ami figé bloque
+   *  l'hex d'entrée d'un renfort, cf. isEntryHexBlocked) et lib/useDebug.js
+   *  (portée de déplacement : rien n'est exploré depuis un pion figé). */
+  function isZocFrozen(counter) {
+    if (!counter) return false
+    return enemyZocSet(counter).has(counter.col + ',' + counter.row) && zocLocks(counter)
+  }
+
   function enemyZocSet(counter) {
     const set = new Set()
     if (!counter) return set
@@ -822,7 +892,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  sont les étapes 1 à 3 décrites sur `canLeaveAfterEntering`. */
   function canLeaveWithMp(counter, hex, afterEntry) {
     if (afterEntry <= 0) return false
-    if (enemyZocSet(counter).has(hex.c + ',' + hex.r)) return false
+    // Une fois entré dans `h`, `c` AURA bougé : s'il s'y retrouve en ZOC
+    // ennemie, c'est la règle `stopOnEntry` du module qui dit s'il est figé.
+    if (rules.zoc.stopOnEntry && enemyZocSet(counter).has(hex.c + ',' + hex.r)) return false
     return neighborsOf(hex.c, hex.r).some((neighbor) => {
       if (!hexOnMap(neighbor.col, neighbor.row)) return false
       const nh = { c: neighbor.col, r: neighbor.row }
@@ -940,10 +1012,10 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  l'hex `h` ? Hors mode Assisté : toujours vrai (mode Libre = bac à
    *  sable, aucune règle de MP, de terrain ni de ZOC). En mode Assisté,
    *  DANS L'ORDRE :
-   *   1. si `from` est fourni et sous ZOC ennemie (cf. `enemyZocSet`),
-   *      refusé — QUEL QUE SOIT `h` : ce pion est figé sur place (s'il
-   *      commence son tour là) ou vient de s'arrêter dans cette ZOC (s'il y
-   *      est entré à l'instant) ;
+   *   1. si `from` est fourni, sous ZOC ennemie (cf. `enemyZocSet`) ET que la
+   *      règle du module l'y retient (cf. `zocLocks` — `lockIfStarting` s'il
+   *      commence son tour là, `stopOnEntry` s'il vient d'y entrer), refusé
+   *      — QUEL QUE SOIT `h` : ce pion est figé sur place ;
    *   2. faux si le terrain de `h` est interdit à `c` (cf. `canEnterTerrain`
    *      — sauf exception route/piste, qu'elle gère elle-même) ;
    *   3. sinon vrai si `c` ne déclare pas de MP (cf. `remainingMp`), sinon
@@ -951,7 +1023,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *      (route/piste/ruisseau compris). */
   function canEnterHex(counter, hex, from) {
     if (!assisted.value) return true
-    if (from && enemyZocSet(counter).has(from.c + ',' + from.r)) return false
+    if (from && enemyZocSet(counter).has(from.c + ',' + from.r) && zocLocks(counter)) return false
     if (!canEnterTerrain(counter, hex, from)) return false
     const remaining = remainingMp(counter)
     if (remaining == null) return true
@@ -1057,6 +1129,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // n'est pas concerné) paie un coût d'entrée — et, si un AUTRE renfort
   // entre par ce MÊME hex précis ce MÊME tour, le coût grimpe : 1er = 1× le
   // coût de base, 2e = 2×, 3e = 3×, etc. (cf. `entryCost`/`spendEntryCost`).
+  // Cette majoration est une règle du module (`rules.entryCongestion`,
+  // cf. lib/rules.js) : 'multiply' (Arnhem) ou 'none' — chaque entrée ne
+  // paie alors que le coût de base, sans surcoût.
   // `entrySurcharge` expose la valeur à afficher sur l'hex en mode debug
   // (cf. lib/useDebug.js) : le SURCOÛT déjà accumulé, que la PROCHAINE unité
   // entrante devra payer en plus du coût de base (ex. "+0.5" après 1 entrée
@@ -1078,7 +1153,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  ce hex ce tour-ci, cf. `entryCounts`, + 1 pour celle-ci). */
   function entryCost(hex) {
     const already = entryCounts.value.get(hex.c + ',' + hex.r) ?? 0
-    return entryBaseCost(hex) * (already + 1)
+    return entryBaseCost(hex) * (rules.entryCongestion === 'multiply' ? already + 1 : 1)
   }
 
   /** Surcoût déjà accumulé sur `h` ce tour-ci (0 si personne n'y est encore
@@ -1087,6 +1162,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  debug ("+X" sur l'hex, cf. lib/useDebug.js) — ne modifie rien,
    *  contrairement à `spendEntryCost`. */
   function entrySurcharge(hex) {
+    if (rules.entryCongestion !== 'multiply') return 0
     const already = entryCounts.value.get(hex.c + ',' + hex.r) ?? 0
     return entryBaseCost(hex) * already
   }
@@ -1103,10 +1179,11 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  ce tour-ci qui devient impossible.
    *
    *  Renvoie ce qui vient d'être payé, pour le JOURNAL (cf. HexMap.vue::onHex,
-   *  qui signale une entrée par un hex CONGESTIONNÉ, c.-à-d. `rank` ≥ 2) :
-   *  `{ rank, baseCost, cost }` — `rank` = rang de cette entrée sur `h` ce
-   *  tour-ci (1 = première), `baseCost` = coût de base de `h` (cf.
-   *  `entryBaseCost`), `cost` = coût réellement payé (`baseCost × rank`).
+   *  qui signale une entrée MAJORÉE par la congestion, c.-à-d. `cost` >
+   *  `baseCost`) : `{ rank, baseCost, cost }` — `rank` = rang de cette entrée
+   *  sur `h` ce tour-ci (1 = première), `baseCost` = coût de base de `h` (cf.
+   *  `entryBaseCost`), `cost` = coût réellement payé (`baseCost × rank`, ou
+   *  `baseCost` sans congestion — cf. `entryCost`).
    *  `null` hors mode Assisté (rien n'est payé ni compté). */
   function spendEntryCost(counter, hex) {
     if (!assisted.value) return null
@@ -1146,5 +1223,5 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   }
 
   return { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, setPhase, setSpentMp, resetTurnState }
+    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState }
 }

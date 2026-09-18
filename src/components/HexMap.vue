@@ -30,7 +30,7 @@ import { useRetreat } from '../lib/useRetreat.js'
 import { useModuleRules } from '../lib/moduleRules.js'
 import { isUnit, isFighter, isSupport } from '../lib/units.js'
 import { parseSetup, isAirborneEntry, deploymentCells, rangeCells, landingCells } from '../lib/setup.js'
-import { resolveRules } from '../lib/rules.js'
+import { resolveRules, resolveTurnStructure } from '../lib/rules.js'
 import { resolveCombatTable } from '../lib/combatTable.js'
 import CalibrationPanel from './CalibrationPanel.vue'
 import Counter from './Counter.vue'
@@ -502,8 +502,11 @@ function pickArrivalHex(col, row, occupied) {
 }
 
 // Paramètres des règles génériques déclarés par le module (`module.rules`,
-// cf. lib/rules.js) : véhicules, terrains interdits, empilement...
+// cf. lib/rules.js) : véhicules, terrains interdits, empilement, ZOC...
 const rules = resolveRules(props.module.rules)
+// Structure du tour d'un camp : phases facultatives déclarées par le module
+// (`module.turnStructure`, cf. lib/rules.js et lib/useAssisted.js, "Phases").
+const turnStructure = resolveTurnStructure(props.module.turnStructure)
 
 // Règles PARTICULIÈRES au module joué (cf. lib/moduleRules.js, registre par
 // module — ex. lib/useArnhem.js) : tout ce qui ne vaut QUE pour une boîte de
@@ -577,7 +580,7 @@ const initialDeployment = counters.value.map((counter) => ({ id: counter.id, col
 // lib/useAssisted.js::airbornePending), passés en FONCTION car
 // `reinforcements` n'est déclaré que plus bas dans ce fichier.
 const { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules)
+  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules, turnStructure)
 
 // Table de combat déclarée par le module (`module.combat`, cf.
 // lib/combatTable.js) — `null` : module sans combat.
@@ -606,7 +609,10 @@ const {
   info: retreatInfo, notes: retreatNotes, isRetreatHex, isRetreatingHex,
   advanceInfo, selectAdvancer, stepAdvance, endAdvance, isPorHex, isAdvanceHex, isAdvancerHex,
 } = useRetreat({
-  phase, counters, hexOnMap, enemyZocSet, canEnterTerrain, isEnemyOf,
+  phase, counters, hexOnMap, canEnterTerrain, isEnemyOf,
+  // Retraite interdite en ZOC ennemie — sauf si la règle du module la lève
+  // (`rules.zoc.blocksRetreat`, cf. lib/rules.js).
+  enemyZocSet: (unit) => (rules.zoc.blocksRetreat ? enemyZocSet(unit) : new Set()),
   moveUnit: (unit, hex, { done, total }) => {
     unit.col = hex.col; unit.row = hex.row
     emit('move', { counterId: unit.id, col: unit.col, row: unit.row })
@@ -1013,7 +1019,7 @@ function isEntryHexBlocked(reinforcement, hex) {
   const occupants = counters.value.filter(
     (counter) => counter.col === hex.col && counter.row === hex.row && isFighter(counter)
   )
-  return occupants.some((counter) => isEnemyOf(reinforcement, counter) || enemyZocSet(counter).has(counter.col + ',' + counter.row))
+  return occupants.some((counter) => isEnemyOf(reinforcement, counter) || isZocFrozen(counter))
     || entryWouldStack(reinforcement, hex)
 }
 
@@ -1117,7 +1123,7 @@ const isZocHex = (hex) => zocSet.value.has(hex.c + ',' + hex.r)
 // chemin au-delà d'un hex sous ZOC ennemie.
 const { debug, adjacentCotLabels, isInRange, entrySurchargeLabels } = useDebug(
   hexes, isAdjacent, terrainCost, selectedCounter, remainingMp, neighborsOf, hexOnMap, canEnterTerrain, zocSet,
-  entryHexSet, entrySurcharge, wouldOverstack,
+  entryHexSet, entrySurcharge, wouldOverstack, isZocFrozen, rules.zoc.stopOnEntry,
 )
 
 // Décalage visuel des pions empilés sur un même hex — même principe
@@ -1311,7 +1317,7 @@ const onHex = (hex) => {
         // Hex d'entrée CONGESTIONNÉ (au moins une autre entrée par ce même hex
         // ce tour-ci, cf. lib/useAssisted.js::entryCost) : le journal le
         // signale, avec le coût majoré réellement payé.
-        const congestion = paid && paid.rank > 1
+        const congestion = paid && paid.cost > paid.baseCost
           ? ` — hex d'entrée déjà utilisé (${paid.rank}e entrée ce tour) : coût ×${paid.rank} = ${paid.cost} MP au lieu de ${paid.baseCost}`
           : ''
         // `entry` : il a payé un coût d'entrée — au rejeu, on le repaie pour

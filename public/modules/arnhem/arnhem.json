@@ -1393,6 +1393,11 @@
       }
     ]
   },
+  "turnStructure": {
+    "airbornePhase": true,
+    "combatPhase": true,
+    "endOfTurnPhase": true
+  },
   "rules": {
     "vehicleTypes": [
       "armor",
@@ -1406,6 +1411,12 @@
       "woods"
     ],
     "stackingLimit": 1,
+    "zoc": {
+      "lockIfStarting": true,
+      "stopOnEntry": true,
+      "blocksRetreat": true
+    },
+    "entryCongestion": "multiply",
     "airborneArrivalSpentMp": 4
   },
   "combat": {

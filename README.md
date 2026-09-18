@@ -95,7 +95,8 @@ Champs du JSON (cf. `arnhem.json`) :
 | `movementChart`, `combatChart` | Images des tables, affichables en jeu |
 | `map` | `url`, `imageWidth/Height`, `cols`, `rows`, `evenColMinus` (colonnes décalées amputées d'une ligne), `removedHexes`, `calibration` (x0/y0/colStep/a/rowStep, en pixels de l'image) |
 | `combat` | Table de combat : `die`, colonnes de différentiel, lignes de terrain (décalage), substitutions par hexside, résultats, libellés et **effets** de chaque résultat (retraite, élimination), avance après combat — cf. `src/lib/combatTable.js` ; sans table, pas de combat |
-| `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`) — cf. `src/lib/rules.js` |
+| `turnStructure` | Phases du tour d'un camp, en plus du Mouvement : `airbornePhase`, `combatPhase`, `endOfTurnPhase` (booléens) — cf. `src/lib/rules.js` |
+| `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, `zoc` (`lockIfStarting`, `stopOnEntry`, `blocksRetreat`), `entryCongestion` (`multiply` / `none`), et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`) — cf. `src/lib/rules.js` |
 | `sides` | Camps jouables → factions (`{"allies": ["commonwealth","us","pol"], "german": ["german"]}`) |
 | `turnTrack` | `turns`, `order` des camps, libellé et marqueur de chaque camp |
 | `supportTrack` | Tablette de soutien : pions par tour (`byTurn`) |
@@ -131,7 +132,7 @@ src/
     ├── useRetreat.js    retraites, éliminations, avance après combat
     ├── moduleRules.js   registre des règles particulières par module
     ├── useArnhem.js     règles particulières du module Arnhem (patron pour d'autres modules)
-    ├── rules.js         paramètres des règles génériques (module.rules) et leurs défauts
+    ├── rules.js         paramètres des règles génériques (module.rules), structure du tour (module.turnStructure)
     ├── setup.js         notation `setup` des pions (hex, plage, largage)
     ├── edges.js         nature des hexsides (terrain.edges) : mouvement, ZOC, combat
     ├── useDebug.js      affichages de debug (coûts, portée, congestion)
@@ -191,7 +192,5 @@ room jamais lancée, 72 h pour une partie lancée).
 
 - « Placement libre » et « Météo » sont proposés grisés : le moteur ne les
   applique pas encore.
-- La structure du tour (phases) reste codée dans le moteur : un second
-  module demandera de la déplacer dans le JSON.
 - Pas de suite de tests automatisée dans le dépôt (les vérifications se font
   par scripts ad hoc et navigateur automatisé).

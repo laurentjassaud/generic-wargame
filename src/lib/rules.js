@@ -25,7 +25,38 @@ export const DEFAULT_RULES = Object.freeze({
   // Nombre maximal d'unités AMIES par hex à la fin d'un mouvement (cf.
   // lib/useAssisted.js, section "Empilement").
   stackingLimit: 1,
+  // Zones de contrôle (cf. lib/useAssisted.js, section "ZOC") :
+  //   - `lockIfStarting` : une unité qui COMMENCE son mouvement en ZOC
+  //     ennemie ne peut pas bouger ;
+  //   - `stopOnEntry` : une unité qui ENTRE en ZOC ennemie doit s'y arrêter ;
+  //   - `blocksRetreat` : une retraite ne peut pas entrer en ZOC ennemie.
+  zoc: Object.freeze({ lockIfStarting: true, stopOnEntry: true, blocksRetreat: true }),
+  // Congestion des hex d'entrée de renfort (cf. lib/useAssisted.js, section
+  // "Congestion") : 'multiply' — la N-ième entrée par un même hex, le même
+  // tour, coûte N fois le coût de base ; 'none' — toujours le coût de base.
+  entryCongestion: 'multiply',
 })
+
+export const ENTRY_CONGESTION_MODES = ['multiply', 'none']
+
+// Structure du tour d'un camp (`module.turnStructure`, cf. lib/useAssisted.js,
+// section "Phases") : quelles phases, en plus du Mouvement, il comporte.
+export const DEFAULT_TURN_STRUCTURE = Object.freeze({
+  // Phase Airborne AVANT le Mouvement, pour un camp qui a des aéroportés à
+  // poser ; sans elle, les aéroportés se posent comme les autres renforts.
+  airbornePhase: true,
+  // Phase Combat APRÈS le Mouvement ; sans elle, aucun combat.
+  combatPhase: true,
+  // Phase "Fin de tour" après le dernier camp de l'ordre, avant le tour suivant.
+  endOfTurnPhase: true,
+})
+
+/** `module.turnStructure` → structure complète (booléens, défauts appliqués). */
+export function resolveTurnStructure(raw) {
+  const structure = raw && typeof raw === 'object' ? raw : {}
+  const flag = (key) => (typeof structure[key] === 'boolean' ? structure[key] : DEFAULT_TURN_STRUCTURE[key])
+  return { airbornePhase: flag('airbornePhase'), combatPhase: flag('combatPhase'), endOfTurnPhase: flag('endOfTurnPhase') }
+}
 
 /** `module.rules` (objet libre, éventuellement absent) → règles prêtes à
  *  l'emploi : listes converties en `Set`, entiers vérifiés, défauts
@@ -35,10 +66,14 @@ export function resolveRules(raw) {
   const stringList = (value, fallback) =>
     (Array.isArray(value) ? value.filter((item) => typeof item === 'string') : fallback)
   const positiveInt = (value, fallback) => (Number.isInteger(value) && value >= 1 ? value : fallback)
+  const zoc = rules.zoc && typeof rules.zoc === 'object' ? rules.zoc : {}
+  const zocFlag = (key) => (typeof zoc[key] === 'boolean' ? zoc[key] : DEFAULT_RULES.zoc[key])
   return {
     ...rules,
     vehicleTypes: new Set(stringList(rules.vehicleTypes, DEFAULT_RULES.vehicleTypes)),
     impassableForVehicles: new Set(stringList(rules.impassableForVehicles, DEFAULT_RULES.impassableForVehicles)),
     stackingLimit: positiveInt(rules.stackingLimit, DEFAULT_RULES.stackingLimit),
+    zoc: { lockIfStarting: zocFlag('lockIfStarting'), stopOnEntry: zocFlag('stopOnEntry'), blocksRetreat: zocFlag('blocksRetreat') },
+    entryCongestion: ENTRY_CONGESTION_MODES.includes(rules.entryCongestion) ? rules.entryCongestion : DEFAULT_RULES.entryCongestion,
   }
 }

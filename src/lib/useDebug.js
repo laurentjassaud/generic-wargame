@@ -115,7 +115,7 @@ import { computed, ref } from 'vue'
  *  visité le plus proche suffit très largement. Renvoie un Set de clés
  *  "col,row", SANS le hex de départ (`c` n'a pas besoin d'"entrer" dans son
  *  propre hex, quoi qu'il en soit du terrain qu'il occupe déjà). */
-function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terrainCost, canEnterTerrain, zocSet, wouldOverstack) {
+function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terrainCost, canEnterTerrain, zocSet, wouldOverstack, zocStop) {
   const startKey = col + ',' + row
   const dist = new Map([[startKey, 0]])
   const visited = new Set()
@@ -130,7 +130,9 @@ function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terra
     // ZOC : ce hex force l'arrêt du pion qui y entre (ou qui y a commencé)
     // — il reste dans le résultat (atteint), mais on n'explore RIEN depuis
     // lui, cf. useAssisted.js::canEnterHex pour la même règle au clic.
-    if (zocSet.has(currentKey)) continue
+    // Règle du module (cf. `zocStop`) : au départ, seulement si le pion y est
+    // figé ; ailleurs, seulement si entrer en ZOC ennemie force l'arrêt.
+    if (zocSet.has(currentKey) && (currentKey === startKey ? zocStop.start : zocStop.entry)) continue
     const [hexCol, hexRow] = currentKey.split(',').map(Number)
     for (const neighbor of neighborsOf(hexCol, hexRow)) {
       if (!hexOnMap(neighbor.col, neighbor.row)) continue
@@ -161,7 +163,7 @@ function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terra
     const [hexCol, hexRow] = key.split(',').map(Number)
     if (!wouldOverstack(unit, { c: hexCol, r: hexRow })) continue
     const remaining = budget - distance
-    const canDepart = remaining > 0 && !zocSet.has(key) && neighborsOf(hexCol, hexRow).some((neighbor) => {
+    const canDepart = remaining > 0 && !(zocStop.entry && zocSet.has(key)) && neighborsOf(hexCol, hexRow).some((neighbor) => {
       if (!hexOnMap(neighbor.col, neighbor.row)) return false
       const nh = { c: neighbor.col, r: neighbor.row }
       return canEnterTerrain(unit, nh, { c: hexCol, r: hexRow }) && remaining >= terrainCost(nh, { c: hexCol, r: hexRow })
@@ -173,7 +175,7 @@ function reachableHexes(unit, { col, row }, budget, neighborsOf, hexOnMap, terra
 
 export function useDebug(
   hexes, isAdjacent, terrainCost, selectedCounter, remainingMp, neighborsOf, hexOnMap, canEnterTerrain, zocSet,
-  entryHexSet, entrySurcharge, wouldOverstack,
+  entryHexSet, entrySurcharge, wouldOverstack, isZocFrozen = () => true, stopsOnZocEntry = true,
 ) {
   // Unique interrupteur du mode debug (case à cocher "debug", cf. HexMap.vue)
   // — tous les affichages de ce composable, présents et futurs, doivent être
@@ -212,6 +214,10 @@ export function useDebug(
       counter, { col: counter.col, row: counter.row },
       budget == null ? Infinity : budget,
       neighborsOf, hexOnMap, terrainCost, canEnterTerrain, zocSet.value, wouldOverstack,
+      // Arrêts imposés par la ZOC, selon la règle du module (cf.
+      // lib/useAssisted.js::isZocFrozen, `rules.zoc`) : au départ si le pion
+      // y est figé, en cours de route si entrer en ZOC force l'arrêt.
+      { start: isZocFrozen(counter), entry: stopsOnZocEntry },
     )
   })
   const isInRange = (hex) => inRangeSet.value.has(hex.c + ',' + hex.r)
