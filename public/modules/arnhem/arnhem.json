@@ -1408,6 +1408,65 @@
     "stackingLimit": 1,
     "airborneArrivalSpentMp": 4
   },
+  "combat": {
+    "die": 6,
+    "columns": [
+      { "max": -7, "label": "—7" },
+      { "max": -5, "label": "—6,5" },
+      { "max": -3, "label": "—4,3" },
+      { "max": -2, "label": "—2" },
+      { "max": -1, "label": "—1" },
+      { "max": 0, "label": "0" },
+      { "max": 1, "label": "+1" },
+      { "max": 3, "label": "+2,3" },
+      { "max": 5, "label": "+4,5" },
+      { "max": 8, "label": "+6-8" },
+      { "max": 11, "label": "+9-11" },
+      { "label": "+12" }
+    ],
+    "rows": [
+      { "key": "rough", "label": "Rough", "shift": 3, "firstLabel": "—2", "terrains": ["rough"] },
+      { "key": "broken", "label": "Broken, Town, Woods, Stream", "shift": 2, "firstLabel": "—3", "terrains": ["broken", "town", "woods", "city"] },
+      { "key": "grove", "label": "Grove, Bridge", "shift": 1, "firstLabel": "—5", "terrains": ["grove"] },
+      { "key": "clear", "label": "Clear, Mixed", "shift": 0, "firstLabel": "—7", "terrains": ["mixed", "clear", "road", "trail"] }
+    ],
+    "defaultRow": "clear",
+    "edgeRows": {
+      "bridge": { "row": "grove", "reason": "hexside de pont" },
+      "stream": { "row": "broken", "reason": "hexside de ruisseau" }
+    },
+    "results": [
+      ["A1", "A1", "A1", "Br", "D1", "D2", "D2", "D2", "D2", "D3", "D4", "De"],
+      ["A1", "A1", "A1", "A1", "Br", "D1", "D2", "D2", "D2", "D2", "D3", "D4"],
+      ["A1", "A1", "A1", "A1", "A1", "Br", "D1", "D2", "D2", "D2", "D2", "D3"],
+      ["A2", "A1", "A1", "A1", "A1", "Br", "Br", "D1", "D2", "D2", "D2", "D2"],
+      ["A2", "A2", "A1", "A1", "A1", "A1", "Br", "Br", "D1", "D2", "D2", "D2"],
+      ["Ae", "Ae", "A2", "A1", "A1", "A1", "A1", "Br", "Br", "Br", "D2", "D2"]
+    ],
+    "labels": {
+      "Ae": "Attaquant éliminé",
+      "A1": "L'attaquant recule d'1 hex",
+      "A2": "L'attaquant recule de 2 hex",
+      "Br": "Attaquant et défenseur reculent d'1 hex (défenseur en premier)",
+      "D1": "Le défenseur recule d'1 hex",
+      "D2": "Le défenseur recule de 2 hex",
+      "D3": "Le défenseur recule de 3 hex",
+      "D4": "Le défenseur recule de 4 hex",
+      "De": "Défenseur éliminé"
+    },
+    "effects": {
+      "Ae": { "eliminate": "attackers" },
+      "A1": { "retreat": { "attackers": 1 } },
+      "A2": { "retreat": { "attackers": 2 } },
+      "Br": { "retreat": { "defenders": 1, "attackers": 1 } },
+      "D1": { "retreat": { "defenders": 1 } },
+      "D2": { "retreat": { "defenders": 2 } },
+      "D3": { "retreat": { "defenders": 3 } },
+      "D4": { "retreat": { "defenders": 4 } },
+      "De": { "eliminate": "defenders" }
+    },
+    "advanceAfterCombat": true
+  },
   "terrain": {
     "types": {
       "mixed": {

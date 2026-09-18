@@ -8,7 +8,10 @@
 // useAssisted.js : un bloc de règles autonome, qui ne reçoit du reste que
 // les briques dont il a besoin (cf. paramètres plus bas).
 //
-// Résultats de la table (cf. useCombat.js::RESULT_LABELS) :
+// Ce que fait chaque résultat de la table est déclaré par le module
+// (`module.combat.effects`, cf. lib/combatTable.js et le paramètre
+// `resultEffect` ci-dessous) : `{ retreat: { defenders: n, attackers: n } }`
+// et/ou `{ eliminate: 'defenders' | 'attackers' }`. Pour Arnhem :
 //   - D1..D4 : chaque DÉFENSEUR retraite de 1 à 4 hex ;
 //   - A1, A2 : chaque ATTAQUANT retraite de 1 ou 2 hex ;
 //   - Br     : défenseurs PUIS attaquants retraitent d'1 hex chacun ;
@@ -55,9 +58,11 @@
 //
 // Une fois toutes les retraites faites, les unités VICTORIEUSES du combat
 // peuvent avancer dans ce POR (cf. `victorIds`) :
-//   - vainqueurs (choix de règle) : les ATTAQUANTS après D1..D4/De, les
-//     DÉFENSEURS après A1/A2/Ae ; PERSONNE après Br (les deux camps ont
-//     retraité) ;
+//   - vainqueurs (choix de règle) : le camp que le résultat ÉPARGNE — les
+//     ATTAQUANTS si seuls les défenseurs retraitent ou sont éliminés
+//     (D1..D4/De), les DÉFENSEURS dans le cas inverse (A1/A2/Ae) ; PERSONNE
+//     si les deux camps sont touchés (Br) ou si le module désactive l'avance
+//     (`advanceAfterCombat`) ;
 //   - seules les unités ayant PARTICIPÉ au combat, encore sur la carte ;
 //   - UNE unité à la fois : on clique sur elle, puis sur un hex VERT VIF
 //     voisin (cf. `advanceCandidates`), et on recommence tant qu'on veut ;
@@ -90,6 +95,11 @@
 //     carte (HexMap.vue::eliminateCounter, qui journalise aussi).
 //   - `advanceUnit` : `(unit, { col, row }) => void` — même chose que
 //     `moveUnit`, pour un pas d'AVANCE après combat.
+//   - `resultEffect` : `(code) => effet | null` — ce que fait le résultat
+//     `code` de la table (cf. `module.combat.effects`, en-tête). Un code
+//     inconnu ne fait rien.
+//   - `advanceAfterCombat` (vrai par défaut) : les vainqueurs peuvent-ils
+//     avancer après combat ?
 //   - `retreatReduction` (optionnel) : `(unit, { col, row }, { initial,
 //     total, done }) => { total, reason } | null` — point d'accroche des
 //     règles PARTICULIÈRES d'un module qui permettent de RACCOURCIR une
@@ -107,7 +117,7 @@ import { isFighter } from './units.js'
 
 const keyOf = (col, row) => `${col},${row}`
 
-export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTerrain, isEnemyOf, moveUnit, eliminateUnit, advanceUnit, retreatReduction = null }) {
+export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTerrain, isEnemyOf, moveUnit, eliminateUnit, advanceUnit, resultEffect = () => null, advanceAfterCombat = true, retreatReduction = null }) {
   // File des retraites À FAIRE, dans l'ordre. Chaque entrée :
   //   { id, side, initial, total, done, refHexes }
   //   - `id` : id de l'unité (on relit l'unité elle-même dans `counters`) ;
@@ -310,15 +320,24 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
     settleAdvance()
   }
 
-  /** Applique le résultat `code` (cf. useCombat.js::CRT_RESULTS) d'un
-   *  combat qui vient d'être résolu. `attackers`/`defenders` : les pions du
-   *  combat ; `targetHexes` : ses hex cibles ({ col, row }). Les
-   *  éliminations (De/Ae) sont immédiates ; les retraites sont mises en file
-   *  et se jouent ensuite au clic (cf. `step`). */
+  /** Applique le résultat `code` d'un combat qui vient d'être résolu, selon
+   *  l'effet que le module lui donne (cf. `resultEffect`). `attackers`/
+   *  `defenders` : les pions du combat ; `targetHexes` : ses hex cibles
+   *  ({ col, row }). Les éliminations sont immédiates ; les retraites sont
+   *  mises en file (défenseurs d'abord) et se jouent ensuite au clic (cf.
+   *  `step`). */
   function start(code, attackers, defenders, targetHexes) {
     clear()
-    // Vainqueurs (cf. l'en-tête) : ceux qui pourront avancer ensuite.
-    const winners = code.startsWith('D') ? attackers : code.startsWith('A') ? defenders : []
+    const effect = resultEffect(code) ?? {}
+    const defenderHexes = effect.retreat?.defenders ?? 0
+    const attackerHexes = effect.retreat?.attackers ?? 0
+    const hitsDefenders = effect.eliminate === 'defenders' || defenderHexes > 0
+    const hitsAttackers = effect.eliminate === 'attackers' || attackerHexes > 0
+    // Vainqueurs (cf. l'en-tête) : le camp épargné, qui pourra avancer ensuite.
+    const winners = !advanceAfterCombat ? []
+      : hitsDefenders && !hitsAttackers ? attackers
+        : hitsAttackers && !hitsDefenders ? defenders
+          : []
     victorIds.value = new Set(winners.map((unit) => String(unit.id)))
     const defTasks = (hexCount) => defenders.map((defender) => ({
       id: defender.id, side: 'defender', initial: hexCount, total: hexCount, done: 0, refHexes: [{ col: defender.col, row: defender.row }],
@@ -326,18 +345,13 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
     const atkTasks = (hexCount) => attackers.map((attacker) => ({
       id: attacker.id, side: 'attacker', initial: hexCount, total: hexCount, done: 0, refHexes: targetHexes.map((targetHex) => ({ col: targetHex.col, row: targetHex.row })),
     }))
-    const codeMatch = /^([AD])(\d)$/.exec(code)
-    if (code === 'De' || code === 'Ae') {
-      for (const unit of code === 'De' ? defenders : attackers) {
-        notes.value = [...notes.value, `${unit.name} éliminé`]
-        addPor(unit) // l'hex qu'elle occupait est libéré
-        eliminateUnit(unit, `résultat ${code}`)
-      }
-    } else if (code === 'Br') {
-      queue.value = [...defTasks(1), ...atkTasks(1)]
-    } else if (codeMatch) {
-      queue.value = codeMatch[1] === 'D' ? defTasks(Number(codeMatch[2])) : atkTasks(Number(codeMatch[2]))
+    const eliminated = effect.eliminate === 'defenders' ? defenders : effect.eliminate === 'attackers' ? attackers : []
+    for (const unit of eliminated) {
+      notes.value = [...notes.value, `${unit.name} éliminé`]
+      addPor(unit) // l'hex qu'elle occupait est libéré
+      eliminateUnit(unit, `résultat ${code}`)
     }
+    queue.value = [...(defenderHexes > 0 ? defTasks(defenderHexes) : []), ...(attackerHexes > 0 ? atkTasks(attackerHexes) : [])]
     settle()
   }
 

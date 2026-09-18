@@ -94,6 +94,7 @@ Champs du JSON (cf. `arnhem.json`) :
 | `boardGame`, `name`, `favicon` | Identité (titre de page, icône d'onglet) |
 | `movementChart`, `combatChart` | Images des tables, affichables en jeu |
 | `map` | `url`, `imageWidth/Height`, `cols`, `rows`, `evenColMinus` (colonnes décalées amputées d'une ligne), `removedHexes`, `calibration` (x0/y0/colStep/a/rowStep, en pixels de l'image) |
+| `combat` | Table de combat : `die`, colonnes de différentiel, lignes de terrain (décalage), substitutions par hexside, résultats, libellés et **effets** de chaque résultat (retraite, élimination), avance après combat — cf. `src/lib/combatTable.js` ; sans table, pas de combat |
 | `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`) — cf. `src/lib/rules.js` |
 | `sides` | Camps jouables → factions (`{"allies": ["commonwealth","us","pol"], "german": ["german"]}`) |
 | `turnTrack` | `turns`, `order` des camps, libellé et marqueur de chaque camp |
@@ -125,7 +126,8 @@ src/
 │                 CalibrationPanel, ContextMenu, GameSetupSteps
 └── lib/
     ├── useAssisted.js   mode Assisté : phases, MP/terrain, ZOC, empilement, congestion
-    ├── useCombat.js     table de combat, cibles/attaquants, combats obligatoires
+    ├── useCombat.js     cibles/attaquants, lecture de la table, combats obligatoires
+    ├── combatTable.js   table de combat du module (module.combat) : vérification et lecture
     ├── useRetreat.js    retraites, éliminations, avance après combat
     ├── moduleRules.js   registre des règles particulières par module
     ├── useArnhem.js     règles particulières du module Arnhem (patron pour d'autres modules)
@@ -188,8 +190,8 @@ room jamais lancée, 72 h pour une partie lancée).
 
 - « Placement libre » et « Météo » sont proposés grisés : le moteur ne les
   applique pas encore.
-- Plusieurs valeurs propres à Arnhem restent codées dans le moteur (table de
-  combat, sémantique des couches d'arêtes, structure des phases) : un second
-  module demandera de les déplacer dans le JSON.
+- Plusieurs valeurs propres à Arnhem restent codées dans le moteur
+  (sémantique des couches d'arêtes, structure des phases) : un second module
+  demandera de les déplacer dans le JSON.
 - Pas de suite de tests automatisée dans le dépôt (les vérifications se font
   par scripts ad hoc et navigateur automatisé).

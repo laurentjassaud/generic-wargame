@@ -36,9 +36,9 @@ const props = defineProps({
   column: { type: Number, default: null },
   // Résultat du dernier jet, ou `null` — cf. useCombat.js::combatResult.
   combatResult: { type: Object, default: null },
-  // Les 4 lignes de terrain de la table, prêtes à afficher (cf. useCombat.js::crtRows).
+  // Les lignes de terrain de la table, prêtes à afficher (cf. useCombat.js::crtRows).
   crtRows: { type: Array, default: () => [] },
-  // Les 6 lignes de résultats (une par face du dé) — cf. useCombat.js::crtResults.
+  // Les lignes de résultats (une par face du dé) — cf. useCombat.js::crtResults.
   crtResults: { type: Array, default: () => [] },
   // Retraite EN COURS après le jet (cf. useRetreat.js::info) — `{ name,
   // side, step, total, waiting }`, ou `null` s'il n'y en a pas (ou plus).
@@ -210,7 +210,7 @@ onUnmounted(() => {
       <tbody>
         <tr v-for="row in crtRows" :key="row.key" :class="{ 'row-on': terrainRow && row.key === terrainRow.row.key }">
           <th>{{ row.label }}</th>
-          <td v-for="columnNumber in 12" :key="columnNumber" :class="{ 'col-on': columnNumber === column }">{{ row.cells[columnNumber - 1] ?? '' }}</td>
+          <td v-for="columnNumber in (crtResults[0]?.length ?? 0)" :key="columnNumber" :class="{ 'col-on': columnNumber === column }">{{ row.cells[columnNumber - 1] ?? '' }}</td>
         </tr>
         <tr v-for="(line, dieIndex) in crtResults" :key="'d' + dieIndex" class="crt-die">
           <th>Dé {{ dieIndex + 1 }}</th>

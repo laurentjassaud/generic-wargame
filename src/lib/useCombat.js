@@ -79,25 +79,33 @@
 //     | null` (cf. useAssisted.js::combatEdgeKind) — nature de l'hexside
 //     franchi par un attaquant, qui peut soit INTERDIRE l'attaque (rivière
 //     sans pont), soit remplacer la ligne de terrain (pont/ruisseau).
+//   - `table` : table de combat du module, vérifiée (cf. lib/combatTable.js
+//     ::resolveCombatTable — `module.combat`), ou `null` : pas de table, pas
+//     de combat (la phase Combat se déroule sans combat possible).
 import { computed, ref, watch } from 'vue'
 import { hexId } from './calibration.js'
 import { neighborsOf } from './hex.js'
 import { isFighter } from './units.js'
+import { referenceColumn, rowCells } from './combatTable.js'
 
-// --- Table de combat (CRT, cf. images/combat-chart.png, règle [7.61]) -------
+// --- Table de combat (CRT) -----------------------------------------------------
 //
-// La table croise un DIFFÉRENTIEL de combat (force d'attaque − force de
-// défense) avec un TERRAIN, pour donner une COLONNE ; le jet de dé (1-6)
-// donne ensuite la ligne, et leur croisement le résultat.
+// La TABLE elle-même est une donnée du module (`module.combat`, cf.
+// lib/combatTable.js et, pour Arnhem, images/combat-chart.png, règle
+// [7.61]) ; ce fichier ne fait que l'interpréter. Principe : la table croise
+// un DIFFÉRENTIEL de combat (force d'attaque − force de défense) avec un
+// TERRAIN, pour donner une COLONNE ; le jet de dé donne ensuite la ligne, et
+// leur croisement le résultat.
 //
-// Lecture de la table imprimée : les 4 lignes de terrain sont alignées à
-// GAUCHE sur les 12 colonnes de résultats, et sont de plus en plus courtes
-// à mesure que le terrain protège le défenseur. Concrètement, chaque ligne
-// de terrain est la ligne "Clear, Mixed" DÉCALÉE de N colonnes vers la
-// gauche — c'est ce décalage (`shift` ci-dessous) qui modélise l'avantage
-// défensif du terrain : à différentiel égal, un défenseur en Rough envoie
-// l'attaquant 3 colonnes plus à gauche (résultats bien plus mauvais pour
-// lui) qu'un défenseur en terrain dégagé.
+// Lecture de la table imprimée : les lignes de terrain sont alignées à
+// GAUCHE sur les colonnes de résultats, et sont de plus en plus courtes à
+// mesure que le terrain protège le défenseur. Concrètement, chaque ligne de
+// terrain est la ligne de référence (la 1re colonne de `columns`, "Clear,
+// Mixed" pour Arnhem) DÉCALÉE de N colonnes vers la gauche — c'est ce
+// décalage (`shift`) qui modélise l'avantage défensif du terrain : à
+// différentiel égal, un défenseur en Rough envoie l'attaquant 3 colonnes
+// plus à gauche (résultats bien plus mauvais pour lui) qu'un défenseur en
+// terrain dégagé. Pour Arnhem :
 //
 //   Clear, Mixed                  : —7  —6,5 —4,3  —2  —1   0  +1 +2,3 +4,5 +6-8 +9-11 +12   (shift 0, 12 colonnes)
 //   Grove, Bridge                 : —5  —4,3  —2  —1   0  +1 +2,3 +4,5 +6-8 +9-11 +12        (shift 1, 11 colonnes)
@@ -107,80 +115,13 @@ import { isFighter } from './units.js'
 // Les deux règles imprimées sous la table en découlent directement :
 //  - "Attacks at less than the lowest differential are resolved at the
 //    lowest differential" -> la colonne 1 de CHAQUE ligne absorbe tout ce
-//    qui est en dessous d'elle (d'où le `Math.max(1, ...)` plus bas) ;
+//    qui est en dessous d'elle (d'où le `Math.max(1, ...)` de `column`) ;
 //  - "Attacks at greater than +12 are resolved as +12 attacks" -> la
-//    dernière colonne absorbe tout le reste (d'où le plafond à 12 dans
-//    `clearColumn`, qui devient 12 − shift après décalage).
-
-/** Colonne de la ligne de référence "Clear, Mixed" (1 à 12) pour un
- *  différentiel donné — les plages sont celles imprimées sur la table. Les
- *  autres lignes de terrain s'en déduisent par simple décalage (cf.
- *  `combatColumn`). */
-function clearColumn(diff) {
-  if (diff <= -7) return 1
-  if (diff <= -5) return 2 // —6,5
-  if (diff <= -3) return 3 // —4,3
-  if (diff === -2) return 4
-  if (diff === -1) return 5
-  if (diff === 0) return 6
-  if (diff === 1) return 7
-  if (diff <= 3) return 8 // +2,3
-  if (diff <= 5) return 9 // +4,5
-  if (diff <= 8) return 10 // +6-8
-  if (diff <= 11) return 11 // +9-11
-  return 12
-}
-
-// Étiquettes de différentiel des 12 colonnes, telles qu'imprimées sur la
-// ligne "Clear, Mixed" — réutilisées pour afficher la mini-table dans la
-// modale (cf. `crtRows`).
-const COLUMN_LABELS = ['—7', '—6,5', '—4,3', '—2', '—1', '0', '+1', '+2,3', '+4,5', '+6-8', '+9-11', '+12']
-
-// Étiquette de la 1re colonne d'une ligne, par `shift` : cette colonne-là
-// absorbant TOUT ce qui est en dessous d'elle, la table n'imprime que sa
-// borne HAUTE ("—3" pour Broken, et non "—4,3" comme la colonne équivalente
-// de Clear, qui a elle une vraie borne basse).
-const FIRST_COLUMN_LABELS = ['—7', '—5', '—3', '—2']
-
-// Les 4 lignes de terrain de la table. `terrains` liste les clés de
-// `terrain.grid` (cf. arnhem.json) qui s'y rattachent — "city" est résolu
-// comme "Town" (choix validé : une ville est la version dense d'un town, et
-// la table n'a pas de ligne City propre), et "grove" n'existe dans aucun
-// module à ce jour : sa ligne ne sert donc en pratique qu'aux hexsides de
-// PONT (cf. `combatTerrainRow`).
-const CRT_ROWS = [
-  { key: 'rough', label: 'Rough', shift: 3, terrains: ['rough'] },
-  { key: 'broken', label: 'Broken, Town, Woods, Stream', shift: 2, terrains: ['broken', 'town', 'woods', 'city'] },
-  { key: 'grove', label: 'Grove, Bridge', shift: 1, terrains: ['grove'] },
-  { key: 'clear', label: 'Clear, Mixed', shift: 0, terrains: ['mixed', 'clear', 'road', 'trail'] },
-]
-
-// Résultats de la table : `CRT_RESULTS[dé - 1][colonne - 1]`. Les colonnes
-// au-delà de la longueur d'une ligne de terrain ne sont jamais atteintes
-// (cf. `combatColumn`, qui plafonne à 12 − shift).
-const CRT_RESULTS = [
-  ['A1', 'A1', 'A1', 'Br', 'D1', 'D2', 'D2', 'D2', 'D2', 'D3', 'D4', 'De'], // dé 1
-  ['A1', 'A1', 'A1', 'A1', 'Br', 'D1', 'D2', 'D2', 'D2', 'D2', 'D3', 'D4'], // dé 2
-  ['A1', 'A1', 'A1', 'A1', 'A1', 'Br', 'D1', 'D2', 'D2', 'D2', 'D2', 'D3'], // dé 3
-  ['A2', 'A1', 'A1', 'A1', 'A1', 'Br', 'Br', 'D1', 'D2', 'D2', 'D2', 'D2'], // dé 4
-  ['A2', 'A2', 'A1', 'A1', 'A1', 'A1', 'Br', 'Br', 'D1', 'D2', 'D2', 'D2'], // dé 5
-  ['Ae', 'Ae', 'A2', 'A1', 'A1', 'A1', 'A1', 'Br', 'Br', 'Br', 'D2', 'D2'], // dé 6
-]
-
-// Signification de chaque résultat (cf. "EXPLANATION OF RESULTS" sous la
-// table) — affichée en toutes lettres dans la modale, le code du résultat
-// seul ("Br", "D3"...) étant illisible pour qui ne connaît pas la table.
-const RESULT_LABELS = {
-  Ae: 'Attaquant éliminé',
-  A1: "L'attaquant recule d'1 hex",
-  A2: "L'attaquant recule de 2 hex",
-  Br: "Attaquant et défenseur reculent d'1 hex (défenseur en premier)",
-  D1: "Le défenseur recule d'1 hex",
-  D2: 'Le défenseur recule de 2 hex',
-  D3: 'Le défenseur recule de 3 hex',
-  D4: 'Le défenseur recule de 4 hex',
-  De: 'Défenseur éliminé',
-}
+//    dernière colonne absorbe tout le reste (cf. combatTable.js::
+//    referenceColumn : la dernière colonne n'a pas de borne).
+// "city" est rattaché à la ligne "Town" (choix validé : une ville est la
+// version dense d'un town) et "grove" n'existe dans aucune carte : sa ligne
+// ne sert qu'aux hexsides de PONT (cf. `edgeRows` et `rowForTargetHex`).
 
 /** Clé d'un hex ("col,row", en coordonnées internes 0-based) — sert à
  *  mémoriser les hex cibles et à comparer deux positions sans ambiguïté. */
@@ -191,7 +132,7 @@ function isAdjacent(positionA, positionB) {
   return neighborsOf(positionA.col, positionA.row).some((neighbor) => neighbor.col === positionB.col && neighbor.row === positionB.row)
 }
 
-export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind) {
+export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind, table = null) {
   // Hex CIBLES du combat en cours, dans l'ordre où ils ont été désignés —
   // chacun `{ col, row }`. On mémorise des HEX et non des pions : c'est l'hex
   // qu'on attaque, et TOUTES les unités ennemies qui s'y trouvent défendent
@@ -279,8 +220,9 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
 
   /** Le combat est-il possible en ce moment ? Mode Assisté ET phase Combat
    *  (cf. useAssisted.js::phase, 1 = Combat) — en phase Mouvement ou Fin de
-   *  tour, un clic sur un pion ennemi ne doit rien déclencher du tout. */
-  const combatAllowed = computed(() => assisted.value && phase.value === 1)
+   *  tour, un clic sur un pion ennemi ne doit rien déclencher du tout — ET
+   *  une table de combat déclarée par le module (cf. `table`). */
+  const combatAllowed = computed(() => assisted.value && phase.value === 1 && !!table)
 
   /** L'unité `c` peut-elle attaquer l'hex `t` (`{ col, row }`) ? Il lui faut :
    *   1. être une vraie unité du camp actif (cf. `isFighter`/`canControl`) ;
@@ -584,9 +526,10 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
 
   /** Ligne de la table pour UN hex cible `t`, et pourquoi :
    *   - si TOUS les attaquants au contact de cet hex franchissent un hexside
-   *     de MÊME nature (tous par un pont, ou tous par un ruisseau), c'est cet
-   *     HEXSIDE qui fait foi — ligne "Grove, Bridge" pour un pont, "Broken,
-   *     Town, Woods, Stream" pour un ruisseau ;
+   *     de MÊME nature, et que la table substitue une ligne à cette nature
+   *     (`table.edgeRows` — pour Arnhem : "Grove, Bridge" pour un pont,
+   *     "Broken, Town, Woods, Stream" pour un ruisseau), c'est cet HEXSIDE qui
+   *     fait foi ;
    *   - sinon (ou tant qu'aucun attaquant n'est à son contact), c'est le
    *     TERRAIN DE L'HEX.
    *  Un hexside franchi par une route/piste n'est pas un obstacle et renvoie
@@ -597,13 +540,13 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     if (adjacent.length > 0) {
       const kinds = adjacent.map((attacker) => combatEdgeKind({ c: attacker.col, r: attacker.row }, { c: targetHex.col, r: targetHex.row }))
       const first = kinds[0]
-      if (first && kinds.every((kind) => kind === first)) {
-        if (first === 'bridge') return { row: rowByKey('grove'), reason: 'hexside de pont' }
-        if (first === 'stream') return { row: rowByKey('broken'), reason: 'hexside de ruisseau' }
+      const substitute = first ? table.edgeRows[first] : null
+      if (substitute && kinds.every((kind) => kind === first)) {
+        return { row: rowByKey(substitute.row), reason: substitute.reason ?? `hexside (${first})` }
       }
     }
     const type = terrain?.grid?.[hexId(targetHex.col + 1, targetHex.row)]
-    const label = terrain?.types?.[type]?.label ?? 'Clear'
+    const label = terrain?.types?.[type]?.label ?? type ?? 'non déclaré'
     return { row: rowForTerrain(type), reason: `terrain de l'hex (${label})` }
   }
 
@@ -628,27 +571,29 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   })
 
   function rowByKey(key) {
-    return CRT_ROWS.find((crtRow) => crtRow.key === key)
+    return table.rows.find((crtRow) => crtRow.key === key)
   }
 
   /** Ligne de la table correspondant à un type de terrain de `terrain.grid`
-   *  — repli sur "Clear, Mixed" (la ligne la moins protectrice, donc la plus
-   *  neutre) pour un type inconnu ou un hex sans terrain déclaré. */
+   *  — repli sur la ligne par défaut de la table (`table.defaultRow`, "Clear,
+   *  Mixed" pour Arnhem : la moins protectrice, donc la plus neutre) pour un
+   *  type inconnu ou un hex sans terrain déclaré. */
   function rowForTerrain(type) {
-    return CRT_ROWS.find((crtRow) => crtRow.terrains.includes(type)) ?? rowByKey('clear')
+    return table.rows.find((crtRow) => crtRow.terrains.includes(type)) ?? rowByKey(table.defaultRow)
   }
 
-  /** Colonne finale : celle de la ligne "Clear" pour ce différentiel,
-   *  décalée du `shift` du terrain, et jamais en deçà de la colonne 1 (cf.
-   *  "Attacks at less than the lowest differential..." en bas de la table). */
+  /** Colonne finale : celle de la ligne de référence pour ce différentiel
+   *  (cf. combatTable.js::referenceColumn), décalée du `shift` du terrain,
+   *  et jamais en deçà de la colonne 1 (cf. "Attacks at less than the lowest
+   *  differential..." en bas de la table). */
   const column = computed(() => {
     if (frozen.value) return frozen.value.column
     const row = terrainRow.value?.row
     if (!row) return null
-    return Math.max(1, clearColumn(differential.value) - row.shift)
+    return Math.max(1, referenceColumn(table, differential.value) - row.shift)
   })
 
-  /** Résout le combat : 1 dé à 6 faces croisé avec la colonne calculée.
+  /** Résout le combat : 1 dé (`table.die` faces) croisé avec la colonne calculée.
    *  Ne fait rien tant que le combat n'est pas résoluble (cf. `canResolve` :
    *  aucun attaquant, ou un hex cible sans attaquant à son contact). Le dé
    *  est tiré ICI plutôt que reçu du composant pour que toute la règle — y
@@ -671,9 +616,9 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
       terrainRow: terrainRow.value,
       column: column.value,
     }
-    const die = Math.floor(Math.random() * 6) + 1
+    const die = Math.floor(Math.random() * table.die) + 1
     const col = column.value
-    const code = CRT_RESULTS[die - 1][col - 1]
+    const code = table.results[die - 1][col - 1]
     result.value = {
       die,
       column: col,
@@ -682,23 +627,17 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
       rowReason: terrainRow.value.reason,
       diff: differential.value,
       result: code,
-      resultLabel: RESULT_LABELS[code],
+      resultLabel: table.labels[code] ?? code,
     }
     return result.value
   }
 
-  /** Les 4 lignes de terrain prêtes à afficher dans la mini-table de la
+  /** Les lignes de terrain prêtes à afficher dans la mini-table de la
    *  modale : pour chacune, ses cellules d'étiquettes de différentiel (une
    *  par colonne réellement couverte — les colonnes suivantes restent vides,
-   *  exactement comme sur la table imprimée). */
+   *  exactement comme sur la table imprimée, cf. combatTable.js::rowCells). */
   const crtRows = computed(() =>
-    CRT_ROWS.map((row) => ({
-      key: row.key,
-      label: row.label,
-      cells: Array.from({ length: 12 - row.shift }, (_, columnIndex) =>
-        columnIndex === 0 ? FIRST_COLUMN_LABELS[row.shift] : COLUMN_LABELS[columnIndex + row.shift]
-      ),
-    }))
+    (table?.rows ?? []).map((row) => ({ key: row.key, label: row.label, cells: rowCells(table, row) }))
   )
 
   return {
@@ -707,6 +646,6 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     isCombatTargetHex, isCombatAttackerHex,
     attackStrength, defenseStrength, differential, canResolve, strandedUnits, terrainRow, column,
     resolveCombat, combatResult: result,
-    crtRows, crtResults: CRT_RESULTS,
+    crtRows, crtResults: table?.results ?? [],
   }
 }

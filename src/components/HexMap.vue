@@ -31,6 +31,7 @@ import { useModuleRules } from '../lib/moduleRules.js'
 import { isUnit, isFighter, isSupport } from '../lib/units.js'
 import { parseSetup, isAirborneEntry, deploymentCells, rangeCells, landingCells } from '../lib/setup.js'
 import { resolveRules } from '../lib/rules.js'
+import { resolveCombatTable } from '../lib/combatTable.js'
 import CalibrationPanel from './CalibrationPanel.vue'
 import Counter from './Counter.vue'
 import TurnTracker from './TurnTracker.vue'
@@ -578,10 +579,15 @@ const initialDeployment = counters.value.map((counter) => ({ id: counter.id, col
 const { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
   PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules)
 
+// Table de combat déclarée par le module (`module.combat`, cf.
+// lib/combatTable.js) — `null` : module sans combat.
+const combatTable = resolveCombatTable(props.module.combat)
+
 // Combat du mode Assisté (cf. lib/useCombat.js, qui porte toute la règle :
-// désignation défenseur/attaquants, table de combat, jet de dé). Ce composant
-// ne fait que lui brancher les clics (cf. onCounterSelect/onHex plus bas),
-// les surlignages orange/jaune de la carte et la modale (cf. template).
+// désignation défenseur/attaquants, lecture de la table, jet de dé). Ce
+// composant ne fait que lui brancher les clics (cf. onCounterSelect/onHex
+// plus bas), les surlignages orange/jaune de la carte et la modale (cf.
+// template).
 const {
   combatActive, combatAllowed, targetHexes: combatTargetHexes, targetHexLabels: combatTargetHexLabels, defenders: combatDefenders,
   attackers: combatAttackers, toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought, pendingEngagements,
@@ -589,7 +595,7 @@ const {
   attackStrength, defenseStrength, differential, canResolve: combatCanResolve, strandedUnits: combatStrandedUnits,
   terrainRow: combatTerrainRow,
   column: combatColumn, resolveCombat, combatResult, crtRows, crtResults,
-} = useCombat(toRef(props, 'assisted'), phase, counters, canControl, props.module.terrain, combatEdgeKind)
+} = useCombat(toRef(props, 'assisted'), phase, counters, canControl, props.module.terrain, combatEdgeKind, combatTable)
 
 // Application du résultat d'un combat (retraites au clic, éliminations — cf.
 // lib/useRetreat.js, qui porte toute la règle). HexMap.vue ne lui fournit que
@@ -611,6 +617,10 @@ const {
       { counterId: unit.id, col: unit.col, row: unit.row })
   },
   eliminateUnit: (unit, reason) => eliminateCounter(unit.id, reason),
+  // Effet de chaque résultat et avance après combat : déclarés par la table
+  // du module (cf. lib/combatTable.js).
+  resultEffect: (code) => combatTable?.effects[code] ?? null,
+  advanceAfterCombat: combatTable?.advanceAfterCombat ?? true,
   // Réductions de retraite propres au module (cf.
   // lib/useArnhem.js::cityRetreatReduction) — `null` hors Arnhem.
   retreatReduction: (unit, hex, task) => moduleRules.cityRetreatReduction(unit, hex, task),
