@@ -65,6 +65,11 @@ async function submit() {
       scenarioId: settings.value.scenario,
       settings: settings.value,
       maxPlayers: maxPlayers.value,
+      // Ordre des camps de la piste de tour (cf. module.turnTrack) : le
+      // serveur ne charge pas les modules, c'est ce qui lui permet de savoir
+      // à qui est le tour et de refuser les coups de l'autre joueur (cf.
+      // server/src/rooms.js::isPlayersTurn).
+      turnOrder: selectedModule.value?.turnTrack?.order ?? [],
     })
     router.push({ name: 'games-list', query: { created: game.id, passcode: game.passcode } })
   } catch (requestError) {

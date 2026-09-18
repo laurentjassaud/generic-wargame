@@ -27,7 +27,15 @@ function sanitizeSettings(settings) {
   )
 }
 
-export function createGame({ moduleId, scenarioId, variants, settings, maxPlayers }) {
+/** Ordre des camps reçu du client (cf. src/views/CreateGame.vue,
+ *  `module.turnTrack.order`) : quelques clés courtes au plus. Vide si
+ *  absent — le contrôle de tour (cf. `isPlayersTurn`) est alors inactif. */
+function sanitizeTurnOrder(turnOrder) {
+  if (!Array.isArray(turnOrder)) return []
+  return turnOrder.filter((side) => typeof side === 'string' && side && side.length <= 32).slice(0, 16)
+}
+
+export function createGame({ moduleId, scenarioId, variants, settings, maxPlayers, turnOrder }) {
   const id = gameId()
   const game = {
     id,
@@ -35,6 +43,9 @@ export function createGame({ moduleId, scenarioId, variants, settings, maxPlayer
     scenarioId,
     variants: Array.isArray(variants) ? variants : [],
     settings: sanitizeSettings({ scenario: scenarioId, ...settings }),
+    // Camps dans l'ordre où ils jouent chaque tour (cf. sanitizeTurnOrder) :
+    // `turnOrder[turnStep % turnOrder.length]` est le camp qui a la main.
+    turnOrder: sanitizeTurnOrder(turnOrder),
     maxPlayers,
     passcode: passcode(),
     status: 'lobby', // 'lobby' | 'started'
@@ -126,8 +137,9 @@ export function joinGame(id, { passcode: code, playerId: existingPlayerId, name,
     ? game.players.get(id_)
     : { id: id_, name, side, connected: false, socketId: null }
 
-  player.name = name ?? player.name
-  player.side = side ?? player.side
+  // Reconnexion : le siège est repris TEL QUEL — ni le pseudo ni surtout le
+  // camp ne changent. Sinon un client pourrait se reconnecter sur le camp
+  // adverse (même déjà pris) et contourner le contrôle de tour ci-dessous.
   player.connected = true
   player.socketId = socketId
   game.players.set(id_, player)
@@ -137,6 +149,47 @@ export function joinGame(id, { passcode: code, playerId: existingPlayerId, name,
   }
 
   return { game, playerId: id_ }
+}
+
+// --- Contrôle de tour ---------------------------------------------------------
+// Le serveur ne connaît ni les règles ni les pions : il sait seulement, grâce
+// à `turnOrder` (cf. createGame) et au pas courant, QUEL CAMP a la main. Tout
+// ce qui fait avancer ou modifie la partie (coup, tour, phase, journal) n'est
+// accepté que du joueur de ce camp — le même verrou que l'interface (cf.
+// src/components/HexMap.vue::inputLocked), mais qu'un client modifié ne peut
+// pas contourner. Sans `turnOrder` (ancien client, module sans piste de
+// tour), aucune restriction : comportement d'avant.
+
+/** Camp qui a la main, ou `null` si l'ordre des camps est inconnu. */
+export function activeSide(game) {
+  const count = game.turnOrder.length
+  return count ? game.turnOrder[game.turnStep % count] : null
+}
+
+/** Camp qui vient de rendre la main (celui du pas précédent), ou `null`. */
+function previousSide(game) {
+  const count = game.turnOrder.length
+  if (!count || game.turnStep === 0) return null
+  return game.turnOrder[(game.turnStep - 1) % count]
+}
+
+/** Le joueur `playerId` a-t-il la main ? Toujours vrai sans `turnOrder`. */
+export function isPlayersTurn(game, playerId) {
+  const side = activeSide(game)
+  if (side == null) return true
+  return game.players.get(playerId)?.side === side
+}
+
+/** Le joueur `playerId` peut-il inscrire `entry` au journal partagé ? Oui
+ *  s'il a la main. Une exception : l'entrée `turn` du joueur qui VIENT de
+ *  rendre la main — elle est écrite après coup (cf. HexMap.vue::onTurnChange,
+ *  différé), donc arrive quand le camp actif est déjà l'adversaire. */
+export function mayLog(game, playerId, entry) {
+  if (isPlayersTurn(game, playerId)) return true
+  if (entry?.kind === 'turn' && entry.data?.step === game.turnStep) {
+    return game.players.get(playerId)?.side === previousSide(game)
+  }
+  return false
 }
 
 export function recordMove(id, { counterId, col, row }) {

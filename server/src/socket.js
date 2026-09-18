@@ -1,4 +1,4 @@
-import { RoomError, getGame, joinGame, recordMove, advanceTurn, recordPhase, recordGameOver, appendJournal, removeJournal, recordDeployment, setPlayerConnectionBySocket, toPublic } from './rooms.js'
+import { RoomError, getGame, joinGame, recordMove, advanceTurn, recordPhase, recordGameOver, appendJournal, removeJournal, recordDeployment, isPlayersTurn, mayLog, setPlayerConnectionBySocket, toPublic } from './rooms.js'
 
 export function registerSocketHandlers(io) {
   io.on('connection', (socket) => {
@@ -30,11 +30,18 @@ export function registerSocketHandlers(io) {
       }
     })
 
+    /** Le joueur de ce socket a-t-il rejoint `gameId` ET la main dans
+     *  cette partie (cf. rooms.js::isPlayersTurn) ? Garde commune à tout ce
+     *  qui modifie la partie — évite aussi qu'un client injecte des coups
+     *  dans une room qu'il n'a jamais rejointe. */
+    function hasTurn(gameId) {
+      if (socket.data.gameId !== gameId) return false
+      const game = getGame(gameId)
+      return !!game && isPlayersTurn(game, socket.data.playerId)
+    }
+
     socket.on('game:move', ({ gameId, counterId, col, row } = {}) => {
-      // Le joueur doit avoir rejoint cette room pour pouvoir bouger un pion
-      // dessus — évite qu'un client injecte des coups dans une room qu'il
-      // n'a jamais rejointe.
-      if (socket.data.gameId !== gameId) return
+      if (!hasTurn(gameId)) return
       try {
         recordMove(gameId, { counterId, col, row })
         io.to(`game:${gameId}`).emit('game:move', { counterId, col, row })
@@ -44,9 +51,7 @@ export function registerSocketHandlers(io) {
     })
 
     socket.on('game:turn', ({ gameId } = {}) => {
-      // Même garde que game:move : seul un joueur ayant rejoint cette room
-      // peut faire avancer sa piste de tour.
-      if (socket.data.gameId !== gameId) return
+      if (!hasTurn(gameId)) return
       try {
         const game = advanceTurn(gameId)
         io.to(`game:${gameId}`).emit('game:turn', { turnStep: game.turnStep })
@@ -56,9 +61,9 @@ export function registerSocketHandlers(io) {
     })
 
     socket.on('game:phase', ({ gameId, phase, step, blitzUsed } = {}) => {
-      // Même garde que game:move. Rediffusé aux AUTRES joueurs seulement :
-      // l'émetteur a déjà changé de phase localement.
-      if (socket.data.gameId !== gameId) return
+      // Rediffusé aux AUTRES joueurs seulement : l'émetteur a déjà changé de
+      // phase localement.
+      if (!hasTurn(gameId)) return
       try {
         const recorded = recordPhase(gameId, { phase, step, blitzUsed })
         socket.to(`game:${gameId}`).emit('game:phase', { phase, step, blitzUsed: recorded.blitzUsed })
@@ -85,8 +90,11 @@ export function registerSocketHandlers(io) {
 
     socket.on('game:log', ({ gameId, entry } = {}) => {
       // Journal partagé : conservé puis transmis aux AUTRES joueurs
-      // (l'émetteur l'a déjà dans son journal).
+      // (l'émetteur l'a déjà dans son journal). Réservé au joueur qui a la
+      // main — à une exception près, cf. rooms.js::mayLog.
       if (socket.data.gameId !== gameId) return
+      const game = getGame(gameId)
+      if (!game || !mayLog(game, socket.data.playerId, entry)) return
       try {
         const clean = appendJournal(gameId, entry)
         if (clean) socket.to(`game:${gameId}`).emit('game:log', { entry: clean })
@@ -96,7 +104,7 @@ export function registerSocketHandlers(io) {
     })
 
     socket.on('game:unlog', ({ gameId, uid } = {}) => {
-      if (socket.data.gameId !== gameId) return
+      if (!hasTurn(gameId)) return
       try {
         if (removeJournal(gameId, uid)) socket.to(`game:${gameId}`).emit('game:unlog', { uid })
       } catch {

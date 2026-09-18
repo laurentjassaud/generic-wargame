@@ -266,7 +266,7 @@ function cancelMovement(id) {
 // Libre, aucun garde-fou de tour/MP n'existe, "annuler" un glisser-déposer
 // libre n'aurait pas vraiment de sens dans un bac à sable.
 function undoLastMove() {
-  if (!props.assisted || actionsLocked.value) return
+  if (!props.assisted || inputLocked.value) return
   const last = moveHistory.value.pop()
   if (!last) return
   const counter = counters.value.find((counter) => String(counter.id) === String(last.counterId))
@@ -652,9 +652,9 @@ const showPhaseBlocked = ref(false)
  *  Sinon, la décision de ce que fait réellement le clic reste à
  *  lib/useAssisted.js::advance. */
 function onPhaseNext() {
-  // En ligne, seul le joueur dont c'est le tour fait avancer la partie (le
-  // bouton est déjà désactivé chez les autres, cf. `isLocalTurn`).
-  if (!isLocalTurn.value) return
+  // Rejeu, partie terminée ou, en ligne, pas le tour de ce joueur (le
+  // bouton est déjà désactivé dans ces cas, cf. `inputLocked`).
+  if (inputLocked.value) return
   // Retraite en cours (cf. lib/useRetreat.js) : elle doit être terminée
   // avant de pouvoir changer de phase.
   if (retreatActive.value) return
@@ -855,7 +855,7 @@ function eliminateCounter(id, reason) {
 function onCounterContextMenu(id, ev) {
   // Pendant une retraite (cf. lib/useRetreat.js), retirer ou replacer un
   // pion à la main désynchroniserait la file des retraites : menu désactivé.
-  if (actionsLocked.value || retreatActive.value) return
+  if (inputLocked.value || retreatActive.value) return
   const items = [
     { label: 'Replacer le pion', action: () => returnCounterToReinforcements(id) },
     { label: 'Éliminé', action: () => eliminateCounter(id) },
@@ -866,7 +866,7 @@ function onCounterContextMenu(id, ev) {
   openContextMenu(ev, items)
 }
 function onEliminatedContextMenu(id, ev) {
-  if (actionsLocked.value) return
+  if (inputLocked.value) return
   openContextMenu(ev, [
     { label: 'Replacer le pion', action: () => returnCounterToReinforcements(id) },
   ])
@@ -1145,7 +1145,7 @@ const supportStackBadges = computed(() => {
  *      verrouillé (cf. `lockedFromSelectionIds` : il a bougé ce tour-ci puis
  *      a déjà été désélectionné une fois), auquel cas le clic ne fait rien. */
 function onCounterSelect(id) {
-  if (actionsLocked.value) return
+  if (inputLocked.value) return
   const counter = counters.value.find((counter) => String(counter.id) === String(id))
   if (!counter) return
   // Résultat de combat en cours d'application (cf. lib/useRetreat.js) :
@@ -1191,7 +1191,7 @@ function onCounterSelect(id) {
 const selectedReinforcementId = ref(null)
 
 function onReinforcementSelect(id) {
-  if (actionsLocked.value) return
+  if (inputLocked.value) return
   const counter = reinforcements.value.find((counter) => String(counter.id) === String(id))
   // `canPlaceReinforcementNow` : en phase Airborne, seuls les aéroportés ;
   // dans les autres phases, tout sauf eux (cf. lib/useAssisted.js).
@@ -1232,7 +1232,7 @@ function onReinforcementSelect(id) {
  *  lecteur (stepReplay/fastForwardReplay) fait bouger la carte tant que le
  *  journal chargé n'est pas entièrement joué. */
 const onHex = (hex) => {
-  if (actionsLocked.value) return
+  if (inputLocked.value) return
   // Résultat de combat en cours d'application (cf. lib/useRetreat.js) :
   // seul un clic sur un hex rouge (retraite) ou vert vif (avance) fait
   // quelque chose ; tout le reste est ignoré jusqu'à la fin.
@@ -1345,7 +1345,7 @@ function onCounterDragStart(id, ev) {
   // Pendant un rejeu (cf. `replayLocked`), preventDefault() sur `dragstart`
   // annule aussi le glisser natif HTML5 (tablette de soutien, panneau de
   // renforts) — un seul guard couvre donc les deux mécanismes de glisser.
-  if (actionsLocked.value) { ev?.preventDefault(); return }
+  if (inputLocked.value) { ev?.preventDefault(); return }
   const onMap = counters.value.find((counter) => String(counter.id) === String(id))
   const counter = onMap
     ?? supportTrackerRef.value?.findToken(id)
@@ -1444,7 +1444,7 @@ function pixelToHex(svgX, svgY) {
 }
 
 function onMapDrop(ev) {
-  if (actionsLocked.value) return
+  if (inputLocked.value) return
   const svg = svgRef.value
   if (!svg || draggedCounterId.value == null) return
   const pt = svg.createSVGPoint()
@@ -1698,9 +1698,19 @@ const replayLocked = computed(() => replayEntries.value.length > 0 && replayInde
 // Timing "Blitz" : camp dont la pendule est tombée à 0 — il a PERDU la
 // partie (cf. declareBlitzLoss), `null` tant que la partie continue.
 const blitzLoser = ref(null)
-// Toute action de jeu est bloquée pendant un rejeu ET une fois la partie
-// terminée (gardes des sélections, déplacements, menus, boutons...).
+// La PARTIE est figée pendant un rejeu et une fois terminée : plus aucune
+// action de jeu, et les pendules du timing s'arrêtent (cf. moveTimerRunning).
 const actionsLocked = computed(() => replayLocked.value || blitzLoser.value != null)
+// La SAISIE de ce navigateur est bloquée dans ces mêmes cas, PLUS, en ligne,
+// tant que ce n'est pas à son joueur de jouer (cf. `isLocalTurn`) : il ne
+// peut alors ni sélectionner, ni déplacer, ni éliminer, ni replacer un pion,
+// quel qu'en soit le camp — ni faire avancer tour ou phase. C'est la garde
+// de TOUTES les entrées utilisateur (clics, glisser-déposer, menus, boutons,
+// dé). Distincte de `actionsLocked` : chez le joueur qui attend, la partie
+// continue (pendule de l'adversaire, synchro), seule sa saisie est fermée.
+// Le serveur applique la même règle de son côté (cf. server/src/rooms.js::
+// isPlayersTurn) : ce verrou-ci n'est que le confort de l'interface.
+const inputLocked = computed(() => actionsLocked.value || (props.online && !isLocalTurn.value))
 
 // --- Timings "Limité" et "Blitz" (cf. lib/gameSettings.js, MoveTimer.vue).
 // Toutes les phases sont conservées : SEULE la phase Mouvement (phase 0) est
@@ -1828,7 +1838,7 @@ function onMapDragEnd() {
 
       <div v-if="module.turnTrack" class="turn-tracker-block">
         <TurnTracker ref="turnTrackerRef" :config="module.turnTrack" :sides="module.sides"
-          :initial-step="initialTurnStep" :disabled="actionsLocked || !isLocalTurn" :phase="phase" :phase-index="phaseIndex" :phase-labels="phaseLabels" :next-label="nextLabel"
+          :initial-step="initialTurnStep" :disabled="inputLocked" :phase="phase" :phase-index="phaseIndex" :phase-labels="phaseLabels" :next-label="nextLabel"
           @turn="onTurnAdvance" @change="onTurnChange" @phase-next="onPhaseNext" />
 
         <!-- cf. MoveTimer.vue — Blitz : une pendule par camp, toujours
@@ -1859,7 +1869,7 @@ function onMapDragEnd() {
           @click="showCounters = !showCounters">
           {{ showCounters ? 'Cacher les pions' : 'Afficher les pions' }}
         </button>
-        <button v-if="assisted" type="button" class="toggle-btn" :disabled="!moveHistory.length || actionsLocked"
+        <button v-if="assisted" type="button" class="toggle-btn" :disabled="!moveHistory.length || inputLocked"
           @click="undoLastMove">
           ↩ Retour arrière
         </button>
@@ -2054,7 +2064,7 @@ function onMapDragEnd() {
       @close="unitStackBlock = null" />
 
     <!-- Dé libre : mode Libre uniquement (cf. `showRollModal`). -->
-    <RollModal v-if="!assisted" v-show="showRollModal" :disabled="actionsLocked" @roll="onDiceRoll" />
+    <RollModal v-if="!assisted" v-show="showRollModal" :disabled="inputLocked" @roll="onDiceRoll" />
     <MovementChartModal v-if="movementChartSrc" v-show="showMovementChart" :src="movementChartSrc" />
     <CombatChartModal v-if="combatChartSrc" v-show="showCombatChart" :src="combatChartSrc" />
   </div>
