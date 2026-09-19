@@ -75,6 +75,15 @@ retraite, avance, élimination…) y est inscrit avec de quoi le **rejouer**.
   retours arrière…) ; un joueur qui recharge la page ou se reconnecte est
   réaligné sur le serveur. Export JSON toujours possible.
 
+**Signaler un bug** (bouton de la barre d'outils du plateau,
+`BugReportModal.vue`, `src/lib/bugReport.js`) : ouvre la création d'un ticket
+GitHub pré-rempli (titre, description, contexte de la partie, 30 derniers
+coups en clair). Le joueur le valide avec son propre compte GitHub. Le ticket
+joint aussi un **export** compressé : état de la carte et 30 derniers coups
+avec leurs données. Pour le lire :
+`node scripts/decode-bug-report.mjs <export>`. Le dépôt cible se change avec
+`VITE_GITHUB_REPO`.
+
 ## Parties en ligne
 
 `/` liste les parties, `/create` en crée une (code d'accès affiché une seule

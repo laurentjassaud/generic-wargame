@@ -47,6 +47,8 @@ import MovementChartModal from './MovementChartModal.vue'
 import CombatChartModal from './CombatChartModal.vue'
 import CombatModal from './CombatModal.vue'
 import PhaseBlockedModal from './PhaseBlockedModal.vue'
+import BugReportModal from './BugReportModal.vue'
+import { APP_VERSION, REPORT_ENTRIES } from '../lib/bugReport.js'
 import MoveTimer from './MoveTimer.vue'
 
 const props = defineProps({
@@ -853,6 +855,54 @@ function mpText(counter) {
 }
 
 const PHASE_NAMES = ['Mouvement', 'Combat', 'Fin de tour']
+
+// --- Signaler un bug (cf. BugReportModal.vue, lib/bugReport.js) : état du
+// jeu capturé au clic sur le bouton — `{ snapshot, context }` — ou `null`
+// (modale fermée). Toujours accessible, même pendant un rejeu ou le tour
+// adverse : un bug peut se signaler à tout moment.
+const bugReport = ref(null)
+
+/** Export joint au rapport : de quoi comprendre, et si possible rejouer, la
+ *  situation — pas, phase, position de chaque pion ("id@CCRR"), unités
+ *  éliminées ou ayant combattu, et les `REPORT_ENTRIES` derniers coups du
+ *  journal avec leurs données (cf. applyReplayEntry). */
+function bugReportSnapshot() {
+  const entries = journalRef.value?.toChronological() ?? []
+  return {
+    app: APP_VERSION,
+    module: props.moduleId || props.module.name,
+    settings: props.settings,
+    online: props.online,
+    localSide: props.localSide || null,
+    step: turnInfo.value.step,
+    turn: turnInfo.value.turn,
+    side: turnInfo.value.activeSideKey,
+    phase: phase.value,
+    positions: counters.value.map((counter) => `${counter.id}@${hexId(counter.col + 1, counter.row)}`),
+    eliminated: [...eliminatedIds.value],
+    fought: counters.value.filter(hasFought).map((counter) => counter.id),
+    entries: entries.slice(-REPORT_ENTRIES),
+  }
+}
+
+/** Bouton "Signaler un bug" : capture l'état du jeu et ouvre la modale. */
+function openBugReport() {
+  const settings = Object.entries(props.settings ?? {})
+    .filter(([, value]) => value !== '' && value != null)
+    .map(([key, value]) => `${key} ${value}`).join(' · ')
+  const phaseName = phase.value == null ? '—' : phase.value === PHASE_AIRBORNE ? 'Airborne' : PHASE_NAMES[phase.value]
+  const side = turnInfo.value.activeSideKey
+  bugReport.value = {
+    snapshot: bugReportSnapshot(),
+    context: [
+      ['Module', `${props.module.name} (${props.moduleId || '?'})`],
+      ['Réglages', settings || 'inconnus'],
+      ['Situation', `tour ${turnInfo.value.turn}${side ? ` — ${sideLabel(side)}` : ''}, phase ${phaseName}`],
+      ['Partie', props.online ? `en ligne${props.localSide ? `, camp ${sideLabel(props.localSide)}` : ''}` : 'locale'],
+      ['Page', `${location.pathname}${location.search}`],
+    ],
+  }
+}
 // Avertissement "changement de phase refusé" (cf. PhaseBlockedModal.vue) —
 // ouvert par onPhaseNext ci-dessous.
 const showPhaseBlocked = ref(false)
@@ -2157,6 +2207,10 @@ function onMapDragEnd() {
           @click="showCombatChart = !showCombatChart">
           Table de combat
         </button>
+        <button type="button" class="toggle-btn" title="Ouvrir un rapport de bug sur GitHub, avec un export de la partie"
+          @click="openBugReport">
+          Signaler un bug
+        </button>
         <div v-if="replayEntries.length" class="replay-ctl">
           <span class="replay-pos">{{ replayIndex }} / {{ replayEntries.length }}</span>
           <button type="button" class="toggle-btn replay-btn" title="Lecture : avancer d'une ligne"
@@ -2324,6 +2378,9 @@ function onMapDragEnd() {
          de Mouvement (cf. lib/useAssisted.js::stackedHexes) ou combats
          obligatoires encore en attente (cf. lib/useCombat.js::pendingEngagements).
          Les deux listes sont vides hors de leur phase respective. -->
+    <!-- Signaler un bug : cf. `openBugReport`. -->
+    <BugReportModal v-if="bugReport" :snapshot="bugReport.snapshot" :context="bugReport.context" @close="bugReport = null" />
+
     <PhaseBlockedModal v-if="showPhaseBlocked" :engagements="pendingEngagements" :stacks="stackedHexes"
       @close="showPhaseBlocked = false" />
 

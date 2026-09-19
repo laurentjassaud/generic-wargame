@@ -309,7 +309,9 @@ function revealEntry(entry) {
     ...(entry.uid ? { uid: entry.uid } : {}) })
 }
 
-defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendRemote, removeByUid, loadShared })
+// `toChronological` : journal complet, du plus ancien au plus récent — sert
+// aussi à l'export joint à un rapport de bug (cf. HexMap.vue::bugReportSnapshot).
+defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendRemote, removeByUid, loadShared, toChronological })
 </script>
 
 <template>
