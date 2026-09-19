@@ -363,7 +363,7 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-size: 0.8rem;
+  font-size: var(--font-size-080);
 }
 
 .jn-empty {
@@ -387,21 +387,21 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
 .jn-btn {
   padding: 6px 10px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 4px;
-  font-size: 0.72rem;
+  border: 1px solid var(--white-a35);
+  border-radius: var(--radius-4);
+  font-size: var(--font-size-072);
   letter-spacing: 0.3px;
   color: inherit;
   cursor: pointer;
 }
 
 .jn-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--white-a12);
 }
 
 .jn-btn.on {
-  background: rgba(255, 255, 255, 0.25);
-  border-color: rgba(255, 255, 255, 0.7);
+  background: var(--white-a25);
+  border-color: var(--white-a70);
 }
 
 .jn-btn:disabled {
@@ -415,7 +415,7 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
 
 .jn-autosave {
   margin: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-070);
   opacity: 0.65;
   font-variant-numeric: tabular-nums;
 }
@@ -425,9 +425,9 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
   flex-direction: column;
   gap: 6px;
   padding: 8px 10px;
-  border-radius: 4px;
-  background: rgba(232, 196, 104, 0.22);
-  border: 1px solid rgba(232, 196, 104, 0.5);
+  border-radius: var(--radius-4);
+  background: var(--gold-a22);
+  border: 1px solid var(--gold-a50);
 }
 
 .jn-resume-msg {
@@ -444,32 +444,32 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
   display: flex;
   gap: 8px;
   padding: 6px 10px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-4);
+  background: var(--white-a10);
   line-height: 1.35;
 }
 
 .jn-row.jn-turn {
-  background: rgba(232, 196, 104, 0.22);
+  background: var(--gold-a22);
   font-weight: 600;
 }
 
 .jn-row.jn-phase {
-  background: rgba(232, 196, 104, 0.12);
+  background: var(--gold-a12);
   font-style: italic;
 }
 
 .jn-row.jn-combat {
-  background: rgba(255, 140, 0, 0.18);
+  background: var(--orange-a18);
 }
 
 .jn-row.jn-eliminate {
-  background: rgba(209, 26, 26, 0.2);
+  background: var(--danger-a20);
 }
 
 .jn-row.jn-place,
 .jn-row.jn-return {
-  background: rgba(46, 204, 113, 0.14);
+  background: var(--selection-a14);
 }
 
 .jn-t {
@@ -487,9 +487,9 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
   margin-top: 4px;
   padding: 6px 12px;
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 4px;
-  font-size: 0.72rem;
+  border: 1px solid var(--white-a35);
+  border-radius: var(--radius-4);
+  font-size: var(--font-size-072);
   letter-spacing: 0.5px;
   text-transform: uppercase;
   color: inherit;
@@ -497,14 +497,14 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
 }
 
 .jn-clear:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--white-a12);
 }
 
 .jn-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 2000;
-  background: rgba(0, 0, 0, 0.55);
+  z-index: var(--z-journal-modal);
+  background: var(--black-a55);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -512,27 +512,27 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
 
 .jn-modal {
   width: min(90vw, 360px);
-  background: #2a2620;
-  color: #ece4d0;
-  border-radius: 10px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border-radius: var(--radius-10);
+  box-shadow: var(--shadow-modal);
   padding: 20px 22px;
-  border-top: 4px solid #2ecc71;
+  border-top: 4px solid var(--color-selection);
 }
 
 .jn-modal-error {
-  border-top-color: #d11a1a;
+  border-top-color: var(--color-danger);
 }
 
 .jn-modal-title {
   margin: 0 0 8px;
   font-weight: 700;
-  font-size: 1rem;
+  font-size: var(--font-size-100);
 }
 
 .jn-modal-msg {
   margin: 0 0 16px;
-  font-size: 0.85rem;
+  font-size: var(--font-size-085);
   line-height: 1.4;
 }
 

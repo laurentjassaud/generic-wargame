@@ -75,14 +75,14 @@ defineExpose({ findToken, removeToken })
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(0, 0, 0, 0.18);
-  border-radius: 8px;
+  background: var(--black-a18);
+  border-radius: var(--radius-8);
   padding: 6px 10px;
 }
 
 .st-label {
-  color: #cac9ae;
-  font-size: 0.78rem;
+  color: var(--panel-text-muted);
+  font-size: var(--font-size-078);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -95,7 +95,7 @@ defineExpose({ findToken, removeToken })
 .st-token {
   width: 28px;
   height: 28px;
-  border-radius: 4px;
+  border-radius: var(--radius-4);
   cursor: grab;
 }
 </style>

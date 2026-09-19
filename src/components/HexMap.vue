@@ -2422,17 +2422,17 @@ function onMapDragEnd() {
   flex-wrap: wrap;
   gap: 12px;
   padding: 16px 36px 0;
-  background: #8a7c76;
+  background: var(--board-bg);
   flex: none;
   position: relative;
-  z-index: 1;
+  z-index: var(--z-raised);
 }
 
 .toolbar h1 {
-  font-size: 3.2rem;
+  font-size: var(--font-size-320);
   font-weight: 700;
   margin: 0;
-  color: #cac9ae;
+  color: var(--panel-text-muted);
 }
 
 .turn-tracker-block {
@@ -2451,10 +2451,10 @@ function onMapDragEnd() {
 
 .game-over-tag {
   padding: 3px 10px;
-  border-radius: 6px;
-  background: #ff5a3c;
-  color: #2a2620;
-  font-size: 0.8rem;
+  border-radius: var(--radius-6);
+  background: var(--color-alert);
+  color: var(--panel-bg);
+  font-size: var(--font-size-080);
   font-weight: 700;
 }
 
@@ -2463,7 +2463,7 @@ function onMapDragEnd() {
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  font-size: 0.85rem;
+  font-size: var(--font-size-085);
 }
 
 .controls label {
@@ -2476,16 +2476,16 @@ function onMapDragEnd() {
 
 .toggle-btn {
   padding: 5px 10px;
-  font-size: 0.85rem;
-  border: 1px solid rgba(0, 0, 0, 0.25);
-  border-radius: 4px;
+  font-size: var(--font-size-085);
+  border: 1px solid var(--black-a25);
+  border-radius: var(--radius-4);
   background: transparent;
   color: var(--color-text);
   cursor: pointer;
 }
 
 .toggle-btn.active {
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--black-a25);
 }
 
 .toggle-btn:disabled {
@@ -2501,12 +2501,12 @@ function onMapDragEnd() {
 
 .replay-pos {
   font-variant-numeric: tabular-nums;
-  font-size: 0.8rem;
+  font-size: var(--font-size-080);
   opacity: 0.85;
 }
 
 .replay-btn {
-  font-size: 0.9rem;
+  font-size: var(--font-size-090);
   line-height: 1;
   padding: 5px 9px;
 }
@@ -2527,7 +2527,7 @@ function onMapDragEnd() {
   overflow: hidden;
   flex: 1;
   min-height: 0;
-  background: #8a7c76;
+  background: var(--board-bg);
 }
 
 .map-wrap.dragging {
@@ -2544,30 +2544,30 @@ function onMapDragEnd() {
 }
 
 polygon.hex {
-  fill: rgba(255, 255, 255, 0);
+  fill: var(--white-a00);
   transition: fill 0.05s;
 }
 
 polygon.hex.adjacent {
-  fill: rgba(46, 139, 87, 0.35);
+  fill: var(--reach-a35);
 }
 
 polygon.hex.adjacent:hover {
-  fill: rgba(46, 139, 87, 0.55);
+  fill: var(--reach-a55);
 }
 
 polygon.hex.entry {
-  fill: rgba(255, 140, 0, 0.4);
+  fill: var(--orange-a40);
 }
 
 polygon.hex.entry:hover {
-  fill: rgba(255, 140, 0, 0.6);
+  fill: var(--orange-a60);
 }
 
 .coordtxt {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-weight: 700;
-  fill: #111;
+  fill: var(--color-ink);
   pointer-events: none;
 }
 
@@ -2576,10 +2576,10 @@ polygon.hex.entry:hover {
    trait, cf. paint-order) pour rester lisible sur n'importe quel fond de
    carte, y compris par-dessus la teinte verte de `.hex.adjacent`. */
 .debug-cot {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-weight: 700;
-  fill: #c0392b;
-  stroke: #fff;
+  fill: var(--color-zoc);
+  stroke: var(--color-white);
   stroke-width: 3px;
   paint-order: stroke fill;
   pointer-events: none;
@@ -2590,10 +2590,10 @@ polygon.hex.entry:hover {
    .debug-cot pour ne pas confondre les deux nombres s'ils apparaissent sur
    le même hex (le COT normal ET le surcoût d'entrée n'ont pas le même sens). */
 .debug-entry-surcharge {
-  font-family: monospace;
+  font-family: var(--font-mono);
   font-weight: 700;
-  fill: #1f6f43;
-  stroke: #fff;
+  fill: var(--color-debug-surcharge);
+  stroke: var(--color-white);
   stroke-width: 3px;
   paint-order: stroke fill;
   pointer-events: none;
@@ -2605,8 +2605,8 @@ polygon.hex.entry:hover {
    être À LA FOIS accessible ET sous ZOC, cf. règle "doit s'y arrêter") pour
    rester lisible quel que soit ce qu'il y a dessous. */
 .hex-zoc {
-  fill: rgba(192, 57, 43, 0.22);
-  stroke: #c0392b;
+  fill: var(--zoc-a22);
+  stroke: var(--color-zoc);
   stroke-width: 2.5;
   stroke-dasharray: 5 3;
   pointer-events: none;
@@ -2620,14 +2620,14 @@ polygon.hex.entry:hover {
    autres surlignages : le cliquer retire l'hex des cibles (et annule le
    combat si c'était le dernier). */
 .hex-defender {
-  fill: rgba(255, 140, 0, 0.5);
-  stroke: #ff8c00;
+  fill: var(--orange-a50);
+  stroke: var(--color-orange);
   stroke-width: 3;
   cursor: pointer;
 }
 
 .hex-defender:hover {
-  fill: rgba(255, 140, 0, 0.68);
+  fill: var(--orange-a68);
 }
 
 /* cf. lib/useCombat.js — hex d'une unité désignée attaquante. Jaune, pour
@@ -2635,8 +2635,8 @@ polygon.hex.entry:hover {
    le traversent (`pointer-events: none`) : c'est le pion posé dessus qui
    les reçoit, et c'est lui qui retire l'unité du combat si on le reclique. */
 .hex-attacker {
-  fill: rgba(232, 196, 104, 0.45);
-  stroke: #e8c468;
+  fill: var(--gold-a45);
+  stroke: var(--color-gold);
   stroke-width: 2.5;
   pointer-events: none;
 }
@@ -2646,15 +2646,15 @@ polygon.hex.entry:hover {
    pion qui les reçoit (cf. onCounterSelect). */
 .hex-fpf-candidate {
   fill: none;
-  stroke: #5aa9e6;
+  stroke: var(--color-blue);
   stroke-width: 2.5;
   stroke-dasharray: 6 4;
   pointer-events: none;
 }
 
 .hex-fpf {
-  fill: rgba(90, 169, 230, 0.4);
-  stroke: #5aa9e6;
+  fill: var(--blue-a40);
+  stroke: var(--color-blue);
   stroke-width: 2.5;
   pointer-events: none;
 }
@@ -2662,42 +2662,42 @@ polygon.hex.entry:hover {
 /* cf. lib/useRetreat.js — hex où l'unité en retraite peut aller : rouge,
    cliquable. */
 .hex-retreat {
-  fill: rgba(224, 40, 40, 0.45);
-  stroke: #e02828;
+  fill: var(--red-a45);
+  stroke: var(--color-red);
   stroke-width: 3;
   cursor: pointer;
 }
 
 .hex-retreat:hover {
-  fill: rgba(224, 40, 40, 0.65);
+  fill: var(--red-a65);
 }
 
 /* cf. lib/useRetreat.js — avance après combat. Chemin de retraite (POR) :
    vert léger, les clics le traversent. */
 .hex-por {
-  fill: rgba(46, 160, 67, 0.28);
-  stroke: #2ea043;
+  fill: var(--green-a28);
+  stroke: var(--color-green);
   stroke-width: 2;
   pointer-events: none;
 }
 
 /* Hex où l'unité choisie peut avancer : vert vif, cliquable. */
 .hex-advance {
-  fill: rgba(46, 160, 67, 0.6);
-  stroke: #1f7a33;
+  fill: var(--green-a60);
+  stroke: var(--color-green-dark);
   stroke-width: 3;
   cursor: pointer;
 }
 
 .hex-advance:hover {
-  fill: rgba(46, 160, 67, 0.8);
+  fill: var(--green-a80);
 }
 
 /* Hex d'une unité qui peut avancer : c'est le pion posé dessus qui reçoit
    le clic (cf. onCounterSelect). */
 .hex-advancer {
   fill: none;
-  stroke: #2ea043;
+  stroke: var(--color-green);
   stroke-width: 3;
   stroke-dasharray: 8 5;
   pointer-events: none;
@@ -2706,24 +2706,24 @@ polygon.hex.entry:hover {
 /* Hex de l'unité qui est en train de retraiter : simple contour. */
 .hex-retreating {
   fill: none;
-  stroke: #e02828;
+  stroke: var(--color-red);
   stroke-width: 3;
   stroke-dasharray: 8 5;
   pointer-events: none;
 }
 
 .support-badge-bg {
-  fill: #c0392b;
-  stroke: #fff;
+  fill: var(--color-zoc);
+  stroke: var(--color-white);
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
 
 .support-badge-text {
-  fill: #fff;
+  fill: var(--color-white);
   font-weight: 700;
-  font-family: sans-serif;
+  font-family: var(--font-sans);
   pointer-events: none;
 }
 </style>

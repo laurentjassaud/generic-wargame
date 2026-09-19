@@ -175,14 +175,14 @@ function chooseModule(mod) {
   width: 100%;
   text-align: left;
   padding: 10px 12px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  background: white;
+  border: 1px solid var(--light-border);
+  border-radius: var(--radius-6);
+  background: var(--color-white);
   cursor: pointer;
 }
 .choice-list button.selected {
-  border-color: #2563eb;
-  background: #eff6ff;
+  border-color: var(--light-accent);
+  background: var(--light-accent-bg);
 }
 .choice-list button:disabled {
   cursor: not-allowed;
@@ -190,8 +190,8 @@ function chooseModule(mod) {
 }
 .badge {
   margin-left: 8px;
-  font-size: 0.75em;
-  color: #666;
+  font-size: var(--font-size-em-075);
+  color: var(--light-text-muted);
 }
 .checkbox-choice {
   display: flex;
@@ -199,15 +199,15 @@ function chooseModule(mod) {
   gap: 8px;
 }
 .checkbox-choice.disabled {
-  color: #999;
+  color: var(--light-text-faint);
 }
 .hint {
-  color: #666;
-  font-size: 0.9em;
+  color: var(--light-text-muted);
+  font-size: var(--font-size-em-090);
 }
 h3 {
   margin: 16px 0 8px;
-  font-size: 1em;
+  font-size: var(--font-size-em-100);
 }
 .timing-value {
   margin-top: 12px;

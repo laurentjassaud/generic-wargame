@@ -41,14 +41,14 @@ onUnmounted(() => {
 <style scoped>
 .ctx-menu {
   position: fixed;
-  z-index: 1000;
-  background: #2a2620;
-  color: #ece4d0;
-  border-radius: 6px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  z-index: var(--z-overlay);
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border-radius: var(--radius-6);
+  box-shadow: var(--shadow-menu);
   padding: 6px;
   min-width: 180px;
-  font-size: 0.85rem;
+  font-size: var(--font-size-085);
 }
 .ctx-item {
   display: block;
@@ -58,12 +58,12 @@ onUnmounted(() => {
   border: none;
   color: inherit;
   padding: 9px 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-4);
   cursor: pointer;
   font: inherit;
 }
 .ctx-item:hover {
-  background: #ff8c00;
-  color: #2a2620;
+  background: var(--color-orange);
+  color: var(--panel-bg);
 }
 </style>

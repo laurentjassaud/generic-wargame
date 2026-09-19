@@ -350,11 +350,11 @@ onUnmounted(() => {
   margin-top: 24px;
 }
 .setup-summary {
-  color: #444;
-  font-size: 0.9em;
+  color: var(--light-text-soft);
+  font-size: var(--font-size-em-090);
 }
 .back-link {
-  color: #2563eb;
+  color: var(--light-accent);
   text-decoration: none;
 }
 .join-form {
@@ -367,20 +367,20 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 0.9em;
+  font-size: var(--font-size-em-090);
 }
 .join-form input,
 .join-form select {
   padding: 8px 10px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
+  border: 1px solid var(--light-border);
+  border-radius: var(--radius-6);
 }
 .join-form button {
   padding: 10px 14px;
   border: none;
-  border-radius: 6px;
-  background: #2563eb;
-  color: white;
+  border-radius: var(--radius-6);
+  background: var(--light-accent);
+  color: var(--color-white);
   cursor: pointer;
 }
 .join-form button:disabled {
@@ -388,20 +388,20 @@ onUnmounted(() => {
   cursor: default;
 }
 .error {
-  color: #b91c1c;
+  color: var(--light-danger);
 }
 .status {
   padding: 10px 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-6);
   margin-top: 16px;
 }
 .status.waiting {
-  background: #fffbeb;
-  border: 1px solid #f59e0b;
+  background: var(--light-warning-bg);
+  border: 1px solid var(--light-warning);
 }
 .status.started {
-  background: #ecfdf5;
-  border: 1px solid #10b981;
+  background: var(--light-success-bg);
+  border: 1px solid var(--light-success);
 }
 .players {
   list-style: none;
@@ -415,43 +415,43 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid #ccc;
-  border-radius: 6px;
+  border: 1px solid var(--light-border);
+  border-radius: var(--radius-6);
   padding: 8px 12px;
 }
 .players li.me {
-  border-color: #2563eb;
+  border-color: var(--light-accent);
 }
 .side {
-  color: #444;
+  color: var(--light-text-soft);
 }
 .you {
-  color: #2563eb;
-  font-size: 0.85em;
+  color: var(--light-accent);
+  font-size: var(--font-size-em-085);
 }
 .presence {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   margin-left: auto;
-  font-size: 0.85em;
+  font-size: var(--font-size-em-085);
   white-space: nowrap;
 }
 .presence.online {
-  color: #047857;
+  color: var(--light-success-strong);
 }
 .presence.offline {
-  color: #6b7280;
+  color: var(--light-offline);
 }
 .dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-round);
 }
 .presence.online .dot {
-  background: #10b981;
+  background: var(--light-success);
 }
 .presence.offline .dot {
-  background: #d1d5db;
+  background: var(--light-offline-dot);
 }
 </style>

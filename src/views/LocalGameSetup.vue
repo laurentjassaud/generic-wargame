@@ -55,7 +55,7 @@ function start() {
   padding: 24px 16px;
 }
 .step-indicator {
-  color: #666;
+  color: var(--light-text-muted);
   margin-top: -8px;
 }
 .actions {

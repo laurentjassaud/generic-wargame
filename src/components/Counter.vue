@@ -131,14 +131,14 @@ function onMouseDown(ev) {
 
 .counter-ring {
   fill: none;
-  stroke: #2ecc71;
+  stroke: var(--color-selection);
   stroke-width: 4;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
 
 .counter-dot {
-  stroke: #1a1a1a;
+  stroke: var(--color-ink-soft);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
@@ -146,16 +146,16 @@ function onMouseDown(ev) {
 
 .dot-fought,
 .dot-disrupted {
-  fill: #e02b2b;
+  fill: var(--color-dot-red);
 }
 
 .dot-displaced {
-  fill: #ff8c00;
+  fill: var(--color-orange);
 }
 
 .counter-moved-ring {
   fill: none;
-  stroke: #ff8c00;
+  stroke: var(--color-orange);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
   pointer-events: none;

@@ -57,10 +57,10 @@ onUnmounted(() => {
 <style scoped>
 .chart-modal {
   position: fixed;
-  z-index: 900;
-  background: #fff;
-  border-radius: 10px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  z-index: var(--z-floating);
+  background: var(--color-white);
+  border-radius: var(--radius-10);
+  box-shadow: var(--shadow-widget);
   padding: 10px;
   cursor: move;
   touch-action: none;
@@ -68,13 +68,13 @@ onUnmounted(() => {
   max-width: min(92vw, 720px);
 }
 .chart-modal.dragging {
-  box-shadow: 0 22px 46px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-widget-drag);
 }
 .chart-header {
   font-weight: 700;
-  font-size: 0.85rem;
+  font-size: var(--font-size-085);
   margin-bottom: 8px;
-  color: #333;
+  color: var(--light-text);
   pointer-events: none;
 }
 .chart-image {
@@ -82,6 +82,6 @@ onUnmounted(() => {
   max-width: 100%;
   height: auto;
   pointer-events: none;
-  border-radius: 4px;
+  border-radius: var(--radius-4);
 }
 </style>

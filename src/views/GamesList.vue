@@ -90,24 +90,24 @@ header {
 }
 .button-link {
   padding: 8px 14px;
-  border-radius: 6px;
-  background: #2563eb;
-  color: white;
+  border-radius: var(--radius-6);
+  background: var(--light-accent);
+  color: var(--color-white);
   text-decoration: none;
 }
 .button-link.secondary {
   background: transparent;
-  color: #2563eb;
-  border: 1px solid #2563eb;
+  color: var(--light-accent);
+  border: 1px solid var(--light-accent);
 }
 .passcode-banner {
-  background: #ecfdf5;
-  border: 1px solid #10b981;
+  background: var(--light-success-bg);
+  border: 1px solid var(--light-success);
   padding: 10px 14px;
-  border-radius: 6px;
+  border-radius: var(--radius-6);
 }
 .error {
-  color: #b91c1c;
+  color: var(--light-danger);
 }
 .cards {
   list-style: none;
@@ -118,25 +118,25 @@ header {
 }
 .card {
   display: block;
-  border: 1px solid #ccc;
-  border-radius: 6px;
+  border: 1px solid var(--light-border);
+  border-radius: var(--radius-6);
   padding: 12px 14px;
   color: inherit;
   text-decoration: none;
 }
 .card:hover {
-  border-color: #2563eb;
+  border-color: var(--light-accent);
 }
 .card-title {
   font-weight: 600;
 }
 .card-meta {
-  color: #666;
-  font-size: 0.9em;
+  color: var(--light-text-muted);
+  font-size: var(--font-size-em-090);
 }
 .card-variants {
-  color: #666;
-  font-size: 0.85em;
+  color: var(--light-text-muted);
+  font-size: var(--font-size-em-085);
   margin-top: 4px;
 }
 </style>

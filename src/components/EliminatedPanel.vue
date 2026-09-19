@@ -49,14 +49,14 @@ const groups = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  font-size: 0.85rem;
+  font-size: var(--font-size-085);
 }
 .el-empty {
   opacity: 0.75;
 }
 .el-group-title {
   margin: 0 0 8px;
-  font-size: 0.95rem;
+  font-size: var(--font-size-095);
   font-weight: 600;
 }
 .el-grid {
@@ -68,13 +68,13 @@ const groups = computed(() => {
   margin: 0;
 }
 .el-piece img {
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-4);
+  background: var(--white-a15);
   filter: grayscale(0.6);
   cursor: context-menu;
 }
 .el-hint {
-  font-size: 0.72rem;
+  font-size: var(--font-size-072);
   opacity: 0.75;
   line-height: 1.4;
   margin: 0;

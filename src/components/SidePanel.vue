@@ -22,13 +22,11 @@ const hoverKey = ref(null)
 const fadingKeys = ref(new Set())
 let fadeTimer = null
 
-// Palette par onglet (ton clair → sombre). Cycle si plus de 4 onglets.
-const TONES = [
-  { bg: '#a7a089', ink: '#24271f', soft: '#6f7360', rule: '#9a9d84', hover: '#b0b298', label: '#55584a' },
-  { bg: '#e8c468', ink: '#1f2219', soft: '#585c49', rule: '#878b71', hover: '#989b81', label: '#3f4235' },
-  { bg: '#716661', ink: '#f0f1e8', soft: '#cbcdba', rule: '#9ea28a', hover: '#8b8f77', label: '#e2e3d6' },
-  { bg: '#453e3b', ink: '#eceedf', soft: '#b9bba6', rule: '#5c604f', hover: '#474b3e', label: '#b9bba6' },
-]
+// Palette par onglet (ton clair → sombre), déclarée dans assets/main.css
+// (`--tab-N-…`). Cycle si plus de 4 onglets.
+const TONES = [1, 2, 3, 4].map((n) => Object.fromEntries(
+  ['bg', 'ink', 'soft', 'rule', 'hover', 'label'].map((key) => [key, `var(--tab-${n}-${key})`]),
+))
 
 const TAB_TOPS = [220, 346, 444, 560]
 function tabTop(tabIndex) {
@@ -72,7 +70,7 @@ function rowVars(tab, tabIndex) {
     '--content-slide': isOpen ? '0px' : '16px',
     '--content-opacity': isFading ? (isOpen ? '1' : '0') : '1',
     '--fade-duration': isFading ? '320ms' : '0ms',
-    '--tab-shadow': isOpen ? 'none' : '-6px 0 14px rgba(0, 0, 0, 0.35)',
+    '--tab-shadow': isOpen ? 'none' : 'var(--shadow-side-tab)',
     '--content-z': isOpen ? '1' : isPeeking ? '4' : '3',
   }
 }
@@ -117,7 +115,7 @@ function rowVars(tab, tabIndex) {
 
 <style scoped>
 .dc-root {
-  font-family: system-ui, sans-serif;
+  font-family: var(--font-ui);
 }
 
 .dc-row {
@@ -133,9 +131,9 @@ function rowVars(tab, tabIndex) {
   box-sizing: border-box;
   transform: translateY(calc(var(--tab-top, 200px) - 50%)) translateX(var(--content-x, 100%));
   transition: transform 620ms cubic-bezier(0.22, 0.61, 0.36, 1);
-  box-shadow: var(--tab-shadow, -6px 0 14px rgba(0, 0, 0, 0.35));
+  box-shadow: var(--tab-shadow, var(--shadow-side-tab));
   pointer-events: none;
-  z-index: 31;
+  z-index: var(--z-side-tab-shadow);
   display: none;
 }
 
@@ -154,7 +152,7 @@ function rowVars(tab, tabIndex) {
   transform: translateX(var(--content-x, 100%));
   transition: transform 620ms cubic-bezier(0.22, 0.61, 0.36, 1);
   display: flex;
-  z-index: calc(32 + var(--content-z, 0));
+  z-index: calc(var(--z-side-content) + var(--content-z, 0));
 }
 
 .dc-tab {
@@ -173,7 +171,7 @@ function rowVars(tab, tabIndex) {
   align-items: center;
   justify-content: center;
   transform: translateY(-50%);
-  z-index: 1;
+  z-index: var(--z-raised);
 }
 
 .dc-tab-cap {
@@ -196,7 +194,7 @@ function rowVars(tab, tabIndex) {
 .dc-tab-label {
   writing-mode: vertical-rl;
   transform: rotate(180deg);
-  font-size: 13px;
+  font-size: var(--font-size-px-13);
   letter-spacing: 0.9px;
   white-space: nowrap;
   color: var(--tone-label);
@@ -223,7 +221,7 @@ function rowVars(tab, tabIndex) {
 
 .dc-title {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--font-size-px-22);
   font-weight: 600;
   letter-spacing: -0.2px;
   color: var(--tone-ink);
@@ -254,7 +252,7 @@ function rowVars(tab, tabIndex) {
 }
 .dc-content-slot::-webkit-scrollbar-thumb {
   background: var(--tone-rule);
-  border-radius: 4px;
+  border-radius: var(--radius-4);
 }
 .dc-content-slot::-webkit-scrollbar-thumb:hover {
   background: var(--tone-soft);
@@ -266,8 +264,8 @@ function rowVars(tab, tabIndex) {
   padding: 8px 16px;
   background: transparent;
   border: 1px solid var(--tone-rule);
-  border-radius: 4px;
-  font-size: 12px;
+  border-radius: var(--radius-4);
+  font-size: var(--font-size-px-12);
   letter-spacing: 0.5px;
   text-transform: uppercase;
   color: var(--tone-ink);

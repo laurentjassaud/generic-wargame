@@ -121,15 +121,15 @@ async function submit() {
   padding: 24px 16px;
 }
 .step-indicator {
-  color: #666;
+  color: var(--light-text-muted);
   margin-top: -8px;
 }
 .hint {
-  color: #666;
-  font-size: 0.9em;
+  color: var(--light-text-muted);
+  font-size: var(--font-size-em-090);
 }
 .error {
-  color: #b91c1c;
+  color: var(--light-danger);
 }
 .actions {
   display: flex;

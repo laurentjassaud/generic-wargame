@@ -82,8 +82,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 .pb-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1000;
-  background: rgba(0, 0, 0, 0.45);
+  z-index: var(--z-overlay);
+  background: var(--black-a45);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -95,25 +95,25 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   max-height: 80vh;
   display: flex;
   flex-direction: column;
-  background: #2a2620;
-  color: #ece4d0;
-  border-radius: 12px;
-  border-top: 4px solid #ff8c00;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border-radius: var(--radius-12);
+  border-top: 4px solid var(--color-orange);
+  box-shadow: var(--shadow-modal);
   padding: 14px 18px 16px;
 }
 
 .pb-modal h3 {
   margin: 0 0 8px;
-  font-size: 0.95rem;
+  font-size: var(--font-size-095);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #ff8c00;
+  color: var(--color-orange);
 }
 
 .pb-modal p {
   margin: 0 0 10px;
-  font-size: 0.85rem;
+  font-size: var(--font-size-085);
   line-height: 1.4;
 }
 
@@ -121,9 +121,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   margin: 0;
   padding: 8px 10px 8px 26px;
   overflow-y: auto;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
-  font-size: 0.8rem;
+  background: var(--white-a06);
+  border-radius: var(--radius-8);
+  font-size: var(--font-size-080);
 }
 
 /* Les deux listes (empilements, combats) ne coexistent jamais en pratique
@@ -137,12 +137,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 }
 
 .pb-hex {
-  color: #e8c468;
+  color: var(--color-gold);
   font-variant-numeric: tabular-nums;
 }
 
 .pb-vs {
-  color: #8f8b7a;
+  color: var(--panel-text-faint);
   margin: 0 6px;
 }
 
@@ -154,14 +154,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 .pb-ok {
   border: none;
-  background: #ff8c00;
-  color: #2a2620;
+  background: var(--color-orange);
+  color: var(--panel-bg);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  font-size: 0.82rem;
+  font-size: var(--font-size-082);
   padding: 8px 20px;
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   cursor: pointer;
 }
 

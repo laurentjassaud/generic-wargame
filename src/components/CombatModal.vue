@@ -374,12 +374,12 @@ onUnmounted(() => {
 <style scoped>
 .combat-modal {
   position: fixed;
-  z-index: 950;
+  z-index: var(--z-combat-modal);
   width: 640px;
-  background: #2a2620;
-  color: #ece4d0;
-  border-radius: 12px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  background: var(--panel-bg);
+  color: var(--panel-text);
+  border-radius: var(--radius-12);
+  box-shadow: var(--shadow-modal);
   padding: 12px 16px 14px;
   cursor: move;
   touch-action: none;
@@ -387,7 +387,7 @@ onUnmounted(() => {
 }
 
 .combat-modal.dragging {
-  box-shadow: 0 22px 46px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-modal-drag);
 }
 
 .cm-head {
@@ -401,22 +401,22 @@ onUnmounted(() => {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  font-size: 0.9rem;
-  color: #e8c468;
+  font-size: var(--font-size-090);
+  color: var(--color-gold);
 }
 
 .cm-close {
   border: none;
   background: transparent;
-  color: #cac9ae;
-  font-size: 1.5rem;
+  color: var(--panel-text-muted);
+  font-size: var(--font-size-150);
   line-height: 1;
   cursor: pointer;
   padding: 0 4px;
 }
 
 .cm-close:hover:not(:disabled) {
-  color: #fff;
+  color: var(--color-white);
 }
 
 .cm-close:disabled {
@@ -427,10 +427,10 @@ onUnmounted(() => {
 .cm-retreat {
   margin-top: 10px;
   padding: 6px 8px;
-  border-radius: 6px;
-  border-left: 3px solid #e02828;
-  background: rgba(224, 40, 40, 0.12);
-  font-size: 0.78rem;
+  border-radius: var(--radius-6);
+  border-left: 3px solid var(--color-red);
+  background: var(--red-a12);
+  font-size: var(--font-size-078);
 }
 
 .cm-retreat p,
@@ -441,18 +441,18 @@ onUnmounted(() => {
 .cm-retreat ul {
   margin-top: 4px;
   padding-left: 16px;
-  color: #cac9ae;
+  color: var(--panel-text-muted);
 }
 
 .cm-red {
-  color: #ff6b5b;
+  color: var(--color-red-light);
   font-weight: 700;
 }
 
 .cm-advance {
   margin-top: 6px;
   padding-top: 6px;
-  border-top: 1px solid rgba(46, 160, 67, 0.4);
+  border-top: 1px solid var(--green-a40);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -463,18 +463,18 @@ onUnmounted(() => {
 }
 
 .cm-green {
-  color: #5fd37a;
+  color: var(--color-green-light);
   font-weight: 700;
 }
 
 .cm-end-advance {
   border: none;
-  background: #2ea043;
-  color: #fff;
+  background: var(--color-green);
+  color: var(--color-white);
   font-weight: 700;
-  font-size: 0.75rem;
+  font-size: var(--font-size-075);
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-6);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -484,7 +484,7 @@ onUnmounted(() => {
 }
 
 .cm-retreat-wait {
-  color: #8f8b7a;
+  color: var(--panel-text-faint);
 }
 
 .cm-forces {
@@ -494,26 +494,26 @@ onUnmounted(() => {
 
 .cm-side {
   flex: 1;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  background: var(--white-a06);
+  border-radius: var(--radius-8);
   padding: 8px;
   min-width: 0;
 }
 
 .cm-defender {
-  border-left: 3px solid #ff8c00;
+  border-left: 3px solid var(--color-orange);
 }
 
 .cm-attackers {
-  border-left: 3px solid #e8c468;
+  border-left: 3px solid var(--color-gold);
 }
 
 .cm-side h4 {
   margin: 0 0 6px;
-  font-size: 0.72rem;
+  font-size: var(--font-size-072);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #cac9ae;
+  color: var(--panel-text-muted);
 }
 
 .cm-units {
@@ -537,45 +537,45 @@ onUnmounted(() => {
   right: -2px;
   min-width: 16px;
   padding: 0 3px;
-  border-radius: 8px;
-  background: #e8c468;
-  color: #2a2620;
-  font-size: 0.65rem;
+  border-radius: var(--radius-8);
+  background: var(--color-gold);
+  color: var(--panel-bg);
+  font-size: var(--font-size-065);
   font-weight: 700;
   line-height: 16px;
 }
 
 .cm-defender .cm-factor {
-  background: #ff8c00;
+  background: var(--color-orange);
 }
 
 /* Artillerie du FPF, dans la colonne du défenseur : bleu, comme son hex sur
    la carte (cf. HexMap.vue, .hex-fpf). */
 .cm-defender .cm-fpf-unit .cm-factor {
-  background: #5aa9e6;
+  background: var(--color-blue);
 }
 
 .cm-fpf-note {
-  font-size: 0.72rem;
-  color: #5aa9e6;
+  font-size: var(--font-size-072);
+  color: var(--color-blue);
   margin-left: 4px;
 }
 
 /* Artillerie qui tire à distance (cf. prop `attackerDetails`). */
 .cm-ranged-tag {
   display: block;
-  font-size: 0.55rem;
-  color: #e8c468;
+  font-size: var(--font-size-055);
+  color: var(--color-gold);
   font-style: italic;
 }
 
 .cm-fpf {
   margin-top: 8px;
   padding: 6px 8px;
-  border-radius: 8px;
-  border-left: 3px solid #5aa9e6;
-  background: rgba(90, 169, 230, 0.1);
-  font-size: 0.8rem;
+  border-radius: var(--radius-8);
+  border-left: 3px solid var(--color-blue);
+  background: var(--blue-a10);
+  font-size: var(--font-size-080);
 }
 
 .cm-fpf p {
@@ -594,29 +594,29 @@ onUnmounted(() => {
   align-items: center;
   gap: 5px;
   padding: 3px 8px 3px 3px;
-  border: 1px solid #5aa9e6;
-  border-radius: 6px;
+  border: 1px solid var(--color-blue);
+  border-radius: var(--radius-6);
   background: transparent;
-  color: #ece4d0;
-  font-size: 0.75rem;
+  color: var(--panel-text);
+  font-size: var(--font-size-075);
   cursor: pointer;
 }
 
 .cm-fpf-choice img {
   width: 24px;
   height: 24px;
-  border-radius: 2px;
+  border-radius: var(--radius-2);
 }
 
 .cm-fpf-choice.on {
-  background: #5aa9e6;
-  color: #1c2530;
+  background: var(--color-blue);
+  color: var(--color-blue-ink);
 }
 
 .cm-hexes {
   text-transform: none;
   letter-spacing: 0;
-  color: #ff8c00;
+  color: var(--color-orange);
   font-weight: 600;
   margin-left: 4px;
 }
@@ -628,14 +628,14 @@ onUnmounted(() => {
 .cm-unit img {
   width: 40px;
   height: 40px;
-  border-radius: 3px;
+  border-radius: var(--radius-3);
   display: block;
   margin: 0 auto;
 }
 
 .cm-unit figcaption {
-  font-size: 0.6rem;
-  color: #cac9ae;
+  font-size: var(--font-size-060);
+  color: var(--panel-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -643,29 +643,29 @@ onUnmounted(() => {
 
 .cm-hint {
   margin: 0;
-  font-size: 0.72rem;
-  color: #8f8b7a;
+  font-size: var(--font-size-072);
+  color: var(--panel-text-faint);
   font-style: italic;
 }
 
 .cm-total {
   margin: 6px 0 0;
-  font-size: 0.8rem;
+  font-size: var(--font-size-080);
 }
 
 .cm-total b {
-  color: #e8c468;
-  font-size: 1rem;
+  color: var(--color-gold);
+  font-size: var(--font-size-100);
 }
 
 .cm-stranded {
   margin: 8px 0 0;
   padding: 6px 8px;
-  border-radius: 6px;
-  border-left: 3px solid #e05a47;
-  background: rgba(224, 90, 71, 0.14);
-  color: #f3c2b8;
-  font-size: 0.74rem;
+  border-radius: var(--radius-6);
+  border-left: 3px solid var(--color-stranded);
+  background: var(--stranded-a14);
+  color: var(--color-stranded-text);
+  font-size: var(--font-size-074);
 }
 
 .cm-stranded p {
@@ -679,67 +679,67 @@ onUnmounted(() => {
 
 .cm-diff {
   margin: 10px 0 6px;
-  font-size: 0.85rem;
+  font-size: var(--font-size-085);
 }
 
 .cm-diff b {
-  color: #e8c468;
-  font-size: 1.05rem;
+  color: var(--color-gold);
+  font-size: var(--font-size-105);
 }
 
 .cm-reason {
-  color: #8f8b7a;
-  font-size: 0.76rem;
+  color: var(--panel-text-faint);
+  font-size: var(--font-size-076);
 }
 
 .crt {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.62rem;
+  font-size: var(--font-size-062);
   table-layout: fixed;
 }
 
 .crt th {
   text-align: left;
   font-weight: 600;
-  color: #cac9ae;
+  color: var(--panel-text-muted);
   white-space: nowrap;
   width: 116px;
   padding: 1px 4px 1px 0;
-  font-size: 0.6rem;
+  font-size: var(--font-size-060);
 }
 
 .crt td {
   text-align: center;
   padding: 1px 0;
-  color: #b9b5a2;
+  color: var(--crt-text);
   border: 1px solid transparent;
 }
 
 .crt .row-on th,
 .crt .row-on td {
-  background: rgba(232, 196, 104, 0.16);
-  color: #ece4d0;
+  background: var(--gold-a16);
+  color: var(--panel-text);
 }
 
 .crt .col-on {
-  background: rgba(232, 196, 104, 0.16);
-  color: #ece4d0;
+  background: var(--gold-a16);
+  color: var(--panel-text);
 }
 
 .crt .row-on .col-on {
-  background: rgba(232, 196, 104, 0.34);
+  background: var(--gold-a34);
 }
 
 .crt-die td {
-  color: #9e9a89;
+  color: var(--crt-die-text);
 }
 
 .crt td.hit {
-  background: #ff8c00;
-  color: #2a2620;
+  background: var(--color-orange);
+  color: var(--panel-bg);
   font-weight: 700;
-  border-color: #ffd9a0;
+  border-color: var(--crt-hit-border);
 }
 
 .cm-foot {
@@ -758,7 +758,7 @@ onUnmounted(() => {
 }
 
 .cm-die {
-  font-size: 2.2rem;
+  font-size: var(--font-size-220);
   line-height: 1;
 }
 
@@ -767,7 +767,7 @@ onUnmounted(() => {
 }
 
 .cm-die.final {
-  color: #ff8c00;
+  color: var(--color-orange);
 }
 
 @keyframes cm-spin {
@@ -776,23 +776,23 @@ onUnmounted(() => {
 }
 
 .cm-result {
-  font-size: 0.8rem;
+  font-size: var(--font-size-080);
 }
 
 .cm-result b {
-  color: #ff8c00;
+  color: var(--color-orange);
 }
 
 .cm-fight {
   border: none;
-  background: #ff8c00;
-  color: #2a2620;
+  background: var(--color-orange);
+  color: var(--panel-bg);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  font-size: 0.82rem;
+  font-size: var(--font-size-082);
   padding: 9px 20px;
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   cursor: pointer;
   white-space: nowrap;
 }

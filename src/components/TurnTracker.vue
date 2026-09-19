@@ -183,8 +183,8 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background: rgba(0, 0, 0, 0.18);
-  border-radius: 8px;
+  background: var(--black-a18);
+  border-radius: var(--radius-8);
   padding: 6px 10px;
 }
 
@@ -208,27 +208,27 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #cac9ae;
-  font-size: 0.72rem;
+  border-radius: var(--radius-4);
+  background: var(--white-a12);
+  color: var(--panel-text-muted);
+  font-size: var(--font-size-072);
   font-weight: 600;
 }
 
 .tt-cell.active {
-  background: #e8c468;
-  color: #2a2620;
+  background: var(--color-gold);
+  color: var(--panel-bg);
 }
 
 .tt-marker {
   width: 28px;
   height: 28px;
-  border-radius: 4px;
+  border-radius: var(--radius-4);
 }
 
 .tt-side-label {
-  color: #cac9ae;
-  font-size: 0.85rem;
+  color: var(--panel-text-muted);
+  font-size: var(--font-size-085);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -236,18 +236,18 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
 .tt-next {
   width: 28px;
   height: 28px;
-  border-radius: 4px;
+  border-radius: var(--radius-4);
   border: none;
-  background: #e8c468;
-  color: #2a2620;
-  font-size: 1rem;
+  background: var(--color-gold);
+  color: var(--panel-bg);
+  font-size: var(--font-size-100);
   font-weight: 700;
   cursor: pointer;
 }
 
 .tt-next:disabled {
-  background: rgba(255, 255, 255, 0.2);
-  color: rgba(0, 0, 0, 0.4);
+  background: var(--white-a20);
+  color: var(--black-a40);
   cursor: default;
 }
 
@@ -269,17 +269,17 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
   align-items: center;
   justify-content: center;
   padding: 3px 8px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #cac9ae;
-  font-size: 0.72rem;
+  border-radius: var(--radius-4);
+  background: var(--white-a12);
+  color: var(--panel-text-muted);
+  font-size: var(--font-size-072);
   font-weight: 600;
   white-space: nowrap;
 }
 
 .tt-phase.active {
-  background: #e8c468;
-  color: #2a2620;
+  background: var(--color-gold);
+  color: var(--panel-bg);
 }
 
 /* En ligne "phases", le bouton porte un libellé en plus de la flèche :
@@ -294,6 +294,6 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
 }
 
 .tt-next-label {
-  font-size: 0.72rem;
+  font-size: var(--font-size-072);
 }
 </style>

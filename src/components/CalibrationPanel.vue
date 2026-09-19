@@ -73,18 +73,18 @@ function copyCfg() {
 <style scoped>
 .calib {
   margin-top: 24px;
-  border: 1.5px solid #ccc;
-  background: #fafafa;
+  border: 1.5px solid var(--light-border);
+  background: var(--light-bg-soft);
   padding: 20px 24px;
-  border-radius: 6px;
+  border-radius: var(--radius-6);
 }
 .calib h3 {
   font-weight: 600;
   letter-spacing: 1px;
   margin: 0 0 16px;
-  font-size: 0.9rem;
+  font-size: var(--font-size-090);
   text-transform: uppercase;
-  color: #555;
+  color: var(--light-text-medium);
 }
 .calib-grid {
   display: grid;
@@ -97,13 +97,13 @@ function copyCfg() {
   gap: 3px;
 }
 .ctl label {
-  font-size: 0.75rem;
-  color: #666;
+  font-size: var(--font-size-075);
+  color: var(--light-text-muted);
   display: flex;
   justify-content: space-between;
 }
 .ctl label b {
-  color: #222;
+  color: var(--light-text-strong);
   font-weight: 700;
 }
 .ctl input[type='range'],
@@ -116,8 +116,8 @@ function copyCfg() {
   align-items: center;
 }
 .swatchrow span {
-  font-size: 0.75rem;
-  color: #666;
+  font-size: var(--font-size-075);
+  color: var(--light-text-muted);
 }
 .calib-actions {
   margin-top: 16px;
@@ -127,21 +127,21 @@ function copyCfg() {
   align-items: center;
 }
 .calib-actions button {
-  font-family: monospace;
-  font-size: 0.85rem;
-  border: 1.5px solid #333;
-  background: #fff;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-085);
+  border: 1.5px solid var(--light-text);
+  background: var(--color-white);
   padding: 6px 14px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-4);
 }
 .copied {
-  font-size: 0.75rem;
-  color: #666;
+  font-size: var(--font-size-075);
+  color: var(--light-text-muted);
 }
 .hint {
-  font-size: 0.75rem;
-  color: #666;
+  font-size: var(--font-size-075);
+  color: var(--light-text-muted);
   margin: 14px 0 0;
   line-height: 1.5;
 }
