@@ -21,7 +21,8 @@ const props = defineProps({
   // "Annuler le mouvement" (menu contextuel).
   moved: { type: Boolean, default: false },
   // Vrai si ce pion a déjà combattu pendant la phase en cours (cf.
-  // lib/useCombat.js::hasFought) — désaturé et à 0.75 d'opacité.
+  // lib/useCombat.js::hasFought) — ROND ROUGE en haut à GAUCHE (le coin
+  // droit est réservé aux points d'état de l'artillerie ci-dessous).
   spent: { type: Boolean, default: false },
   // Artillerie (cf. lib/useArtillery.js) : a subi un résultat de combat
   // pendant cette phase de Combat ou la précédente — POINT ROUGE en haut à
@@ -61,21 +62,29 @@ const center = computed(() => {
 })
 const counterSizePx = computed(() => props.calibration.rowStep * props.size)
 
-// Points d'état de l'artillerie (cf. props `disrupted`/`displaced`), alignés
-// sur le coin haut droit du pion : rouge au coin, orange juste à sa gauche.
+// Points d'état du pion :
+//   - coin haut GAUCHE : rond rouge "a combattu pendant cette phase" (prop
+//     `spent`) ;
+//   - coin haut DROIT : points de l'artillerie (props `disrupted`/
+//     `displaced`) — rouge au coin, orange juste à sa gauche.
 const dotRadius = computed(() => counterSizePx.value * 0.09)
 const dots = computed(() => {
   const radius = dotRadius.value
+  const top = center.value.y - counterSizePx.value / 2 + radius + 1
   const list = []
-  if (props.disrupted) list.push({ key: 'hit', cls: 'dot-disrupted' })
-  if (props.displaced) list.push({ key: 'pushed', cls: 'dot-displaced' })
-  return list.map((dot, index) => ({
+  if (props.spent) list.push({ key: 'fought', cls: 'dot-fought', cx: center.value.x - counterSizePx.value / 2 + radius + 1, cy: top })
+  const right = []
+  if (props.disrupted) right.push({ key: 'hit', cls: 'dot-disrupted' })
+  if (props.displaced) right.push({ key: 'pushed', cls: 'dot-displaced' })
+  right.forEach((dot, index) => list.push({
     ...dot,
     cx: center.value.x + counterSizePx.value / 2 - radius - 1 - index * radius * 2.4,
-    cy: center.value.y - counterSizePx.value / 2 + radius + 1,
+    cy: top,
   }))
+  return list
 })
 const dotTitle = computed(() => [
+  props.spent ? 'A combattu pendant cette phase' : null,
   props.disrupted ? 'A subi un résultat de combat (cette phase de Combat ou la précédente) : pas de FPF' : null,
   props.displaced ? 'Refoulée par une retraite amie : ne peut plus tirer pendant cette phase' : null,
 ].filter(Boolean).join(' — '))
@@ -117,8 +126,6 @@ function onMouseDown(ev) {
 }
 
 .counter.spent .counter-img {
-  filter: grayscale(1);
-  opacity: 0.75;
   cursor: default;
 }
 
@@ -137,6 +144,7 @@ function onMouseDown(ev) {
   pointer-events: none;
 }
 
+.dot-fought,
 .dot-disrupted {
   fill: #e02b2b;
 }

@@ -52,8 +52,8 @@
 //      déjà combattu (il ne pourrait plus être attaqué) — cf. `strandedUnits`.
 //   5. Une fois le dé lancé, le combat est FIGÉ (plus d'ajout/retrait de
 //      cible ni d'attaquant) : toutes les unités PARTICIPANTES — attaquants
-//      ET défenseurs — ont "combattu" (cf. `foughtIds`). Elles apparaissent
-//      désaturées (cf. Counter.vue::spent) et ne peuvent plus être engagées
+//      ET défenseurs — ont "combattu" (cf. `foughtIds`). Elles portent un
+//      rond rouge (cf. Counter.vue::spent) et ne peuvent plus être engagées
 //      dans un autre combat jusqu'à la PROCHAINE PHASE. Le résultat est
 //      alors appliqué (retraites au clic, éliminations, puis avance après
 //      combat des vainqueurs — cf. lib/useRetreat.js) ; la modale reste
@@ -165,7 +165,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   // Unités qui ont DÉJÀ COMBATTU pendant la phase en cours (attaquants et
   // défenseurs d'un combat dont le dé a été lancé, cf. `resolveCombat`) —
   // leurs `id`. Une telle unité ne peut plus attaquer ni être prise pour
-  // cible, et s'affiche désaturée (cf. HexMap.vue -> Counter.vue::spent).
+  // cible, et porte un rond rouge (cf. HexMap.vue -> Counter.vue::spent).
   const foughtIds = ref(new Set())
 
   /** L'unité `c` a-t-elle déjà combattu pendant cette phase ? */
@@ -204,7 +204,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
 
   /** Rejeu du journal : marque comme "ayant combattu" les unités `ids` (lus
    *  dans une entrée `combat`, cf. HexMap.vue::onCombatFight) — pour qu'une
-   *  partie rechargée en pleine phase Combat retrouve ses unités désaturées
+   *  partie rechargée en pleine phase Combat retrouve ses ronds rouges
    *  et ne puisse pas refaire un combat déjà résolu. */
   function markFought(ids) {
     if (!ids?.length) return

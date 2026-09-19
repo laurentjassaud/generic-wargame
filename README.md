@@ -45,12 +45,14 @@ aucune restriction de tour ni de règle, dé libre.
   d'entrée des renforts, retour arrière et annulation de mouvement ;
 - combat : désignation des cibles (plusieurs hex) et des attaquants, table de
   combat (CRT) avec dé, combats obligatoires, retraites hex par hex (avec
-  refoulement d'amis), éliminations, avance après combat ;
+  refoulement d'amis), éliminations, avance après combat ; les unités ayant
+  combattu pendant la phase portent un rond rouge en haut à gauche ;
 - artillerie (cf. `src/lib/useArtillery.js`) : barrage au contact ou à
   distance (cible dans la portée et observée par une unité amie, jamais
   affectée par le résultat), terrain de l'hex seul face à l'artillerie,
   « final protective fire » (FPF) du défenseur pendant le tour adverse,
-  points rouge (résultat subi) et orange (refoulée) sur les pions ;
+  points rouge (résultat subi) et orange (refoulée) en haut à droite des
+  pions ;
 - règles particulières au module (cf. `src/lib/useArnhem.js` : déploiement
   initial, allocation réduite des aéroportés à l'arrivée, réduction des
   retraites en ville).
