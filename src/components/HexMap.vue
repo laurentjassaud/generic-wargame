@@ -1437,6 +1437,15 @@ function onReinforcementSelect(id) {
 // — pas l'entrée en jeu d'un renfort, qui a ses propres règles de blocage
 // (cf. `isEntryHexBlocked` plus haut : ennemi, ou ami figé en ZOC).
 
+/** Clic sur un MARQUEUR (DZ...) : jamais sélectionnable, il ne fait que
+ *  recouvrir son hex — le clic vaut donc clic sur cet hex (cf. `onHex` :
+ *  y poser un renfort, y déplacer l'unité sélectionnée, y retraiter...). */
+function onMarkerClick(id) {
+  const marker = counters.value.find((counter) => String(counter.id) === String(id))
+  const hex = marker && hexes.value.find((candidate) => candidate.c === marker.col && candidate.r === marker.row)
+  if (hex) onHex(hex)
+}
+
 /** Clic sur un hex, par ordre de priorité :
  *  1. un renfort est sélectionné (système 2) et l'hex cliqué fait partie de
  *     ses hex d'entrée valides -> il s'y pose, fin de sélection. Si son
@@ -2261,7 +2270,7 @@ function onMapDragEnd() {
           <Counter v-for="counter in counters.filter((counter) => !isUnit(counter))" :key="counter.id" :id="counter.id" :src="counter.src" :col="counter.col"
             :row="counter.row" :calibration="calibration" :selected="selectedCounterId === counter.id" :selectable="false"
             :offset="stackOffsets.get(counter.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === counter.id ? dragCurrentPx : null"
-            @dragstart="onCounterDragStart" />
+            @dragstart="onCounterDragStart" @hex-click="onMarkerClick" />
           <Counter v-for="counter in counters.filter(isUnit)" :key="counter.id" :id="counter.id" :src="counter.src" :col="counter.col"
             :row="counter.row" :calibration="calibration" :selected="selectedCounterId === counter.id" :selectable="selectable"
             :moved="movedThisTurnIds.has(String(counter.id))" :spent="hasFought(counter)"

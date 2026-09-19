@@ -33,7 +33,9 @@ const props = defineProps({
   size: { type: Number, default: 0.8 },         // taille du pion, fraction du pas de ligne (rowStep)
   // Faux (marqueurs type DZ, cf. HexMap.vue) : pas de sélection ni de
   // déplacement par clic sur hex adjacent — reste librement déplaçable en
-  // drag & drop, qui ne passe pas par `select`.
+  // drag & drop, qui ne passe pas par `select`. Un clic sur un tel pion vaut
+  // clic sur son HEX (`hex-click`) : son image recouvre le polygone de l'hex,
+  // qui sinon ne recevrait jamais le clic.
   selectable: { type: Boolean, default: true },
   // Décalage visuel en cas d'empilement de plusieurs pions sur le même hex
   // (cf. `stackOffsets` dans HexMap.vue) — fraction de la taille du pion.
@@ -44,7 +46,7 @@ const props = defineProps({
   dragPx: { type: Object, default: null },
 })
 
-const emit = defineEmits(['select', 'dragstart', 'contextmenu'])
+const emit = defineEmits(['select', 'hex-click', 'dragstart', 'contextmenu'])
 
 /** Centre pixel du pion — même formule que HexMap.vue (grille flat-top, offset odd-q) — plus le décalage d'empilement. */
 const center = computed(() => {
@@ -79,7 +81,7 @@ const dotTitle = computed(() => [
 ].filter(Boolean).join(' — '))
 
 function onClick() {
-  if (props.selectable) emit('select', props.id)
+  emit(props.selectable ? 'select' : 'hex-click', props.id)
 }
 
 /** Démarre le glisser au clic gauche — cf. HexMap.vue::onCounterDragStart :
