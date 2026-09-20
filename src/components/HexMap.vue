@@ -877,11 +877,14 @@ function pumpDemolition() {
   demolitionAsked.value = bridge
   emit('demolition-request', { id: demolitionRequestId, edge: bridge.key })
 }
-// Pas d'`immediate` : `demolitionOpen` lit `actionsLocked`, déclaré bien plus
-// bas dans ce fichier — l'évaluation initiale se fait au montage, une fois
-// tout en place (cf. onMounted).
-watch([demolitionOpen, () => demolition.current.value, demolitionAsked, demolitionIncoming, demolitionShown],
-  pumpDemolition)
+/** Met `pumpDemolition` en veille sur ses ingrédients. Créé AU MONTAGE et non
+ *  ici : `watch` évalue ses sources dès sa création, et `demolitionOpen` lit
+ *  `actionsLocked`, déclaré bien plus bas dans ce fichier — l'évaluer
+ *  maintenant lèverait une ReferenceError. Au montage, tout est en place. */
+function startDemolitionWatch() {
+  watch([demolitionOpen, () => demolition.current.value, demolitionAsked, demolitionIncoming, demolitionShown],
+    pumpDemolition)
+}
 
 /** Le joueur actif nous soumet une occasion (cf. RoomLobby.vue,
  *  `game:demolition-request`) : elle s'affiche sur l'écran du camp décideur,
@@ -1373,8 +1376,10 @@ onMounted(() => {
   // Ponts déjà détruits ou définitivement épargnés (cf. restoreDemolitions).
   restoreDemolitions(props.initialDemolitions, props.initialDemolitionRequest)
   // Une unité du camp déclencheur déjà en place au coup d'envoi borde peut-
-  // être un pont : la première occasion s'examine donc dès maintenant (cf.
-  // pumpDemolition — les suivantes viennent de son watcher).
+  // être un pont : la première occasion s'examine donc dès maintenant, et les
+  // suivantes par le watcher (cf. startDemolitionWatch, qui ne peut pas être
+  // créé plus tôt).
+  startDemolitionWatch()
   pumpDemolition()
   // Partie relancée avec les réglages d'une sauvegarde (cf. DemoPlay.vue) :
   // on rejoue maintenant le journal mis de côté — APRÈS `initPhase`, que le
