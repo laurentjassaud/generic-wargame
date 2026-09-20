@@ -467,6 +467,12 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
   background: var(--danger-a20);
 }
 
+/* Démolition d'un pont (cf. lib/useDemolition.js) : même famille que les
+   éliminations — c'est un élément de la carte qui disparaît. */
+.jn-row.jn-demolition {
+  background: var(--danger-a20);
+}
+
 .jn-row.jn-place,
 .jn-row.jn-return {
   background: var(--selection-a14);

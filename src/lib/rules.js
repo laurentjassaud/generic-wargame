@@ -105,17 +105,23 @@ export function resolveBridgeDemolition(raw) {
   if (!raw || typeof raw !== 'object' || typeof raw.by !== 'string' || !raw.by) return null
   const layers = (Array.isArray(raw.layers) ? raw.layers : []).filter((layer) => typeof layer === 'string' && layer)
   if (!layers.length) return null
-  const faces = (Array.isArray(raw.destroyOn) ? raw.destroyOn : []).filter((face) => Number.isInteger(face) && face >= 1)
+  const destroyOn = (Array.isArray(raw.destroyOn) ? raw.destroyOn : []).filter((face) => Number.isInteger(face) && face >= 1)
   const reveals = (Array.isArray(raw.reveals) ? raw.reveals : []).filter((kind) => typeof kind === 'string' && kind)
+  const labels = raw.labels && typeof raw.labels === 'object' ? raw.labels : {}
   return {
     layers,
     // Camp dont la présence ouvre l'occasion ; à défaut, n'importe quelle
     // unité ennemie du camp qui décide (cf. lib/useDemolition.js).
     trigger: typeof raw.trigger === 'string' && raw.trigger ? raw.trigger : null,
     by: raw.by,
-    destroyOn: faces,
+    // Nombre de faces du dé (6 à défaut) et faces qui font sauter le pont.
+    faces: Number.isInteger(raw.faces) && raw.faces >= 2 ? raw.faces : 6,
+    destroyOn: destroyOn,
     reveals,
     fallback: typeof raw.fallback === 'string' && raw.fallback ? raw.fallback : null,
+    // Comment nommer un pont de chaque couche, pour la modale et le journal.
+    labels: Object.fromEntries(layers.map((layer) => [layer,
+      typeof labels[layer] === 'string' && labels[layer] ? labels[layer] : 'pont'])),
   }
 }
 

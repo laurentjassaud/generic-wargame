@@ -30,6 +30,7 @@ import { useArtillery } from '../lib/useArtillery.js'
 import { useRetreat } from '../lib/useRetreat.js'
 import { useModuleRules } from '../lib/moduleRules.js'
 import { isUnit, isFighter, isSupport } from '../lib/units.js'
+import { useDemolition } from '../lib/useDemolition.js'
 import { parseSetup, isAirborneEntry, deploymentCells, rangeCells, landingCells } from '../lib/setup.js'
 import { resolveRules, resolveTurnStructure } from '../lib/rules.js'
 import { resolveCombatTable } from '../lib/combatTable.js'
@@ -47,6 +48,7 @@ import RollModal from './RollModal.vue'
 import MovementChartModal from './MovementChartModal.vue'
 import CombatChartModal from './CombatChartModal.vue'
 import CombatModal from './CombatModal.vue'
+import DemolitionModal from './DemolitionModal.vue'
 import PhaseBlockedModal from './PhaseBlockedModal.vue'
 import BugReportModal from './BugReportModal.vue'
 import { APP_VERSION, REPORT_ENTRIES } from '../lib/bugReport.js'
@@ -603,6 +605,21 @@ const counters = ref(buildInitialCounters())
 // avant tout mouvement.
 const initialDeployment = counters.value.map((counter) => ({ id: counter.id, col: counter.col, row: counter.row }))
 
+// DÉMOLITION DES PONTS (cf. lib/useDemolition.js, qui porte toute la règle :
+// quels ponts peuvent sauter, qui décide, ce que fait le dé). Appelé ICI, et
+// pas plus bas : useAssisted() a besoin de son `isDemolished` pour lire les
+// arêtes (un pont démoli ne laisse plus que l'obstacle qu'il franchissait),
+// et lui n'a besoin que de `counters`, déjà déclaré juste au-dessus.
+// Inerte pour un module qui ne déclare pas `rules.bridgeDemolition`.
+const demolition = useDemolition({
+  assisted: toRef(props, 'assisted'),
+  terrain: props.module.terrain,
+  demolition: rules.bridgeDemolition,
+  counters,
+  sideOf: (counter) => sideOfCounter(counter),
+  isFighter,
+})
+
 // cf. lib/useAssisted.js — toute la logique propre au mode "Assisté"
 // (grille, sélection au clic, restriction de tour, phases Mouvement/Combat,
 // MP/terrain/ZOC) y vit. Appelé ICI (et pas plus haut dans le fichier,
@@ -613,7 +630,7 @@ const initialDeployment = counters.value.map((counter) => ({ id: counter.id, col
 // lib/useAssisted.js::airbornePending), passés en FONCTION car
 // `reinforcements` n'est déclaré que plus bas dans ce fichier.
 const { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules, turnStructure)
+  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules, turnStructure, demolition.isDemolished)
 
 // Table de combat déclarée par le module (`module.combat`, cf.
 // lib/combatTable.js) — `null` : module sans combat.
@@ -761,6 +778,115 @@ function onCombatFight() {
   }
   log('info', `${combatOutcome.result} sans effet sur le défenseur : attaque faite uniquement d'artillerie et/ou de soutien`)
   if (hitsAttackers) startRetreat(combatOutcome.result, contactAttackers, [], combatTargetHexes.value)
+}
+
+// --- Démolition des ponts (cf. lib/useDemolition.js) -------------------------
+// La règle dit QUELS ponts peuvent sauter et QUAND l'occasion s'ouvre ; ce
+// composant-ci ne fait que la présenter au camp qui décide (cf.
+// DemolitionModal.vue), journaliser sa décision et laisser le composable
+// tenir l'état.
+//
+// L'occasion ouverte BLOQUE la saisie tant qu'elle n'est pas tranchée (cf.
+// `inputLocked` plus bas) : la règle veut une décision immédiate, et rien
+// d'autre ne doit pouvoir se faire entre-temps.
+
+// Pont dont la modale affiche le RÉSULTAT du jet, figé le temps de montrer le
+// dé : sans lui, la décision prise, `demolition.current` passerait aussitôt à
+// l'occasion suivante et le joueur ne verrait jamais sa propre face de dé.
+const demolitionShown = ref(null)
+// Résultat du dernier jet (`{ die, destroyed }`), ou `null` — remis à `null`
+// avec `demolitionShown` quand la modale passe à la suite.
+const demolitionResult = ref(null)
+let demolitionTimer = null
+
+// Combien de temps le résultat du jet reste affiché avant que la modale ne
+// passe au pont suivant (ou ne se ferme) — même principe que CombatModal.vue.
+const DEMOLITION_RESULT_MS = 2200
+
+/** La décision se prend-elle sur CET écran ? En partie locale, toujours (les
+ *  deux joueurs partagent l'écran). Jamais pendant un rejeu de journal ni une
+ *  partie terminée (cf. `actionsLocked`) : l'état y est rétabli par les
+ *  entrées `demolition` rejouées, pas par une nouvelle décision.
+ *
+ *  Jamais non plus pendant l'application d'un résultat de combat (cf.
+ *  `retreatActive` — retraites, refoulements, avance après combat) : la
+ *  modale FERME la saisie, et l'ouvrir alors qu'un joueur doit encore
+ *  cliquer ses hex de retraite bloquerait la partie. Une unité refoulée près
+ *  d'un pont ouvre bel et bien l'occasion — elle est simplement présentée
+ *  une fois la retraite terminée, puisque `demolition.opportunities` la
+ *  déduit de la carte et ne l'oublie pas en chemin. */
+const demolitionLocal = computed(() => !actionsLocked.value && !props.online && !retreatActive.value)
+
+/** Le pont dont la modale parle : celui dont on montre le résultat, sinon la
+ *  première occasion ouverte (cf. lib/useDemolition.js::current). `null` =
+ *  pas de modale. */
+const demolitionBridge = computed(() => demolitionShown.value
+  ?? (demolitionLocal.value ? demolition.current.value : null))
+
+/** Centre (en pixels natifs de l'image) de l'hex `{ col, row }` — même
+ *  calcul que `hexes` plus haut, mais pour un hex quelconque, y compris hors
+ *  de la grille dessinée. */
+function hexCenter({ col, row }) {
+  const { x0, y0, colStep, rowStep } = calibration
+  return {
+    x: x0 + col * colStep,
+    y: y0 + (row - 1) * rowStep + (col % 2 === 1 ? rowStep / 2 : 0),
+  }
+}
+
+/** MARQUES DES PONTS dont le sort est réglé (cf. lib/useDemolition.js::marks)
+ *  — un rond posé au MILIEU de l'hexside, c'est-à-dire à mi-chemin entre les
+ *  centres des deux hex qu'il relie : ROUGE si le pont est détruit, VERT s'il
+ *  tient pour le reste de la partie. Les ponts encore en sursis n'en portent
+ *  aucune (cf. lib/useDemolition.js, en-tête). */
+const demolitionMarks = computed(() => demolition.marks.value.map((mark) => {
+  const from = hexCenter(mark.from)
+  const to = hexCenter(mark.to)
+  return { key: mark.key, destroyed: mark.destroyed, x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }
+}))
+
+/** Journalise une décision — entrée `demolition`, relue au rejeu (cf.
+ *  applyReplayEntry) et par l'autre joueur en ligne. `die` vaut `null` quand
+ *  le camp décideur a renoncé sans lancer le dé. */
+function logDemolition(bridge, { die = null, destroyed }) {
+  const where = bridge.hexes.join('-')
+  const what = destroyed
+    ? `${bridge.label} ${where} détruit (dé ${die})`
+    : die != null
+      ? `${bridge.label} ${where} : la destruction échoue (dé ${die}), il tiendra jusqu'à la fin de la partie`
+      : `${bridge.label} ${where} laissé intact : il ne pourra plus être détruit`
+  log('demolition', what, { edge: bridge.key, die, destroyed })
+}
+
+/** Le camp décideur tente la destruction : le dé est lancé par la règle (cf.
+ *  lib/useDemolition.js::attempt), le résultat reste affiché un instant, puis
+ *  la modale passe à l'occasion suivante s'il y en a une. */
+function onDemolitionAttempt() {
+  const bridge = demolitionBridge.value
+  if (!bridge || demolitionResult.value) return
+  const outcome = demolition.attempt(bridge.key)
+  if (!outcome) return
+  demolitionShown.value = bridge
+  demolitionResult.value = outcome
+  logDemolition(bridge, outcome)
+  demolitionTimer = setTimeout(closeDemolitionResult, DEMOLITION_RESULT_MS)
+}
+
+/** Le camp décideur renonce : aucun dé, le pont tient pour le reste de la
+ *  partie. Rien à figer — la modale enchaîne d'elle-même sur le pont suivant. */
+function onDemolitionDecline() {
+  const bridge = demolitionBridge.value
+  if (!bridge || demolitionResult.value) return
+  if (!demolition.decline(bridge.key)) return
+  logDemolition(bridge, { destroyed: false })
+}
+
+/** Fin de l'affichage du résultat : la modale reprend le cours des occasions. */
+function closeDemolitionResult() {
+  clearTimeout(demolitionTimer)
+  demolitionTimer = null
+  demolitionShown.value = null
+  demolitionResult.value = null
 }
 
 // --- FPF du défenseur (cf. lib/useCombat.js, section FPF) : ce que la modale
@@ -2287,6 +2413,10 @@ function resetBoardForReplay() {
   // Mémoire de l'artillerie (résultats subis, refoulements, FPF) : rétablie
   // par les entrées rejouées.
   artillery.reset()
+  // Ponts détruits ou définitivement épargnés : rétablis par les entrées
+  // `demolition` rejouées (cf. lib/useDemolition.js::applyReplay).
+  demolition.reset()
+  closeDemolitionResult()
   // Un combat resté ouvert n'a plus de sens sur un plateau remis à zéro.
   cancelCombat()
   turnTrackerRef.value?.applyRemoteTurn(0)
@@ -2393,6 +2523,11 @@ function applyReplayEntry(entry) {
     if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
     eliminatedIds.value.add(String(entryData.counterId))
     eliminatedIds.value = new Set(eliminatedIds.value)
+  } else if (entry.kind === 'demolition') {
+    // Démolition d'un pont (cf. la section du même nom) : c'est le JOURNAL
+    // qui fait foi, jamais un nouveau tirage — le pont est détruit, ou
+    // définitivement épargné, exactement comme dans la partie d'origine.
+    demolition.applyReplay(entryData)
   } else if (entry.kind === 'exit') {
     // Sortie de carte (cf. la section du même nom) : le pion quitte la carte
     // et redevient un renfort de sa bande de sortie, avec les MP qu'il y a
@@ -2466,7 +2601,11 @@ const actionsLocked = computed(() => replayLocked.value || blitzLoser.value != n
 // continue (pendule de l'adversaire, synchro), seule sa saisie est fermée.
 // Le serveur applique la même règle de son côté (cf. server/src/rooms.js::
 // isPlayersTurn) : ce verrou-ci n'est que le confort de l'interface.
-const inputLocked = computed(() => actionsLocked.value || (props.online && !isLocalTurn.value))
+// Une occasion de démolition ouverte ferme elle aussi la saisie (cf. la
+// section "Démolition des ponts") : la règle veut une décision immédiate, et
+// rien d'autre ne doit pouvoir se faire tant qu'elle n'est pas prise.
+const inputLocked = computed(() => actionsLocked.value || (props.online && !isLocalTurn.value)
+  || demolitionBridge.value != null)
 
 // --- Timings "Limité" et "Blitz" (cf. lib/gameSettings.js, MoveTimer.vue).
 // Toutes les phases sont conservées : SEULE la phase Mouvement (phase 0) est
@@ -2711,6 +2850,15 @@ function onMapDragEnd() {
             :points="hex.pts" vector-effect="non-scaling-stroke" />
         </g>
 
+        <!-- cf. lib/useDemolition.js — ponts démolissables dont le sort est
+             réglé : rond ROUGE sur un pont détruit, VERT sur un pont qui
+             tiendra jusqu'à la fin de la partie. Purement informatif : les
+             clics les traversent (cf. .hex-demolition en bas de fichier). -->
+        <g v-if="demolitionMarks.length" class="demolition-marks">
+          <circle v-for="mark in demolitionMarks" :key="'dem' + mark.key" :cx="mark.x" :cy="mark.y" r="11"
+            :class="mark.destroyed ? 'demolished' : 'held'" />
+        </g>
+
         <!-- cf. la section "Sortie de carte" — bandes de bord par lesquelles
              le camp actif peut quitter la carte pendant sa phase de
              Mouvement. Purement informatif : les clics les traversent. -->
@@ -2850,6 +2998,12 @@ function onMapDragEnd() {
 
     <PhaseBlockedModal v-if="showPhaseBlocked" :engagements="pendingEngagements" :stacks="stackedHexes"
       @close="showPhaseBlocked = false" />
+
+    <!-- cf. lib/useDemolition.js — un pont démolissable est bordé par une
+         unité ennemie : au camp qui le tient de décider, tout de suite. -->
+    <DemolitionModal :bridge="demolitionBridge" :result="demolitionResult"
+      :destroy-on="rules.bridgeDemolition?.destroyOn ?? []"
+      @attempt="onDemolitionAttempt" @decline="onDemolitionDecline" />
 
     <!-- cf. MoveTimer.vue — timing "Limité" : temps de la phase de Mouvement écoulé. -->
     <PhaseBlockedModal v-if="showTimeUp" title="Temps imparti terminé" @close="showTimeUp = false">
@@ -3120,6 +3274,24 @@ polygon.hex.entry:hover {
   stroke-width: 2;
   stroke-dasharray: 5 4;
   pointer-events: none;
+}
+
+/* cf. lib/useDemolition.js — sort d'un pont démolissable, marqué au milieu de
+   son hexside. Même cerne sombre que les points d'état des pions (cf.
+   Counter.vue), pour rester lisible sur une carte claire comme sur une
+   rivière. */
+.demolition-marks circle {
+  stroke: var(--color-ink-soft);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.demolition-marks .demolished {
+  fill: var(--color-dot-red);
+}
+
+.demolition-marks .held {
+  fill: var(--color-green);
 }
 
 /* cf. lib/useCombat.js::canPlaceSupportHex — hex où poser le pion de soutien

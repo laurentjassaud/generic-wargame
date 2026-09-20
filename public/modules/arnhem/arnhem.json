@@ -1432,7 +1432,11 @@
       "by": "german",
       "destroyOn": [1, 2],
       "reveals": ["river", "stream"],
-      "fallback": "stream"
+      "fallback": "stream",
+      "labels": {
+        "canalBridges": "pont de canal",
+        "railroadBridges": "pont de chemin de fer"
+      }
     },
     "mapExit": {
       "side": "german",
