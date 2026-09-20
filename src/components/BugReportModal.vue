@@ -126,7 +126,7 @@ function onSubmit(event) {
   flex-direction: column;
   gap: 10px;
   background: var(--tab-4-bg);
-  color: var(---tab-4-ink);
+  color: var(--tab-4-ink);
   border-radius: var(--radius-4);
   box-shadow: var(--shadow-modal);
   padding: 0 12px 12px;
