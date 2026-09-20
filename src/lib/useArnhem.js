@@ -77,13 +77,24 @@
 //         déclarer ses `counters` (même raison que `reinforcements` dans
 //         lib/useAssisted.js) ; appelée depuis un `computed` ou un rendu,
 //         elle reste parfaitement réactive.
+//       • `hexOnMap`, `canEnterTerrain`, `enemyZocSet`, `isEnemyOf`,
+//         `isFighter` : les briques du moteur qui disent ce qu'une unité
+//         peut atteindre autour d'elle (cf. HexMap.vue et
+//         lib/useAssisted.js) — l'hex existe-t-il, son terrain est-il
+//         franchissable, est-il sous ZOC ennemie, qui est l'ennemi de qui,
+//         et quel pion est une vraie unité combattante. Elles servent à
+//         reconnaître une unité ENCERCLÉE (cf. `isSurrounded`). Passées en
+//         lambdas par HexMap.vue, qui ne les tient de useAssisted() qu'APRÈS
+//         avoir appelé ce composable — elles ne sont donc appelables qu'en
+//         cours de partie, jamais à l'initialisation.
 //       • `rules` : `module.rules` résolues (cf. lib/rules.js) — les
 //         VALEURS des règles particulières y sont déclarées par le module
 //         (ex. `airborneArrivalSpentMp`), leur LOGIQUE reste ici.
 import { computed, unref } from 'vue'
 import { hexId } from './calibration.js'
-import { hexDistance } from './hex.js'
+import { hexDistance, neighborsOf } from './hex.js'
 import { isAirborneEntry } from './setup.js'
+import { isArtillery } from './units.js'
 
 // Identifiant du module concerné, tel qu'il figure dans
 // public/modules/index.json. Exporté pour que l'appelant puisse, s'il le
@@ -336,6 +347,49 @@ export function useArnhem(moduleId, ctx = {}) {
     return guided ? null : false
   }
 
+  // --- Encerclement (cf. `cityRetreatReduction`) -----------------------------
+
+  /** Y a-t-il une unité ENNEMIE de `unit` dans l'hex `hex` (`{ col, row }`) ?
+   *  Marqueurs et pions de soutien ne comptent pas (cf. `ctx.isFighter`). */
+  function hasEnemyAt(unit, hex) {
+    return (ctx.counters?.() ?? []).some((other) => ctx.isFighter?.(other)
+      && other.col === hex.col && other.row === hex.row && ctx.isEnemyOf?.(unit, other))
+  }
+
+  /** `unit` serait-elle ENCERCLÉE dans l'hex `hex` (`{ col, row }`) : tous
+   *  les hex voisins qu'elle pourrait ATTEINDRE depuis là — sur la carte
+   *  (cf. `ctx.hexOnMap`) et dont le terrain lui est ouvert (cf.
+   *  `ctx.canEnterTerrain` : rivière sans pont, terrain fermé aux
+   *  véhicules...) — sont-ils tous occupés par une unité ennemie ou sous ZOC
+   *  ennemie (cf. `ctx.enemyZocSet`) ?
+   *
+   *  Un hex voisin occupé par un AMI ne ferme rien : l'unité peut y être
+   *  poussée et l'ami refoulé (cf. lib/useRetreat.js). Un hex qu'elle ne peut
+   *  pas atteindre du tout (hors carte, terrain interdit) ne compte pas non
+   *  plus comme une issue — une unité dont aucun voisin n'est atteignable est
+   *  donc bien encerclée.
+   *
+   *  Mesuré sur `hex` et non sur la position actuelle de l'unité : pendant
+   *  l'exploration des chemins de retraite (cf. lib/useRetreat.js::
+   *  canComplete), c'est l'hex où elle ARRIVERAIT qu'il faut juger. Les ZOC,
+   *  elles, se déduisent des positions réelles des ennemis et ne dépendent
+   *  pas de celle de `unit`. */
+  function isSurrounded(unit, hex) {
+    const zoc = ctx.enemyZocSet?.(unit) ?? new Set()
+    return neighborsOf(hex.col, hex.row)
+      .filter((neighbor) => ctx.hexOnMap?.(neighbor.col, neighbor.row)
+        && ctx.canEnterTerrain?.(unit, { c: neighbor.col, r: neighbor.row }, { c: hex.col, r: hex.row }))
+      .every((neighbor) => zoc.has(neighbor.col + ',' + neighbor.row) || hasEnemyAt(unit, neighbor))
+  }
+
+  /** `unit` tient-elle malgré l'encerclement ? Les AÉROPORTÉS et les
+   *  PLANEURS, oui (cf. `AIRBORNE_TYPE`) — combattre encerclé est leur
+   *  métier, c'est même toute l'histoire d'Arnhem —, mais pas leur
+   *  ARTILLERIE, que la règle de la ville écarte de toute façon. */
+  function holdsWhenSurrounded(unit) {
+    return AIRBORNE_TYPE.test(unit?.type ?? '') && !isArtillery(unit)
+  }
+
   /** Type de terrain de l'hex `hex` ({ col, row }, col 0-based comme les
    *  pions) — lu dans `ctx.terrain.grid`, même clé que
    *  lib/useAssisted.js::terrainAreaCost. `undefined` si non déclaré. */
@@ -353,6 +407,16 @@ export function useArnhem(moduleId, ctx = {}) {
    *  hex, et un D4 d'au moins deux hex. Pour tout le reste, les unités en
    *  hex de Ville sont traitées comme en hex de Town normal. [L'artillerie
    *  aéroportée ne bénéficie d'aucune réduction.] »
+   *
+   *  Deux précisions de la boîte, appliquées ici :
+   *   - la réduction vaut aussi pour l'unité qui ENTRE dans la ville en
+   *     cours de retraite : les 2 hex se retirent de ce qui lui RESTE à
+   *     parcourir, elle peut donc s'ARRÊTER dans l'hex de ville qu'elle
+   *     vient d'atteindre (cf. `task.done` dans le calcul plus bas) ;
+   *   - une unité ENCERCLÉE (cf. `isSurrounded`) n'en bénéficie PAS : prise
+   *     au piège, elle ne peut pas se mettre à l'abri derrière les murs. Les
+   *     AÉROPORTÉS et les PLANEURS font exception (cf.
+   *     `holdsWhenSurrounded`) — mais pas leur artillerie, déjà écartée.
    *
    *  (La dernière phrase, "traitées comme en Town", est déjà assurée par le
    *  moteur : cf. lib/useCombat.js, ligne de table "Broken, Town..." qui
@@ -373,7 +437,8 @@ export function useArnhem(moduleId, ctx = {}) {
    *  @returns `{ total, reason }` — le NOUVEAU nombre total d'hex de la
    *    retraite et un libellé pour l'affichage — ou `null` si la règle ne
    *    s'applique pas (autre module, hex non City, artillerie aéroportée,
-   *    réduction déjà prise, rien à réduire). La réduction reste
+   *    unité encerclée qui n'est ni aéroportée ni planeur, réduction déjà
+   *    prise, rien à réduire). La réduction reste
    *    FACULTATIVE : c'est le moteur qui la propose au joueur (bouton de la
    *    modale de combat), et ne l'impose que si, sans elle, l'unité serait
    *    éliminée faute de retraite possible. */
@@ -382,6 +447,11 @@ export function useArnhem(moduleId, ctx = {}) {
     if (terrainTypeAt(hex) !== 'city') return null
     // [Airborne artillery receive no reduction.]
     if (unit?.type === 'airborne arty') return null
+    // Unité ENCERCLÉE : aucune réduction — sauf aéroporté ou planeur (cf.
+    // l'énoncé ci-dessus). Testé APRÈS le terrain, qui est bien moins coûteux
+    // que le parcours des 6 voisins : cette règle n'est consultée que pour
+    // les hex de ville.
+    if (!holdsWhenSurrounded(unit) && isSurrounded(unit, hex)) return null
     // UNE SEULE réduction par retraite : "réduire les retraites RESTANTES
     // de deux hex" s'applique à ce qui reste, une fois. La cumuler (départ
     // en ville PUIS entrée dans une autre ville) violerait les minimums

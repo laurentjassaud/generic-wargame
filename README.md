@@ -55,8 +55,10 @@ aucune restriction de tour ni de règle, dé libre.
   pions ;
 - règles particulières au module (cf. `src/lib/useArnhem.js` : déploiement
   initial, allocation réduite des aéroportés à l'arrivée, réduction des
-  retraites en ville, soutien au sol guidé seulement à 3 hex d'une unité
-  alliée non aéroportée, au plus deux artilleries par camp dans un combat).
+  retraites en ville — refusée à l'artillerie aéroportée et aux unités
+  encerclées, aéroportés et planeurs exceptés —, soutien au sol guidé
+  seulement à 3 hex d'une unité alliée non aéroportée, au plus deux
+  artilleries par camp dans un combat).
 
 **Timings** (partie Assistée) : *Limité* accorde N minutes à **chaque** phase
 de Mouvement (compte à rebours, clignote sous 20 s, alerte à zéro) ; *Blitz*

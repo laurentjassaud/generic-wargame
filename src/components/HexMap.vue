@@ -542,6 +542,16 @@ const moduleRules = useModuleRules(toRef(props, 'moduleId'), {
   // que plus bas (il dépend de `autoPlacesAtLoad`, donc de ce composable) —
   // même détour que `reinforcements` avec useAssisted().
   counters: () => counters.value,
+  // De quoi juger ce qu'une unité peut atteindre autour d'elle (encerclement,
+  // cf. lib/useArnhem.js::isSurrounded). Enveloppées dans des lambdas pour la
+  // même raison : useAssisted() n'est appelé qu'ensuite, et ne fournit ses
+  // fonctions qu'à ce moment-là. Aucune n'est appelée avant la première
+  // retraite, bien après l'initialisation.
+  hexOnMap,
+  isFighter,
+  canEnterTerrain: (counter, hex, from) => canEnterTerrain(counter, hex, from),
+  enemyZocSet: (counter) => enemyZocSet(counter),
+  isEnemyOf: (counterA, counterB) => isEnemyOf(counterA, counterB),
 })
 
 // Marqueurs / pions de soutien / unités combattantes : cf. lib/units.js
