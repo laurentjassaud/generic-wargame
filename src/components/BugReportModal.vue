@@ -113,7 +113,7 @@ function onSubmit(event) {
   position: fixed;
   inset: 0;
   z-index: var(--z-bug-report);
-  background: var(--black-a45);
+  background: var(--black-a50);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -125,10 +125,9 @@ function onSubmit(event) {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: var(--report-bg);
-  color: var(--report-text);
-  border: 1px solid var(--report-border);
-  border-radius: var(--radius-14);
+  background: var(--tab-4-bg);
+  color: var(---tab-4-ink);
+  border-radius: var(--radius-4);
   box-shadow: var(--shadow-modal);
   padding: 0 12px 12px;
   overflow: hidden;
@@ -145,7 +144,7 @@ function onSubmit(event) {
 
 .br-head h3 {
   margin: 0;
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: var(--font-size-170);
   font-weight: 700;
   letter-spacing: 0.03em;

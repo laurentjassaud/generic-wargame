@@ -504,7 +504,7 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
   position: fixed;
   inset: 0;
   z-index: var(--z-journal-modal);
-  background: var(--black-a55);
+  background: var(--black-a50);
   display: flex;
   align-items: center;
   justify-content: center;

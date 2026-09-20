@@ -183,7 +183,7 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background: var(--black-a18);
+  background: var(--black-a25);
   border-radius: var(--radius-8);
   padding: 6px 10px;
 }

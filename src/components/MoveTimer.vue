@@ -98,7 +98,7 @@ const warning = computed(() => running.value && remaining.value > 0 && low.value
   gap: 8px;
   padding: 3px 10px;
   border-radius: var(--radius-6);
-  background: var(--black-a18);
+  background: var(--black-a25);
   color: var(--panel-text-muted);
   font-size: var(--font-size-080);
   font-weight: 600;

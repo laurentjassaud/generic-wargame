@@ -17,13 +17,9 @@
   --color-ink-soft: #1a1a1a;     /* contour des points d'état des pions */
 
   /* Voiles noirs et blancs translucides (ombres, fonds, survols). */
-  --black-a18: rgba(0, 0, 0, 0.18);
   --black-a25: rgba(0, 0, 0, 0.25);
-  --black-a35: rgba(0, 0, 0, 0.35);
   --black-a40: rgba(0, 0, 0, 0.4);
-  --black-a45: rgba(0, 0, 0, 0.45);
   --black-a50: rgba(0, 0, 0, 0.5);
-  --black-a55: rgba(0, 0, 0, 0.55);
   --black-a60: rgba(0, 0, 0, 0.6);
   --white-a00: rgba(255, 255, 255, 0);
   --white-a06: rgba(255, 255, 255, 0.06);
@@ -212,7 +208,6 @@
 
   /* --- Arrondis ------------------------------------------------------------ */
   --radius-2: 2px;
-  --radius-3: 3px;
   --radius-4: 4px;
   --radius-6: 6px;
   --radius-8: 8px;
@@ -224,10 +219,10 @@
   /* --- Ombres -------------------------------------------------------------- */
   --shadow-modal: 0 18px 40px var(--black-a50);         /* modales */
   --shadow-modal-drag: 0 22px 46px var(--black-a60);    /* modale de combat déplacée */
-  --shadow-widget: 0 18px 40px var(--black-a45);        /* tables, dé */
-  --shadow-widget-drag: 0 22px 46px var(--black-a55);   /* … en cours de déplacement */
-  --shadow-menu: 0 10px 28px var(--black-a45);          /* menu contextuel */
-  --shadow-side-tab: -6px 0 14px var(--black-a35);      /* onglets du panneau latéral */
+  --shadow-widget: 0 18px 40px var(--black-a50);        /* tables, dé */
+  --shadow-widget-drag: 0 22px 46px var(--black-a50);   /* … en cours de déplacement */
+  --shadow-menu: 0 10px 28px var(--black-a50);          /* menu contextuel */
+  --shadow-side-tab: -6px 0 14px var(--black-a40);      /* onglets du panneau latéral */
 
   /* --- Couches (z-index), du plus bas au plus haut ------------------------- */
   --z-raised: 1;                 /* au-dessus de son voisin immédiat */
