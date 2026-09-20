@@ -154,7 +154,14 @@ import { resolveEdges } from './edges.js'
 //     resolveTurnStructure — `airbornePhase`, `combatPhase`,
 //     `endOfTurnPhase`), cf. section "Phases" plus bas. À défaut, toutes les
 //     phases.
-export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap, getReinforcements, rules = resolveRules(null), structure = resolveTurnStructure(null)) {
+//   - `isDemolished` : `(clé d'arête "CCRR-CCRR") => bool` — ce pont a-t-il
+//     SAUTÉ (cf. lib/useDemolition.js, qui tient la liste) ? Une arête dont
+//     le pont est démoli ne vaut plus que par l'obstacle qu'il franchissait
+//     (cf. `edgeKind`/`combatEdgeKind`, et lib/edges.js::revealedKind) : ni
+//     la route qui l'empruntait, ni le pont lui-même ne comptent plus. À
+//     défaut, aucun pont n'est démoli — un module sans cette règle joue donc
+//     exactement comme avant.
+export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap, getReinforcements, rules = resolveRules(null), structure = resolveTurnStructure(null), isDemolished = () => false) {
   // --- Arêtes (hexsides) du module -------------------------------------------
   // Interprète des arêtes, construit UNE SEULE FOIS (cf. lib/edges.js) :
   // `terrain` ne change pas en cours de partie, inutile de reconstruire les
@@ -173,7 +180,7 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // Plusieurs couches du JSON peuvent partager une nature : les trois sortes
   // de pont d'Arnhem (canal, chemin de fer, route) sont toutes "bridge" —
   // peu importe LEQUEL, un pont se franchit sans surcoût, par tout le monde.
-  const edges = resolveEdges(terrain)
+  const edges = resolveEdges(terrain, rules.bridgeDemolition)
 
   /** Clé "CCRR-CCRR" de l'arête `from` -> `h` (hex au format { c, r } de
    *  HexMap.vue), telle que l'attend l'interprète `edges` ci-dessus. */
@@ -599,7 +606,12 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  infranchissable). */
   function edgeKind(from, hex) {
     if (!from) return null
-    return edges.movementKind(edgeKeyOf(from, hex))
+    const key = edgeKeyOf(from, hex)
+    // Pont DÉMOLI (cf. `isDemolished`) : il ne reste que l'obstacle qu'il
+    // franchissait, et aucune des autres couches de l'arête ne tient plus —
+    // la route qui l'empruntait est coupée avec lui.
+    if (isDemolished(key)) return edges.revealedKind(key)
+    return edges.movementKind(key)
   }
 
   /** Nature de l'hexside `from` -> `h` DU POINT DE VUE DU COMBAT (cf.
@@ -624,7 +636,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  Exportée (cf. `return` plus bas) pour lib/useCombat.js. */
   function combatEdgeKind(from, hex) {
     if (!from) return null
-    return edges.combatKind(edgeKeyOf(from, hex))
+    const key = edgeKeyOf(from, hex)
+    if (isDemolished(key)) return edges.revealedKind(key) // cf. `edgeKind`
+    return edges.combatKind(key)
   }
 
   /** Peut-on ATTAQUER à travers l'hexside `from` -> `h` ? Non si sa nature

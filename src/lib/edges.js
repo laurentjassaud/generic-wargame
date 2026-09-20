@@ -46,9 +46,28 @@
 //     primer sur elle au combat).
 //
 // Sans `terrain.edges`, aucune arête n'a d'effet (les couches sont ignorées).
+//
+// ─── PONTS DÉMOLISSABLES ─────────────────────────────────────────────────────
+// Un module peut déclarer que certaines couches de ponts peuvent SAUTER en
+// cours de partie (`rules.bridgeDemolition`, cf. lib/rules.js et
+// lib/useDemolition.js, qui portent la règle). Ce fichier n'en retient que le
+// versant "nature d'arête" :
+//   - `demolishable(clé)` : cette arête porte-t-elle un pont démolissable ?
+//   - `demolishableEdges` : la liste de ces arêtes (une entrée par arête, pas
+//     deux), pour les marquer sur la carte ;
+//   - `revealedKind(clé)` : la nature que l'arête prend une fois le pont
+//     démoli — l'obstacle qu'il franchissait. C'est la première nature de
+//     `reveals` que l'arête porte DÉJÀ (rivière avant ruisseau), ou
+//     `fallback` si elle n'en porte aucune : à Arnhem, le canal n'existe pas
+//     dans les données, seuls ses ponts y figurent, et un pont de canal
+//     démoli doit quand même laisser un obstacle derrière lui.
+// C'est l'APPELANT qui tient la liste des ponts effectivement démolis (cf.
+// lib/useAssisted.js, paramètre `isDemolished`) : cet interprète-ci ne
+// connaît que les natures, jamais l'état de la partie.
 
-/** `module.terrain` → interprète des arêtes (cf. l'en-tête). */
-export function resolveEdges(terrain) {
+/** `module.terrain` → interprète des arêtes (cf. l'en-tête). `demolition` :
+ *  `rules.bridgeDemolition` résolu (cf. lib/rules.js), ou `null`. */
+export function resolveEdges(terrain, demolition = null) {
   const declaration = terrain?.edges ?? {}
   const kinds = declaration.kinds && typeof declaration.kinds === 'object' ? declaration.kinds : {}
 
@@ -79,9 +98,32 @@ export function resolveEdges(terrain) {
     touchedByKind.set(kind, new Set([...(edgesByKind.get(kind) ?? [])].map((edgeKey) => edgeKey.split('-')[0])))
   }
 
+  // --- Ponts démolissables (cf. l'en-tête) ---------------------------------
+  // Arêtes portant un pont qui peut sauter, dans les DEUX sens (comme
+  // `edgesByKind`), et la même liste en un seul sens pour l'affichage.
+  const demolishableSet = new Set()
+  const demolishableEdges = []
+  for (const layer of demolition?.layers ?? []) {
+    for (const edge of terrain?.[layer] ?? []) {
+      const [hexA, hexB] = String(edge).split('-')
+      if (!hexA || !hexB || demolishableSet.has(hexA + '-' + hexB)) continue
+      demolishableSet.add(hexA + '-' + hexB)
+      demolishableSet.add(hexB + '-' + hexA)
+      demolishableEdges.push({ key: hexA + '-' + hexB, layer, from: hexA, to: hexB })
+    }
+  }
+
   return {
     /** Propriétés d'une nature (cf. l'en-tête), `null` pour `null`/inconnue. */
     kindOf: (kind) => (kind ? kinds[kind] ?? null : null),
+    /** L'arête `edgeKey` porte-t-elle un pont DÉMOLISSABLE (cf. l'en-tête) ? */
+    demolishable: (edgeKey) => demolishableSet.has(edgeKey),
+    /** Les arêtes démolissables, une entrée par arête : `{ key, layer, from, to }`. */
+    demolishableEdges,
+    /** Nature de l'arête `edgeKey` une fois son pont DÉMOLI (cf. l'en-tête),
+     *  ou `null` si le module n'en déclare aucune. */
+    revealedKind: (edgeKey) => (demolition?.reveals ?? []).find((kind) => edgesByKind.get(kind)?.has(edgeKey))
+      ?? demolition?.fallback ?? null,
     /** Nature qui fait foi pour le MOUVEMENT sur l'arête `edgeKey`, ou `null`. */
     movementKind: (edgeKey) => firstPresent(movementPriority, edgeKey),
     /** Nature qui fait foi pour le COMBAT et la ZOC sur l'arête `edgeKey`, ou `null`. */

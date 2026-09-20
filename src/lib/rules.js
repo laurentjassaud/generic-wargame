@@ -39,6 +39,11 @@ export const DEFAULT_RULES = Object.freeze({
   // aucune unité ne peut quitter la carte. Un module qui l'autorise déclare
   // `{ side, zones: [{ id, label, hexes }] }` (cf. `resolveMapExit`).
   mapExit: null,
+  // Démolition des ponts (cf. lib/useDemolition.js) : `null` — aucun pont
+  // n'est démolissable. Un module qui la connaît déclare
+  // `{ layers, trigger, by, destroyOn, reveals, fallback }` (cf.
+  // `resolveBridgeDemolition`).
+  bridgeDemolition: null,
 })
 
 export const ENTRY_CONGESTION_MODES = ['multiply', 'none']
@@ -79,6 +84,41 @@ export function resolveMapExit(raw) {
   return zones.length ? { side: raw.side, zones } : null
 }
 
+/** `rules.bridgeDemolition` → `{ layers, trigger, by, destroyOn, reveals,
+ *  fallback }` vérifié, ou `null` (aucun pont démolissable dans ce module).
+ *
+ *  La règle (cf. lib/useDemolition.js) : un pont posé sur l'une des `layers`
+ *  du module (couches d'arêtes, cf. lib/edges.js — pour Arnhem, les ponts de
+ *  canal et de chemin de fer, jamais les ponts routiers) peut être démoli dès
+ *  qu'une unité du camp `trigger` occupe l'un des deux hex qu'il relie. C'est
+ *  le camp `by` qui décide, une seule fois par pont : il lance un dé, et le
+ *  pont saute si la face tirée est dans `destroyOn`.
+ *
+ *  Un pont démoli laisse l'obstacle qu'il franchissait : l'arête prend la
+ *  première nature de `reveals` qu'elle porte déjà (rivière avant ruisseau),
+ *  ou `fallback` si elle n'en porte aucune — cas du canal d'Arnhem, dont
+ *  seuls les PONTS figurent dans les données du module.
+ *
+ *  `layers` et `by` sont indispensables : sans eux, rien à démolir ni
+ *  personne pour le décider, et la règle entière est ignorée. */
+export function resolveBridgeDemolition(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.by !== 'string' || !raw.by) return null
+  const layers = (Array.isArray(raw.layers) ? raw.layers : []).filter((layer) => typeof layer === 'string' && layer)
+  if (!layers.length) return null
+  const faces = (Array.isArray(raw.destroyOn) ? raw.destroyOn : []).filter((face) => Number.isInteger(face) && face >= 1)
+  const reveals = (Array.isArray(raw.reveals) ? raw.reveals : []).filter((kind) => typeof kind === 'string' && kind)
+  return {
+    layers,
+    // Camp dont la présence ouvre l'occasion ; à défaut, n'importe quelle
+    // unité ennemie du camp qui décide (cf. lib/useDemolition.js).
+    trigger: typeof raw.trigger === 'string' && raw.trigger ? raw.trigger : null,
+    by: raw.by,
+    destroyOn: faces,
+    reveals,
+    fallback: typeof raw.fallback === 'string' && raw.fallback ? raw.fallback : null,
+  }
+}
+
 /** `module.rules` (objet libre, éventuellement absent) → règles prêtes à
  *  l'emploi : listes converties en `Set`, entiers vérifiés, défauts
  *  appliqués, clés inconnues conservées. */
@@ -97,5 +137,6 @@ export function resolveRules(raw) {
     zoc: { lockIfStarting: zocFlag('lockIfStarting'), stopOnEntry: zocFlag('stopOnEntry'), blocksRetreat: zocFlag('blocksRetreat') },
     entryCongestion: ENTRY_CONGESTION_MODES.includes(rules.entryCongestion) ? rules.entryCongestion : DEFAULT_RULES.entryCongestion,
     mapExit: resolveMapExit(rules.mapExit),
+    bridgeDemolition: resolveBridgeDemolition(rules.bridgeDemolition),
   }
 }

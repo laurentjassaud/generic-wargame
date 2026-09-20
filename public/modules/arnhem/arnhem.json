@@ -1426,6 +1426,14 @@
     "airborneArrivalSpentMp": 4,
     "groundSupportSpotterRange": 3,
     "maxArtilleryPerCombat": 2,
+    "bridgeDemolition": {
+      "layers": ["canalBridges", "railroadBridges"],
+      "trigger": "allies",
+      "by": "german",
+      "destroyOn": [1, 2],
+      "reveals": ["river", "stream"],
+      "fallback": "stream"
+    },
     "mapExit": {
       "side": "german",
       "zones": [
