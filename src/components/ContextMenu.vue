@@ -10,7 +10,10 @@ import { onMounted, onUnmounted } from 'vue'
 const props = defineProps({
   leftPx: { type: Number, required: true },
   topPx: { type: Number, required: true },
-  items: { type: Array, required: true }, // [{ label, action }]
+  // [{ label, action, disabled?, title? }] — une entrée `disabled` reste
+  // AFFICHÉE mais inerte (la règle existe, elle n'est simplement pas
+  // applicable ici : `title` dit pourquoi, en infobulle).
+  items: { type: Array, required: true },
 })
 
 const emit = defineEmits(['choose', 'close'])
@@ -31,7 +34,8 @@ onUnmounted(() => {
 <template>
   <Teleport to="body">
     <div class="ctx-menu" :style="{ left: leftPx + 'px', top: topPx + 'px' }" @click.stop @contextmenu.prevent>
-      <button v-for="item in items" :key="item.label" class="ctx-item" @click="emit('choose', item.action)">
+      <button v-for="item in items" :key="item.label" class="ctx-item" :disabled="!!item.disabled"
+        :title="item.title ?? null" @click="emit('choose', item.action)">
         {{ item.label }}
       </button>
     </div>
@@ -62,8 +66,13 @@ onUnmounted(() => {
   cursor: pointer;
   font: inherit;
 }
-.ctx-item:hover {
+.ctx-item:hover:not(:disabled) {
   background: var(--color-orange);
   color: var(--panel-bg);
+}
+
+.ctx-item:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 </style>

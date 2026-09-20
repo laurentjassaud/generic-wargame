@@ -1423,7 +1423,14 @@
       "blocksRetreat": true
     },
     "entryCongestion": "multiply",
-    "airborneArrivalSpentMp": 4
+    "airborneArrivalSpentMp": 4,
+    "mapExit": {
+      "side": "german",
+      "zones": [
+        { "id": "nord", "label": "lisière nord", "hexes": "0601-2301" },
+        { "id": "sud", "label": "lisière sud", "hexes": "0126-2726" }
+      ]
+    }
   },
   "combat": {
     "die": 6,

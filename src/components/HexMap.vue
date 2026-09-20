@@ -599,7 +599,7 @@ const initialDeployment = counters.value.map((counter) => ({ id: counter.id, col
 // lib/useAssisted.js::airbornePending), passés en FONCTION car
 // `reinforcements` n'est déclaré que plus bas dans ce fichier.
 const { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules, turnStructure)
+  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules, turnStructure)
 
 // Table de combat déclarée par le module (`module.combat`, cf.
 // lib/combatTable.js) — `null` : module sans combat.
@@ -1148,8 +1148,31 @@ const eliminatedCounters = computed(() =>
 // les deux modes, via le menu contextuel "Replacer le pion" (ils y
 // retournent alors).
 const placedIds = computed(() => new Set(counters.value.map((counter) => String(counter.id))))
+
+// Unités SORTIES DE LA CARTE par un bord (cf. section "Sortie de carte" plus
+// bas) : id (chaîne) -> `{ zone, turn }`, la bande par laquelle elle est
+// sortie et le tour où elle l'a fait. Elles redeviennent des renforts, mais
+// pas n'importe lesquels : elles ne rentrent que par CETTE bande et pas avant
+// le tour SUIVANT. D'où la réécriture de leur `setup` et de leur `turn`
+// ci-dessous — tout le mécanisme de renfort du moteur (panneau, hex d'entrée
+// surlignés, coût d'entrée, congestion) s'applique ensuite sans rien savoir
+// de cette règle.
+const exitedUnits = ref(new Map())
+
+/** Le renfort `counter` tel qu'il doit se présenter s'il est sorti de la
+ *  carte : même pion, mais avec les hex d'entrée de sa bande de sortie et le
+ *  tour suivant celui de sa sortie. Inchangé sinon. */
+function withMapExit(counter) {
+  const exit = exitedUnits.value.get(String(counter.id))
+  const zone = exit && mapExitZones.value.find((candidate) => candidate.id === exit.zone)
+  if (!zone) return counter
+  return { ...counter, setup: zone.hexes, turn: exit.turn + 1 }
+}
+
 const reinforcements = computed(() =>
-  allCounters.value.filter((counter) => counter.setup && !placedIds.value.has(String(counter.id)) && !eliminatedIds.value.has(String(counter.id)))
+  allCounters.value
+    .filter((counter) => counter.setup && !placedIds.value.has(String(counter.id)) && !eliminatedIds.value.has(String(counter.id)))
+    .map(withMapExit)
 )
 
 // Un onglet de renforts par camp déclaré dans module.sides (ex. {"german":
@@ -1251,8 +1274,107 @@ function onCounterContextMenu(id, ev) {
   if (movedThisTurnIds.value.has(String(id)) && (phase.value === null || phase.value === 0)) {
     items.push({ label: 'Annuler le mouvement', action: () => cancelMovement(id) })
   }
+  // Sortie de carte (cf. section du même nom) : proposée sur une bande de
+  // bord, grisée quand la règle l'interdit ici et maintenant.
+  const exit = mapExitOffer(counters.value.find((counter) => String(counter.id) === String(id)))
+  if (exit) {
+    items.push({
+      label: `Sortir de la carte (${exit.cost} MP)`,
+      disabled: !!exit.blocked,
+      title: exit.blocked === 'zoc' ? "Unité figée dans une zone de contrôle ennemie : elle ne peut pas quitter son hex"
+        : exit.blocked === 'mp' ? `Il lui faut ${exit.cost} MP pour sortir par la ${exit.zone.label}`
+          : `Sort par la ${exit.zone.label} et reviendra en renfort au tour suivant`,
+      action: () => exitMap(id),
+    })
+  }
   openContextMenu(ev, items)
 }
+// --- Sortie de carte (cf. lib/rules.js::resolveMapExit, `rules.mapExit`) ----
+// Le module déclare un CAMP et des BANDES DE BORD (plages "CCRR-CCRR", cf.
+// lib/setup.js) : pendant sa phase de MOUVEMENT, ce camp peut faire quitter
+// la carte à une unité posée sur l'une de ces bandes.
+//   - la sortie coûte le coût de terrain de l'hex quitté (le même qu'il aurait
+//     fallu payer pour y entrer) — sans MP suffisants, l'entrée du menu
+//     contextuel reste affichée mais grisée ;
+//   - une unité figée en ZOC ennemie ne sort pas (règle [5.14] : on ne quitte
+//     pas un hex contrôlé par l'ennemi pendant son mouvement) ;
+//   - l'unité sortie redevient un renfort (cf. `exitedUnits`/`withMapExit`),
+//     qui ne rentrera qu'à partir du tour SUIVANT et par la MÊME bande, au
+//     prix d'entrée habituel (congestion comprise) ;
+//   - une unité poussée hors carte par une retraite ou un refoulement n'est
+//     PAS concernée : faute d'hex de retraite valide sur la carte, le moteur
+//     l'élimine (cf. lib/useRetreat.js) — cette règle-ci ne vaut que pour le
+//     mouvement volontaire.
+// Module sans `mapExit` : toute cette section reste inerte.
+
+/** Les bandes de sortie, hex résolus une fois pour toutes. */
+const mapExitZones = computed(() => (rules.mapExit?.zones ?? []).map((zone) => {
+  const cells = rangeCells(parseSetup(zone.hexes), hexOnMap)
+  return { ...zone, keys: new Set(cells.map((cell) => cell.col + ',' + cell.row)) }
+}))
+
+/** La sortie est-elle ouverte en ce moment ? Mode Assisté, phase de
+ *  Mouvement, et c'est bien le tour du camp qui en a le droit. */
+const mapExitOpen = computed(() =>
+  props.assisted && !!rules.mapExit && phase.value === 0 && turnInfo.value.activeSideKey === rules.mapExit.side)
+
+/** Bande de sortie sur laquelle se trouve `counter`, ou `null`. */
+function mapExitZoneOf(counter) {
+  if (!counter) return null
+  const key = counter.col + ',' + counter.row
+  return mapExitZones.value.find((zone) => zone.keys.has(key)) ?? null
+}
+
+/** Surlignage gris des bandes, pendant la phase de Mouvement du camp
+ *  concerné — sur l'écran des DEUX joueurs en ligne : c'est une information
+ *  de carte, pas une action. */
+const isMapExitHex = (hex) => mapExitOpen.value && mapExitZones.value.some((zone) => zone.keys.has(hex.c + ',' + hex.r))
+
+/** Ce que le menu contextuel doit proposer à `counter` : `{ zone, cost,
+ *  blocked }` — `blocked` valant `null` (sortie possible), `'mp'` (pas assez
+ *  de points de mouvement) ou `'zoc'` (figée en ZOC ennemie). `null` quand la
+ *  règle ne concerne pas ce pion : pas de bande sous lui, pas la bonne phase,
+ *  pas son camp, ou module sans sortie de carte. */
+function mapExitOffer(counter) {
+  if (!mapExitOpen.value || !isFighter(counter) || !canControl(counter)) return null
+  const zone = mapExitZoneOf(counter)
+  if (!zone) return null
+  const cost = terrainAreaCost({ c: counter.col, r: counter.row })
+  if (isZocFrozen(counter)) return { zone, cost, blocked: 'zoc' }
+  const left = remainingMp(counter)
+  if (left != null && left < cost) return { zone, cost, blocked: 'mp' }
+  return { zone, cost, blocked: null }
+}
+
+/** Fait quitter la carte à l'unité `id` : elle paie le coût de l'hex qu'elle
+ *  occupe et rejoint les renforts, d'où elle reviendra au tour suivant par la
+ *  même bande (cf. `withMapExit`). */
+function exitMap(id) {
+  const counter = counters.value.find((candidate) => String(candidate.id) === String(id))
+  const offer = mapExitOffer(counter)
+  if (!offer || offer.blocked) return
+  const spent = (spentMpOf(counter) ?? 0) + offer.cost
+  setSpentMp(counter.id, spent)
+  const from = hexId(counter.col + 1, counter.row)
+  counters.value = counters.value.filter((candidate) => String(candidate.id) !== String(id))
+  if (String(selectedCounterId.value) === String(id)) selectedCounterId.value = null
+  // Plus rien à annuler pour un pion qui n'est plus sur la carte.
+  moveHistory.value = moveHistory.value.filter((move) => String(move.counterId) !== String(id))
+  exitedUnits.value = new Map(exitedUnits.value).set(String(id), { zone: offer.zone.id, turn: turnInfo.value.turn })
+  log('exit', `${counter.name} quitte la carte par la ${offer.zone.label} (${from}) — ${offer.cost} MP`,
+    { counterId: id, zone: offer.zone.id, turn: turnInfo.value.turn, mp: spent })
+}
+
+/** Un pion (re)posé sur la carte n'est plus "sorti" : sa prochaine sortie
+ *  décidera seule par où il reviendra. Appelée partout où un renfort rejoint
+ *  `counters` — en jeu, en ligne et au rejeu. */
+function noteMapEntry(id) {
+  if (!exitedUnits.value.has(String(id))) return
+  const next = new Map(exitedUnits.value)
+  next.delete(String(id))
+  exitedUnits.value = next
+}
+
 /** Clic droit sur un pion de soutien — ni renforts ni unités éliminées, ni
  *  mouvement à annuler (pas de liseré "a bougé") : son seul retour possible
  *  est la tablette. Les autres marqueurs (DZ...) n'ont pas de menu. */
@@ -1781,6 +1903,7 @@ const onHex = (hex) => {
       if (reinforcement && canEnterThisTurn(reinforcement)) {
         const placed = { ...reinforcement, col: hex.c, row: hex.r }
         counters.value.push(placed)
+        noteMapEntry(placed.id)
         // "+adj" (aéroporté) n'est jamais un hex de bord de carte au sens de
         // cette règle — cf. lib/useAssisted.js::spendEntryCost, qui ne fait
         // rien hors mode Assisté de toute façon.
@@ -1992,8 +2115,9 @@ function onMapDrop(ev) {
     // poser sur la carte suffit à l'en retirer).
     const reinforcement = allCounters.value.find((counter) => String(counter.id) === String(draggedCounterId.value))
     if (reinforcement && canEnterThisTurn(reinforcement)) {
-      const placed = { ...reinforcement, ...hex }
+      const placed = { ...withMapExit(reinforcement), ...hex }
       counters.value.push(placed)
+      noteMapEntry(placed.id)
       emit('move', { counterId: placed.id, col: placed.col, row: placed.row })
       log('place', `${placed.name} entre en jeu en ${hexId(placed.col + 1, placed.row)}`,
         { counterId: placed.id, col: placed.col, row: placed.row })
@@ -2029,7 +2153,9 @@ function applyRemoteMove(counterId, col, row) {
   // Un autre joueur a posé un renfort pas encore présent localement (glissé
   // depuis son propre panneau "Renfort alliés") : on l'ajoute.
   const reinforcement = allCounters.value.find((counter) => String(counter.id) === String(counterId))
-  if (reinforcement) counters.value.push({ ...reinforcement, col, row })
+  if (!reinforcement) return
+  counters.value.push({ ...withMapExit(reinforcement), col, row })
+  noteMapEntry(counterId)
 }
 
 /** Multijoueur : un camp a perdu au temps (cf. RoomLobby.vue, `game:over`). */
@@ -2107,6 +2233,9 @@ function resetBoardForReplay() {
   blitzLoser.value = null
   counters.value = buildInitialCounters()
   eliminatedIds.value = new Set()
+  // Sorties de carte (cf. la section du même nom) : rétablies par les entrées
+  // `exit` rejouées.
+  exitedUnits.value = new Map()
   selectedCounterId.value = null
   selectedReinforcementId.value = null
   moveHistory.value = []
@@ -2221,6 +2350,13 @@ function applyReplayEntry(entry) {
     if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
     eliminatedIds.value.add(String(entryData.counterId))
     eliminatedIds.value = new Set(eliminatedIds.value)
+  } else if (entry.kind === 'exit') {
+    // Sortie de carte (cf. la section du même nom) : le pion quitte la carte
+    // et redevient un renfort de sa bande de sortie, avec les MP qu'il y a
+    // laissés.
+    counters.value = counters.value.filter((counter) => String(counter.id) !== String(entryData.counterId))
+    exitedUnits.value = new Map(exitedUnits.value).set(String(entryData.counterId), { zone: entryData.zone, turn: entryData.turn })
+    setSpentMp(entryData.counterId, entryData.mp)
   } else if (entry.kind === 'support-return') {
     // Pion de soutien replacé (cf. returnSupportToTray) : le retirer de la
     // carte suffit, la tablette se déduit de la carte.
@@ -2529,6 +2665,14 @@ function onMapDragEnd() {
           <polygon v-for="hex in hexes.filter(isFpfCandidateHex)" :key="'fpfc' + hex.id" class="hex-fpf-candidate"
             :points="hex.pts" vector-effect="non-scaling-stroke" />
           <polygon v-for="hex in hexes.filter((hex) => isCombatFpfHex(hex))" :key="'fpf' + hex.id" class="hex-fpf"
+            :points="hex.pts" vector-effect="non-scaling-stroke" />
+        </g>
+
+        <!-- cf. la section "Sortie de carte" — bandes de bord par lesquelles
+             le camp actif peut quitter la carte pendant sa phase de
+             Mouvement. Purement informatif : les clics les traversent. -->
+        <g v-if="mapExitOpen">
+          <polygon v-for="hex in hexes.filter(isMapExitHex)" :key="'exit' + hex.id" class="hex-map-exit"
             :points="hex.pts" vector-effect="non-scaling-stroke" />
         </g>
 
@@ -2923,6 +3067,17 @@ polygon.hex.entry:hover {
 /* cf. lib/useCombat.js — FPF du défenseur : artillerie éligible (pointillé
    bleu) et artillerie retenue (bleu plein). Les clics traversent : c'est le
    pion qui les reçoit (cf. onCounterSelect). */
+/* cf. la section "Sortie de carte" de HexMap.vue — bandes de bord ouvertes au
+   camp actif. Gris discret : c'est un repère permanent de la phase, pas une
+   action en attente ; les clics le traversent. */
+.hex-map-exit {
+  fill: var(--black-a25);
+  stroke: var(--white-a35);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+  pointer-events: none;
+}
+
 /* cf. lib/useCombat.js::canPlaceSupportHex — hex où poser le pion de soutien
    choisi dans la tablette. Vert pointillé, comme une sélection en attente. */
 .hex-support-target {

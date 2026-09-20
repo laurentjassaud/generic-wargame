@@ -35,6 +35,10 @@ export const DEFAULT_RULES = Object.freeze({
   // "Congestion") : 'multiply' — la N-ième entrée par un même hex, le même
   // tour, coûte N fois le coût de base ; 'none' — toujours le coût de base.
   entryCongestion: 'multiply',
+  // Sortie de carte (cf. HexMap.vue, section "Sortie de carte") : `null` —
+  // aucune unité ne peut quitter la carte. Un module qui l'autorise déclare
+  // `{ side, zones: [{ id, label, hexes }] }` (cf. `resolveMapExit`).
+  mapExit: null,
 })
 
 export const ENTRY_CONGESTION_MODES = ['multiply', 'none']
@@ -58,6 +62,23 @@ export function resolveTurnStructure(raw) {
   return { airbornePhase: flag('airbornePhase'), combatPhase: flag('combatPhase'), endOfTurnPhase: flag('endOfTurnPhase') }
 }
 
+/** `rules.mapExit` → `{ side, zones: [{ id, label, hexes }] }` vérifié, ou
+ *  `null` (pas de sortie de carte dans ce module).
+ *
+ *  `side` est une clé de `module.sides` : SEUL ce camp peut faire sortir ses
+ *  unités. Chaque zone est une BANDE DE BORD au format `setup` "CCRR-CCRR"
+ *  (cf. lib/setup.js) — une unité ne peut sortir que depuis l'une d'elles, et
+ *  ne rentrera que par la MÊME (cf. HexMap.vue, section "Sortie de carte").
+ *  `id` identifie la zone dans le journal (elle doit donc rester stable d'une
+ *  partie à l'autre), `label` sert aux messages. */
+export function resolveMapExit(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.side !== 'string' || !raw.side) return null
+  const zones = (Array.isArray(raw.zones) ? raw.zones : [])
+    .filter((zone) => zone && typeof zone.id === 'string' && zone.id && typeof zone.hexes === 'string' && zone.hexes)
+    .map((zone) => ({ id: zone.id, label: typeof zone.label === 'string' && zone.label ? zone.label : zone.id, hexes: zone.hexes }))
+  return zones.length ? { side: raw.side, zones } : null
+}
+
 /** `module.rules` (objet libre, éventuellement absent) → règles prêtes à
  *  l'emploi : listes converties en `Set`, entiers vérifiés, défauts
  *  appliqués, clés inconnues conservées. */
@@ -75,5 +96,6 @@ export function resolveRules(raw) {
     stackingLimit: positiveInt(rules.stackingLimit, DEFAULT_RULES.stackingLimit),
     zoc: { lockIfStarting: zocFlag('lockIfStarting'), stopOnEntry: zocFlag('stopOnEntry'), blocksRetreat: zocFlag('blocksRetreat') },
     entryCongestion: ENTRY_CONGESTION_MODES.includes(rules.entryCongestion) ? rules.entryCongestion : DEFAULT_RULES.entryCongestion,
+    mapExit: resolveMapExit(rules.mapExit),
   }
 }

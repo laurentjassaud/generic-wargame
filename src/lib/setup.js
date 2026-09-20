@@ -6,8 +6,9 @@
 // d'un module") sous l'une de trois formes :
 //   - "CCRR"       : cet hex précis (col/ligne imprimées, 1-based) ;
 //   - "CCRR-CCRR"  : une plage de bord de carte — tous les hex "sur ou entre"
-//                    les deux bornes, alignées sur une même ligne ou une même
-//                    colonne (ex. renforts allemands d'Arnhem) ;
+//                    les deux bornes (ex. renforts allemands d'Arnhem), en
+//                    suivant le bord réel quand une colonne sur deux
+//                    s'arrête plus haut (cf. `rangeCells`) ;
 //   - "CCRR+adj"   : un LARGAGE — l'hex de référence ou l'un de ses 6 voisins
 //                    (ex. chaque unité alliée d'Arnhem près de sa zone de
 //                    largage). C'est ce suffixe, et lui seul, qui fait d'un
@@ -42,21 +43,44 @@ export function isAirborneEntry(counter) {
 
 /** Hex d'une plage "CCRR-CCRR" (`parsed.kind === 'range'`), sur la carte
  *  (`hexOnMap(col, row)`), dans l'ordre ; à défaut d'hex valide, la borne
- *  de départ seule. Pour toute autre forme : l'hex de référence. */
+ *  de départ seule. Pour toute autre forme : l'hex de référence.
+ *
+ *  Une plage est une BANDE DE BORD, et un bord de carte hexagonale n'est pas
+ *  toujours une ligne bien droite : sur une grille à colonnes décalées (cf.
+ *  lib/mapShape.js, `map.evenColMinus`), une colonne sur deux s'arrête une
+ *  ligne plus haut — le bord bas d'Arnhem est ainsi 0126, 0225, 0326, 0425...
+ *  Une plage déclarée "0126-2726" doit donc suivre ce bord, pas s'évaporer
+ *  une colonne sur deux : quand l'hex de la ligne déclarée n'existe pas dans
+ *  cette colonne ET que la colonne s'arrête juste au-dessus, on prend cet hex
+ *  du dessus. Un simple TROU au milieu de la carte (`map.removedHexes`), lui,
+ *  reste un trou : la colonne continue en dessous, donc rien n'est pris.
+ *
+ *  Une plage dont les DEUX bornes diffèrent en colonne ET en ligne (ex.
+ *  "0126-0825") décrit ce même bord en biais : elle est lue comme une bande
+ *  de colonnes sur la ligne la plus basse des deux bornes, la règle ci-dessus
+ *  ramenant chaque colonne courte à sa dernière ligne. Seule une plage sur
+ *  une même COLONNE (ex. "0110-0115") est lue verticalement. */
 export function rangeCells(parsed, hexOnMap) {
   if (!parsed) return []
   if (parsed.kind !== 'range') return [parsed.ref]
   const { ref: from, to } = parsed
   const cells = []
-  if (from.row === to.row) {
-    const [lo, hi] = from.col <= to.col ? [from.col, to.col] : [to.col, from.col]
-    for (let col = lo; col <= hi; col++) cells.push({ col, row: from.row })
-  } else {
+  if (from.col === to.col && from.row !== to.row) {
     const [lo, hi] = from.row <= to.row ? [from.row, to.row] : [to.row, from.row]
-    for (let row = lo; row <= hi; row++) cells.push({ col: from.col, row })
+    for (let row = lo; row <= hi; row++) {
+      if (hexOnMap(from.col, row)) cells.push({ col: from.col, row })
+    }
+  } else {
+    const row = Math.max(from.row, to.row)
+    const [lo, hi] = from.col <= to.col ? [from.col, to.col] : [to.col, from.col]
+    for (let col = lo; col <= hi; col++) {
+      if (hexOnMap(col, row)) { cells.push({ col, row }); continue }
+      // Colonne plus courte (grille décalée) : son bord est la ligne du
+      // dessus — mais seulement si la colonne s'arrête bien là.
+      if (hexOnMap(col, row - 1) && !hexOnMap(col, row + 1)) cells.push({ col, row: row - 1 })
+    }
   }
-  const valid = cells.filter((cell) => hexOnMap(cell.col, cell.row))
-  return valid.length ? valid : [from]
+  return cells.length ? cells : [from]
 }
 
 /** Hex candidats au PLACEMENT AUTOMATIQUE de départ (cf. HexMap.vue::
