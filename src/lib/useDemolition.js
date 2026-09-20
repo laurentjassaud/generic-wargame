@@ -125,6 +125,25 @@ export function useDemolition({ assisted, terrain, demolition = null, counters, 
       }))
   })
 
+  /** Le pont `edgeKey` tel que l'attend la modale — `{ key, layer, label,
+   *  hexes }` — quel que soit le sens dans lequel l'arête est nommée, et
+   *  qu'une occasion soit ouverte sur lui ou non. Sert EN LIGNE : le camp
+   *  décideur reçoit une clé d'arête de l'autre écran (cf. HexMap.vue,
+   *  section "Démolition des ponts") et doit pouvoir en parler sans dépendre
+   *  de sa propre lecture des occasions. `null` si l'arête n'est pas un pont
+   *  démolissable de ce module. */
+  function bridgeAt(edgeKey) {
+    const [forward, backward] = bothWays(edgeKey)
+    const edge = edges.demolishableEdges.find((candidate) => candidate.key === forward || candidate.key === backward)
+    if (!edge) return null
+    return {
+      key: edge.key,
+      layer: edge.layer,
+      label: demolition.labels?.[edge.layer] ?? 'pont',
+      hexes: [edge.from, edge.to],
+    }
+  }
+
   /** L'occasion à trancher MAINTENANT — la première ouverte, `null` s'il n'y
    *  en a aucune. Les autres suivront d'elles-mêmes : chaque décision retire
    *  son pont de la liste (cf. `settle`), et la suivante prend sa place. */
@@ -193,5 +212,5 @@ export function useDemolition({ assisted, terrain, demolition = null, counters, 
     sealedKeys.value = new Set()
   }
 
-  return { active, isDemolished, opportunities, current, attempt, decline, applyReplay, marks, reset }
+  return { active, isDemolished, opportunities, current, bridgeAt, attempt, decline, applyReplay, marks, reset }
 }

@@ -125,6 +125,14 @@ export function createGame({ moduleId, scenarioId, variants, settings, maxPlayer
     // à `null` tant qu'il n'a pas répondu — ou `null`. Conservé pour qu'un
     // joueur qui recharge la page retrouve la négociation en cours.
     fpfRequest: null,
+    // Démolition des ponts (cf. src/lib/useDemolition.js) : sort de chaque
+    // pont déjà tranché — `[{ edge, destroyed }]` —, transmis à qui (re)joint
+    // la partie pour qu'il retrouve la carte telle qu'elle est.
+    demolitions: [],
+    // Occasion de démolition soumise au camp qui décide, quand il n'a pas la
+    // main — `{ id, edge }` ou `null`. Conservée pour qu'un joueur qui
+    // recharge sa page retrouve la décision en attente.
+    demolitionRequest: null,
   }
   games.set(id, game)
   return game
@@ -168,6 +176,8 @@ export function toPublic(game) {
     blitzUsedMs: game.blitzUsedMs,
     blitzLoser: game.blitzLoser,
     fpfRequest: game.fpfRequest,
+    demolitions: game.demolitions,
+    demolitionRequest: game.demolitionRequest,
   }
 }
 
@@ -418,6 +428,60 @@ export function cancelFpfRequest(id, requestId) {
   game.fpfRequest = null
   touch(game)
   return true
+}
+
+// --- Démolition des ponts en ligne ----------------------------------------------
+// Le sort d'un pont est tranché par UN camp (cf. src/lib/useDemolition.js —
+// l'allemand à Arnhem), qui n'a pas toujours la main. Quand c'est le cas, le
+// joueur actif lui SOUMET l'occasion (`recordDemolitionRequest`) et attend ;
+// le camp décideur lance son dé et publie le RÉSULTAT (`recordDemolition`),
+// que tous appliquent. Quand le camp décideur a la main, il décide sans
+// demande préalable et publie directement son résultat.
+// Comme pour le FPF, le serveur ne connaît pas les règles : il relaie, garde
+// l'occasion en attente pour une page rechargée, et tient la liste des ponts
+// déjà réglés pour un joueur qui rejoint en cours de partie.
+
+/** Clé d'arête reçue d'un client ("CCRR-CCRR"), ou `null` si invalide. */
+function sanitizeEdge(edge) {
+  return typeof edge === 'string' && /^\d{4}-\d{4}$/.test(edge) ? edge : null
+}
+
+/** Le joueur actif soumet l'occasion au camp décideur. `request` :
+ *  `{ id, edge }`. Renvoie la demande assainie (celle qui est relayée). */
+export function recordDemolitionRequest(id, request) {
+  const game = startedGame(id)
+  if (game.blitzLoser) throw new RoomError('game-over')
+  const requestId = request?.id
+  const edge = sanitizeEdge(request?.edge)
+  if (typeof requestId !== 'string' || !requestId || requestId.length > 64 || !edge) throw new RoomError('bad-demolition')
+  game.demolitionRequest = { id: requestId, edge }
+  touch(game)
+  return game.demolitionRequest
+}
+
+/** Le camp décideur publie le sort d'un pont : `{ edge, die, destroyed }` —
+ *  `die` à `null` s'il a renoncé sans lancer. Clôt l'occasion en attente, si
+ *  c'est bien de ce pont qu'elle parlait, et retient le résultat pour les
+ *  joueurs qui rejoindront ensuite. Renvoie le résultat relayé. */
+export function recordDemolition(id, { edge, die = null, destroyed } = {}) {
+  const game = startedGame(id)
+  const clean = sanitizeEdge(edge)
+  if (!clean) throw new RoomError('bad-demolition')
+  const result = { edge: clean, die: Number.isInteger(die) ? die : null, destroyed: !!destroyed }
+  // Un pont ne se tranche qu'une fois : une seconde publication (deux clients
+  // qui se croisent) ne doit pas doubler la liste.
+  if (!game.demolitions.some((settled) => sameEdge(settled.edge, clean))) game.demolitions.push(result)
+  if (game.demolitionRequest && sameEdge(game.demolitionRequest.edge, clean)) game.demolitionRequest = null
+  touch(game)
+  return result
+}
+
+/** Deux clés d'arête désignent-elles le même hexside ? Le client peut nommer
+ *  l'arête dans l'un ou l'autre sens (cf. src/lib/useDemolition.js). */
+function sameEdge(edgeA, edgeB) {
+  if (edgeA === edgeB) return true
+  const [hexA, hexB] = String(edgeA).split('-')
+  return hexB + '-' + hexA === edgeB
 }
 
 /** Retire une entrée du journal partagé (retour arrière). `true` si retirée. */

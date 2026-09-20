@@ -1,4 +1,4 @@
-import { RoomError, getGame, joinGame, recordMove, advanceTurn, recordPhase, recordGameOver, appendJournal, removeJournal, recordDeployment, isPlayersTurn, mayLog, setPlayerConnectionBySocket, toPublic, recordFpfRequest, recordFpfReply, cancelFpfRequest } from './rooms.js'
+import { RoomError, getGame, joinGame, recordMove, advanceTurn, recordPhase, recordGameOver, appendJournal, removeJournal, recordDeployment, isPlayersTurn, mayLog, setPlayerConnectionBySocket, toPublic, recordFpfRequest, recordFpfReply, cancelFpfRequest, recordDemolitionRequest, recordDemolition } from './rooms.js'
 
 export function registerSocketHandlers(io) {
   io.on('connection', (socket) => {
@@ -160,6 +160,32 @@ export function registerSocketHandlers(io) {
         if (cancelFpfRequest(gameId, requestId)) socket.to(`game:${gameId}`).emit('game:fpf-cancel', { id: requestId })
       } catch {
         // Partie pas lancée : on ignore.
+      }
+    })
+
+    // --- Démolition des ponts en ligne (cf. rooms.js, section du même nom) :
+    // le joueur actif soumet l'occasion au camp qui décide, et ce camp publie
+    // le sort du pont — que tous appliquent.
+    socket.on('game:demolition-request', ({ gameId, request } = {}) => {
+      if (!hasTurn(gameId)) return
+      try {
+        const recorded = recordDemolitionRequest(gameId, request)
+        socket.to(`game:${gameId}`).emit('game:demolition-request', { request: recorded })
+      } catch {
+        // Partie pas lancée ou demande invalide : on ignore.
+      }
+    })
+
+    socket.on('game:demolition', ({ gameId, edge, die, destroyed } = {}) => {
+      // Ouvert à tout joueur de la partie : le camp qui décide du sort des
+      // ponts n'a pas toujours la main (c'est même le cas courant), et le
+      // serveur ne connaît pas les camps que la règle du module désigne.
+      if (socket.data.gameId !== gameId) return
+      try {
+        const result = recordDemolition(gameId, { edge, die, destroyed })
+        socket.to(`game:${gameId}`).emit('game:demolition', result)
+      } catch {
+        // Partie pas lancée ou arête invalide : on ignore.
       }
     })
 

@@ -79,6 +79,12 @@ const props = defineProps({
   // (partie en ligne reprise en route, cf. server/src/rooms.js::
   // recordFpfRequest) — `{ id, targets, attackerIds, fpfIds }`, ou `null`.
   initialFpfRequest: { type: Object, default: null },
+  // Ponts déjà tranchés (partie en ligne reprise en route, cf.
+  // server/src/rooms.js::recordDemolition) — `[{ edge, destroyed }]`.
+  initialDemolitions: { type: Array, default: () => [] },
+  // Occasion de démolition soumise au camp qui décide et pas encore
+  // tranchée (même reprise) — `{ id, edge }`, ou `null`.
+  initialDemolitionRequest: { type: Object, default: null },
   // Camp du joueur sur ce navigateur (multijoueur, cf. RoomLobby.vue) :
   // l'alerte "Temps imparti terminé" n'est montrée qu'au joueur actif.
   // Vide en solo/démo (un seul navigateur pour tous les camps).
@@ -123,7 +129,7 @@ const props = defineProps({
 // demande abandonnée ; `fpf-reply` — `{ requestId, fpfIds }`, choix du
 // défenseur.
 const emit = defineEmits(['move', 'turn', 'phase', 'game-over', 'log', 'unlog', 'deploy', 'restart-with',
-  'fpf-request', 'fpf-cancel', 'fpf-reply'])
+  'fpf-request', 'fpf-cancel', 'fpf-reply', 'demolition-request', 'demolition'])
 
 const map = computed(() => props.module.map)
 
@@ -803,25 +809,102 @@ let demolitionTimer = null
 // passe au pont suivant (ou ne se ferme) — même principe que CombatModal.vue.
 const DEMOLITION_RESULT_MS = 2200
 
-/** La décision se prend-elle sur CET écran ? En partie locale, toujours (les
- *  deux joueurs partagent l'écran). Jamais pendant un rejeu de journal ni une
- *  partie terminée (cf. `actionsLocked`) : l'état y est rétabli par les
- *  entrées `demolition` rejouées, pas par une nouvelle décision.
+// EN LIGNE, qui décide ? Le camp `by` de la règle (l'allemand à Arnhem), qui
+// n'a pas toujours la main — c'est même le cas courant, les occasions
+// naissant des mouvements alliés. On reprend alors le déroulé du FPF (cf. la
+// section "FPF en ligne") : le joueur actif SOUMET l'occasion, son écran
+// attend, le camp décideur tranche sur le sien et PUBLIE le sort du pont, que
+// les deux appliquent. Quand le camp décideur a la main, il décide sans
+// demande préalable et publie directement.
+
+/** Camp qui décide du sort des ponts, ou `null` (module sans cette règle). */
+const demolitionSide = rules.bridgeDemolition?.by ?? null
+
+/** Ce navigateur est-il celui du camp décideur ? En partie locale, oui — un
+ *  seul écran pour les deux joueurs. */
+const demolitionMine = computed(() => !props.online || props.localSide === demolitionSide)
+
+// En ligne : occasion SOUMISE par ce navigateur et dont il attend la réponse
+// (joueur actif), et occasion REÇUE à trancher (camp décideur). Les deux
+// restent `null` en partie locale.
+const demolitionAsked = ref(null)
+const demolitionIncoming = ref(null)
+let demolitionRequestId = null
+
+/** Une occasion peut-elle être présentée MAINTENANT ? Jamais pendant un rejeu
+ *  de journal ni une partie terminée (cf. `actionsLocked`) : l'état y est
+ *  rétabli par les entrées `demolition` rejouées, pas par une décision.
  *
  *  Jamais non plus pendant l'application d'un résultat de combat (cf.
  *  `retreatActive` — retraites, refoulements, avance après combat) : la
  *  modale FERME la saisie, et l'ouvrir alors qu'un joueur doit encore
- *  cliquer ses hex de retraite bloquerait la partie. Une unité refoulée près
- *  d'un pont ouvre bel et bien l'occasion — elle est simplement présentée
- *  une fois la retraite terminée, puisque `demolition.opportunities` la
- *  déduit de la carte et ne l'oublie pas en chemin. */
-const demolitionLocal = computed(() => !actionsLocked.value && !props.online && !retreatActive.value)
+ *  cliquer ses hex de retraite bloquerait la partie. L'occasion n'est pas
+ *  perdue pour autant — elle est simplement présentée une fois la retraite
+ *  terminée, puisque `demolition.opportunities` la déduit de la carte et ne
+ *  l'oublie pas en chemin. */
+const demolitionOpen = computed(() => !actionsLocked.value && !retreatActive.value && demolition.active.value)
 
-/** Le pont dont la modale parle : celui dont on montre le résultat, sinon la
- *  première occasion ouverte (cf. lib/useDemolition.js::current). `null` =
- *  pas de modale. */
-const demolitionBridge = computed(() => demolitionShown.value
-  ?? (demolitionLocal.value ? demolition.current.value : null))
+/** Le pont dont la modale parle : celui dont on montre le résultat, sinon
+ *  celui qu'on a reçu à trancher, sinon celui qu'on a soumis et qu'on attend,
+ *  sinon — décision locale — la première occasion ouverte (cf.
+ *  lib/useDemolition.js::current). `null` = pas de modale. */
+const demolitionBridge = computed(() => {
+  if (demolitionShown.value) return demolitionShown.value
+  if (demolitionIncoming.value) return demolitionIncoming.value
+  if (demolitionAsked.value) return demolitionAsked.value
+  if (!demolitionOpen.value) return null
+  // En ligne, seul le camp décideur QUI A LA MAIN ouvre de lui-même : sans la
+  // main, il attend que le joueur actif lui soumette l'occasion (c'est lui
+  // qui mène le fil des évènements).
+  if (props.online && !(isLocalTurn.value && demolitionMine.value)) return null
+  return demolition.current.value
+})
+
+/** Cet écran ATTEND la décision de l'autre : rien à y cliquer. */
+const demolitionWaiting = computed(() => !!demolitionAsked.value && !demolitionShown.value)
+
+/** Soumet au camp décideur la première occasion ouverte, quand c'est ce
+ *  navigateur qui a la main sans être celui qui décide. Idempotent, et appelé
+ *  à chaque fois que l'un de ses ingrédients change : une occasion qui
+ *  s'ouvre pendant qu'une autre se règle n'est ainsi jamais oubliée. */
+function pumpDemolition() {
+  if (!props.online || !demolitionOpen.value) return
+  if (demolitionAsked.value || demolitionIncoming.value || demolitionShown.value) return
+  if (!isLocalTurn.value || demolitionMine.value) return
+  const bridge = demolition.current.value
+  if (!bridge) return
+  demolitionRequestId = newUid()
+  demolitionAsked.value = bridge
+  emit('demolition-request', { id: demolitionRequestId, edge: bridge.key })
+}
+// Pas d'`immediate` : `demolitionOpen` lit `actionsLocked`, déclaré bien plus
+// bas dans ce fichier — l'évaluation initiale se fait au montage, une fois
+// tout en place (cf. onMounted).
+watch([demolitionOpen, () => demolition.current.value, demolitionAsked, demolitionIncoming, demolitionShown],
+  pumpDemolition)
+
+/** Le joueur actif nous soumet une occasion (cf. RoomLobby.vue,
+ *  `game:demolition-request`) : elle s'affiche sur l'écran du camp décideur,
+ *  et sur celui-là seul. */
+function applyRemoteDemolitionRequest(request) {
+  if (!props.online || !request?.edge || !demolitionMine.value) return
+  const bridge = demolition.bridgeAt(request.edge)
+  if (!bridge) return
+  demolitionRequestId = request.id
+  demolitionIncoming.value = bridge
+}
+
+/** Le camp décideur a publié le sort d'un pont (cf. RoomLobby.vue,
+ *  `game:demolition`) : on l'applique, et le navigateur qui attendait voit le
+ *  résultat avant de reprendre la main. */
+function applyRemoteDemolition({ edge, die = null, destroyed } = {}) {
+  if (!edge) return
+  const bridge = demolition.bridgeAt(edge)
+  demolition.applyReplay({ edge, destroyed })
+  if (demolitionAsked.value && bridge && demolitionAsked.value.key === bridge.key) demolitionAsked.value = null
+  demolitionRequestId = null
+  if (bridge) showDemolitionResult(bridge, { die, destroyed })
+}
 
 /** Centre (en pixels natifs de l'image) de l'hex `{ col, row }` — même
  *  calcul que `hexes` plus haut, mais pour un hex quelconque, y compris hors
@@ -858,27 +941,47 @@ function logDemolition(bridge, { die = null, destroyed }) {
   log('demolition', what, { edge: bridge.key, die, destroyed })
 }
 
+/** Affiche le résultat d'une décision le temps qu'on le lise — sur l'écran
+ *  qui a décidé comme sur celui qui attendait (cf. `applyRemoteDemolition`).
+ *  Fige le pont concerné : sans cela, le sort réglé, `demolition.current`
+ *  passerait aussitôt à l'occasion suivante et le joueur ne verrait jamais sa
+ *  propre face de dé. */
+function showDemolitionResult(bridge, outcome) {
+  clearTimeout(demolitionTimer)
+  demolitionShown.value = bridge
+  demolitionResult.value = outcome
+  demolitionTimer = setTimeout(closeDemolitionResult, DEMOLITION_RESULT_MS)
+}
+
+/** Une décision vient d'être prise sur CET écran : journal, puis diffusion
+ *  aux autres joueurs (cf. RoomLobby.vue) — c'est le seul message qui change
+ *  l'état d'un pont, et il part du navigateur qui a décidé. */
+function publishDemolition(bridge, outcome) {
+  logDemolition(bridge, outcome)
+  demolitionIncoming.value = null
+  demolitionRequestId = null
+  if (props.online) emit('demolition', { edge: bridge.key, die: outcome.die ?? null, destroyed: outcome.destroyed })
+}
+
 /** Le camp décideur tente la destruction : le dé est lancé par la règle (cf.
  *  lib/useDemolition.js::attempt), le résultat reste affiché un instant, puis
  *  la modale passe à l'occasion suivante s'il y en a une. */
 function onDemolitionAttempt() {
   const bridge = demolitionBridge.value
-  if (!bridge || demolitionResult.value) return
+  if (!bridge || demolitionResult.value || demolitionWaiting.value) return
   const outcome = demolition.attempt(bridge.key)
   if (!outcome) return
-  demolitionShown.value = bridge
-  demolitionResult.value = outcome
-  logDemolition(bridge, outcome)
-  demolitionTimer = setTimeout(closeDemolitionResult, DEMOLITION_RESULT_MS)
+  showDemolitionResult(bridge, outcome)
+  publishDemolition(bridge, outcome)
 }
 
 /** Le camp décideur renonce : aucun dé, le pont tient pour le reste de la
  *  partie. Rien à figer — la modale enchaîne d'elle-même sur le pont suivant. */
 function onDemolitionDecline() {
   const bridge = demolitionBridge.value
-  if (!bridge || demolitionResult.value) return
+  if (!bridge || demolitionResult.value || demolitionWaiting.value) return
   if (!demolition.decline(bridge.key)) return
-  logDemolition(bridge, { destroyed: false })
+  publishDemolition(bridge, { die: null, destroyed: false })
 }
 
 /** Fin de l'affichage du résultat : la modale reprend le cours des occasions. */
@@ -1267,6 +1370,12 @@ onMounted(() => {
     turnStep: props.initialTurnStep, phase: props.initialPhase, phaseElapsedMs: props.initialPhaseElapsedMs,
     blitzUsedMs: props.initialBlitzUsedMs, blitzLoser: props.initialBlitzLoser, fpfRequest: props.initialFpfRequest,
   })
+  // Ponts déjà détruits ou définitivement épargnés (cf. restoreDemolitions).
+  restoreDemolitions(props.initialDemolitions, props.initialDemolitionRequest)
+  // Une unité du camp déclencheur déjà en place au coup d'envoi borde peut-
+  // être un pont : la première occasion s'examine donc dès maintenant (cf.
+  // pumpDemolition — les suivantes viennent de son watcher).
+  pumpDemolition()
   // Partie relancée avec les réglages d'une sauvegarde (cf. DemoPlay.vue) :
   // on rejoue maintenant le journal mis de côté — APRÈS `initPhase`, que le
   // rejeu doit pouvoir corriger. Jamais en ligne (la reprise en attente
@@ -2365,6 +2474,15 @@ function applyServerState({ turnStep, phase: serverPhase, phaseElapsedMs, blitzU
   restoreFpfRequest(fpfRequest)
 }
 
+/** En ligne : ponts déjà tranchés et occasion encore en attente, tels que le
+ *  serveur les tient (cf. server/src/rooms.js, section "Démolition des ponts
+ *  en ligne"). Appliqués au montage et à chaque resynchronisation : c'est le
+ *  serveur qui fait foi, un pont ne se retranche jamais. */
+function restoreDemolitions(settled, request) {
+  for (const result of settled ?? []) demolition.applyReplay(result)
+  if (request) applyRemoteDemolitionRequest(request)
+}
+
 /** En ligne, après une RECONNEXION : le serveur fait foi. Le journal partagé
  *  complet est rejoué depuis le déploiement (cf. startSharedJournal), ce qui
  *  rattrape à la fois les entrées manquées pendant la coupure ET celles que
@@ -2376,10 +2494,14 @@ function applyServerState({ turnStep, phase: serverPhase, phaseElapsedMs, blitzU
 function resyncFromServer(list, room) {
   startSharedJournal(list ?? [])
   applyServerState(room ?? {})
+  // Ponts tranchés pendant la coupure, et occasion restée en attente (cf.
+  // restoreDemolitions).
+  restoreDemolitions(room?.demolitions, room?.demolitionRequest)
 }
 
 defineExpose({ applyRemoteMove, applyRemoteTurn, applyRemotePhase, applyRemoteGameOver, applyRemoteEntry, removeRemoteEntry, resyncFromServer,
-  applyRemoteFpfRequest, applyRemoteFpfReply, applyRemoteFpfCancel })
+  applyRemoteFpfRequest, applyRemoteFpfReply, applyRemoteFpfCancel,
+  applyRemoteDemolitionRequest, applyRemoteDemolition })
 
 /** Reçoit le journal chargé (cf. JournalPanel.vue, évènement `loaded`) en
  *  ordre chronologique et remet la carte au déploiement initial pour
@@ -3001,7 +3123,7 @@ function onMapDragEnd() {
 
     <!-- cf. lib/useDemolition.js — un pont démolissable est bordé par une
          unité ennemie : au camp qui le tient de décider, tout de suite. -->
-    <DemolitionModal :bridge="demolitionBridge" :result="demolitionResult"
+    <DemolitionModal :bridge="demolitionBridge" :result="demolitionResult" :waiting="demolitionWaiting"
       :destroy-on="rules.bridgeDemolition?.destroyOn ?? []"
       @attempt="onDemolitionAttempt" @decline="onDemolitionDecline" />
 

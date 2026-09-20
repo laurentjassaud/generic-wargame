@@ -47,6 +47,12 @@ aucune restriction de tour ni de règle, dé libre.
   combat (CRT) avec dé, combats obligatoires, retraites hex par hex (avec
   refoulement d'amis), éliminations, avance après combat ; les unités ayant
   combattu pendant la phase portent un rond rouge en haut à gauche ;
+- démolition des ponts (cf. `src/lib/useDemolition.js`) : un pont déclaré
+  démolissable peut sauter dès qu'une unité du camp adverse borde l'un de ses
+  deux hex, à n'importe quelle phase ; le camp qui le tient décide aussitôt
+  (jet de dé, une seule tentative), après quoi le pont est détruit — l'arête
+  redevient la rivière ou le ruisseau qu'il franchissait — ou définitivement
+  sauf. Un rond rouge (détruit) ou vert (sauf) marque l'hexside réglé ;
 - artillerie (cf. `src/lib/useArtillery.js`) : barrage au contact ou à
   distance (cible dans la portée et observée par une unité amie, jamais
   affectée par le résultat), terrain de l'hex seul face à l'artillerie,
@@ -96,7 +102,12 @@ fois), `/room/:id` la rejoint (pseudo, camp, code). La partie démarre quand
 tous les sièges sont pris. Le serveur reçoit l'ordre des camps à la création
 et **refuse tout coup du joueur qui n'a pas la main** ; l'interface bloque de
 même les actions hors tour. La liste des joueurs indique qui est en ligne.
-Seule exception : le **FPF** de l'artillerie, choisi par le défenseur. Quand
+Deux exceptions, où c'est le joueur SANS la main qui tranche — dans les deux
+cas, le joueur actif soumet, l'autre répond, et le résultat est appliqué chez
+tout le monde. La **démolition d'un pont** d'abord : l'occasion est soumise au
+camp qui le tient (`game:demolition-request`), il lance son dé sur son écran
+et publie le sort du pont (`game:demolition`). Le **FPF** de l'artillerie
+ensuite, choisi par le défenseur. Quand
 un combat peut en recevoir un, l'attaquant le soumet d'abord au défenseur
 (`game:fpf-request`). Celui-ci choisit ses artilleries sur son écran et
 répond (`game:fpf-reply`), puis l'attaquant lance le dé. L'attaquant peut
@@ -123,7 +134,7 @@ Champs du JSON (cf. `arnhem.json`) :
 | `combat` | Table de combat : `die`, colonnes de différentiel, lignes de terrain (décalage), substitutions par hexside, résultats, libellés et **effets** de chaque résultat (retraite, élimination), avance après combat — cf. `src/lib/combatTable.js` ; sans table, pas de combat |
 | `scenarios` | Scénarios proposés : `id`, `label`, `deployment` (`setup` — seul mode appliqué par le moteur ; `free` : bientôt), `weather` (`required` / `optional`) — cf. `src/lib/gameSettings.js` |
 | `turnStructure` | Phases du tour d'un camp, en plus du Mouvement : `airbornePhase`, `combatPhase`, `endOfTurnPhase` (booléens) — cf. `src/lib/rules.js` |
-| `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, `zoc` (`lockIfStarting`, `stopOnEntry`, `blocksRetreat`), `entryCongestion` (`multiply` / `none`), `mapExit` (sortie de carte : `side` autorisé et `zones` de bord `{ id, label, hexes }`, une unité sortie revenant en renfort par la même bande au tour suivant), et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`, `groundSupportSpotterRange`, `maxArtilleryPerCombat`) — cf. `src/lib/rules.js` |
+| `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, `zoc` (`lockIfStarting`, `stopOnEntry`, `blocksRetreat`), `entryCongestion` (`multiply` / `none`), `mapExit` (sortie de carte : `side` autorisé et `zones` de bord `{ id, label, hexes }`, une unité sortie revenant en renfort par la même bande au tour suivant), `bridgeDemolition` (ponts démolissables : `layers` de la carte, camp `trigger` qui ouvre l'occasion, camp `by` qui décide, `destroyOn` du dé, `reveals`/`fallback` — l'obstacle que laisse un pont détruit), et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`, `groundSupportSpotterRange`, `maxArtilleryPerCombat`) — cf. `src/lib/rules.js` |
 | `sides` | Camps jouables → factions (`{"allies": ["commonwealth","us","pol"], "german": ["german"]}`) |
 | `turnTrack` | `turns`, `order` des camps, libellé et marqueur de chaque camp |
 | `supportTrack` | Tablette de soutien : pions par tour (`byTurn`), camp propriétaire (`side`) et apport au combat d'un pion (`factor`, défaut 1) — cf. `src/components/SupportTracker.vue` et la section "PIONS DE SOUTIEN" de `src/lib/useCombat.js` |
@@ -150,7 +161,8 @@ src/
 ├── views/        GamesList, CreateGame, LocalGameSetup, DemoPlay (plateau local), RoomLobby (plateau en ligne)
 ├── components/   HexMap (plateau et orchestration), TurnTracker, SupportTracker, Counter,
 │                 ReinforcementsPanel, EliminatedPanel, JournalPanel, SidePanel, CombatModal,
-│                 PhaseBlockedModal, MoveTimer, RollModal, MovementChartModal, CombatChartModal,
+│                 DemolitionModal, PhaseBlockedModal, MoveTimer, RollModal, MovementChartModal,
+│                 CombatChartModal,
 │                 CalibrationPanel, ContextMenu, GameSetupSteps
 └── lib/
     ├── useAssisted.js   mode Assisté : phases, MP/terrain, ZOC, empilement, congestion
@@ -158,6 +170,7 @@ src/
     ├── useArtillery.js  artillerie : contact, tir à distance, FPF, résultats subis, refoulements
     ├── combatTable.js   table de combat du module (module.combat) : vérification et lecture
     ├── useRetreat.js    retraites, éliminations, avance après combat
+    ├── useDemolition.js démolition des ponts : occasions, décision, ponts détruits ou saufs
     ├── moduleRules.js   registre des règles particulières par module
     ├── useArnhem.js     règles particulières du module Arnhem (patron pour d'autres modules)
     ├── rules.js         paramètres des règles génériques (module.rules), structure du tour (module.turnStructure)
