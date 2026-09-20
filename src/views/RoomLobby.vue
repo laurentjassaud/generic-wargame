@@ -121,8 +121,8 @@ function attachSocketListeners() {
   socket.on('game:fpf-request', ({ request }) => {
     hexMapRef.value?.applyRemoteFpfRequest(request)
   })
-  socket.on('game:fpf-reply', ({ id, fpfIds }) => {
-    hexMapRef.value?.applyRemoteFpfReply(id, fpfIds)
+  socket.on('game:fpf-reply', ({ id, fpfIds, supportIds }) => {
+    hexMapRef.value?.applyRemoteFpfReply(id, fpfIds, supportIds)
   })
   socket.on('game:fpf-cancel', ({ id }) => {
     hexMapRef.value?.applyRemoteFpfCancel(id)
@@ -195,8 +195,8 @@ function onFpfCancel(requestId) {
   getSocket().emit('game:fpf-cancel', { gameId: props.id, requestId })
 }
 
-function onFpfReply({ requestId, fpfIds }) {
-  getSocket().emit('game:fpf-reply', { gameId: props.id, requestId, fpfIds })
+function onFpfReply({ requestId, fpfIds, supportIds }) {
+  getSocket().emit('game:fpf-reply', { gameId: props.id, requestId, fpfIds, supportIds })
 }
 
 // Déploiement initial (et tour de départ) proposés par le plateau : ceux que

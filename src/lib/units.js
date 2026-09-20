@@ -34,9 +34,10 @@ export function isSupport(counter) {
 }
 
 /** Un vrai pion, par opposition à un marqueur : occupe une case, se déplace
- *  (ou se pose) — pions de soutien COMPRIS. Sert au placement (répartition
+ *  (ou se pose). Les pions de soutien sont typés marqueurs (cf.
+ *  SupportTracker.vue) : ils n'en sont PAS. Sert au placement (répartition
  *  des pions de départ, empilement visuel) et au rendu (les marqueurs sont
- *  dessinés sous les autres pions). */
+ *  dessinés sous les unités, les pions de soutien par-dessus). */
 export function isUnit(counter) {
   return !!counter && !isMarker(counter)
 }

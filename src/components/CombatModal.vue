@@ -66,6 +66,12 @@ const props = defineProps({
   //   - 'defender' : en ligne, écran du défenseur — il coche puis valide ;
   //   - 'done' : combat résolu (seul le rappel des FPF retenus subsiste).
   fpf: { type: Object, default: null },
+  // Pions de SOUTIEN engagés dans ce combat (cf. lib/useCombat.js, section
+  // "PIONS DE SOUTIEN", et HexMap.vue::supportView) — `{ attacking,
+  // counters, strength, factor }`, ou `null` s'il n'y en a aucun.
+  // `attacking` : ils renforcent l'ATTAQUE (tour de leur camp) ; sinon la
+  // DÉFENSE (tour adverse), comme un FPF.
+  support: { type: Object, default: null },
 })
 
 // `end-advance` : bouton "Terminer l'avance" (cf. useRetreat.js::endAdvance).
@@ -75,8 +81,11 @@ const props = defineProps({
 // FPF (cf. prop `fpf`) : `toggle-fpf` (id d'une artillerie cochée/décochée),
 // `request-fpf` (soumettre le combat au défenseur), `cancel-fpf-request`
 // (renoncer à cette demande), `send-fpf` (le défenseur valide son choix).
+// `toggle-support` : le défenseur coche/décoche un pion de soutien de sa
+// tablette (en ligne : il n'a pas la main pour le poser sur la carte, cf.
+// prop `support`, champ `choices`).
 const emit = defineEmits(['close', 'fight', 'end-advance', 'reduce-retreat', 'cancel-push',
-  'toggle-fpf', 'request-fpf', 'cancel-fpf-request', 'send-fpf'])
+  'toggle-fpf', 'request-fpf', 'cancel-fpf-request', 'send-fpf', 'toggle-support'])
 
 const fpfMode = computed(() => props.fpf?.mode ?? null)
 
@@ -88,6 +97,10 @@ const composing = computed(() => !props.combatResult && !['waiting', 'answered',
 const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
 
 const RANGED_TITLE = "Tir d'artillerie à distance : jamais affectée par le résultat"
+
+// [8.45] : ni FPF ni soutien contre une attaque faite uniquement
+// d'artillerie et/ou de soutien (cf. prop `support`, champ `barred`).
+const SUPPORT_BARRED_TITLE = "Soutien sans effet : l'attaque est faite uniquement d'artillerie et/ou de soutien"
 
 // Animation du dé : purement décorative. La VALEUR retenue est celle tirée
 // par useCombat.js::resolveCombat (émise via `fight` à la fin du roulement),
@@ -197,11 +210,23 @@ onUnmounted(() => {
             <span class="cm-factor" title="Facteur de FPF">{{ unit.fpf ?? 0 }}</span>
             <figcaption>FPF {{ unit.name }}</figcaption>
           </figure>
+          <!-- Pions de soutien engagés en DÉFENSE (cf. prop `support`) —
+               sans effet contre une attaque faite uniquement d'artillerie
+               et/ou de soutien ([8.45], cf. champ `barred`). -->
+          <figure v-for="counter in (support && !support.attacking ? support.counters : [])" :key="'sup' + counter.id"
+            class="cm-unit cm-fpf-unit" :class="{ 'cm-unit-barred': support.barred }"
+            :title="support.barred ? SUPPORT_BARRED_TITLE : 'Pion de soutien : jamais affecté par le résultat'">
+            <img :src="counter.src" :alt="counter.name" />
+            <span class="cm-factor" title="Apport du pion de soutien">{{ support.barred ? 0 : support.factor }}</span>
+            <figcaption>{{ counter.name }}</figcaption>
+          </figure>
         </div>
         <p class="cm-total">
           Défense <b>{{ defenseStrength }}</b>
           <span v-if="fpf?.strength" class="cm-fpf-note">dont FPF +{{ fpf.strength }}</span>
+          <span v-if="support && !support.attacking && support.strength" class="cm-fpf-note">dont soutien +{{ support.strength }}</span>
         </p>
+        <p v-if="support?.barred && support.counters.length" class="cm-hint">{{ SUPPORT_BARRED_TITLE }}</p>
       </section>
 
       <!-- Attaquants : ajoutés/retirés en cliquant sur la carte (leur hex
@@ -217,11 +242,27 @@ onUnmounted(() => {
             <figcaption>{{ detail.unit.name }}</figcaption>
             <span v-if="detail.ranged" class="cm-ranged-tag">à distance</span>
           </figure>
-          <p v-if="attackerDetails.length === 0" class="cm-hint">
+          <!-- Pions de soutien engagés en ATTAQUE (cf. prop `support`) : une
+               unité attaquante de plus, qui ne subit pas le résultat. -->
+          <figure v-for="counter in (support?.attacking ? support.counters : [])" :key="'sup' + counter.id"
+            class="cm-unit cm-support-unit" title="Pion de soutien : jamais affecté par le résultat">
+            <img :src="counter.src" :alt="counter.name" />
+            <span class="cm-factor" title="Apport du pion de soutien">{{ support.factor }}</span>
+            <figcaption>{{ counter.name }}</figcaption>
+          </figure>
+          <p v-if="attackerDetails.length === 0 && !support?.attacking" class="cm-hint">
             Cliquez sur vos unités adjacentes à toutes les cibles, ou sur une artillerie qui les a toutes à portée.
           </p>
+          <!-- [9.13] Le soutien peut frapper n'importe quel hex ennemi, donc
+               attaquer seul : ce combat-là est résoluble sans attaquant. -->
+          <p v-else-if="attackerDetails.length === 0" class="cm-hint">
+            Attaque faite uniquement par le soutien : le défenseur ne peut reculer que de 2 hex ou plus, ou être éliminé.
+          </p>
         </div>
-        <p class="cm-total">Attaque <b>{{ attackStrength }}</b></p>
+        <p class="cm-total">
+          Attaque <b>{{ attackStrength }}</b>
+          <span v-if="support?.attacking && support.strength" class="cm-support-note">dont soutien +{{ support.strength }}</span>
+        </p>
       </section>
     </div>
 
@@ -261,9 +302,21 @@ onUnmounted(() => {
         </div>
         <p v-if="fpfMode === 'local'" class="cm-hint">Ou cliquez sur l'artillerie sur la carte.</p>
         <p v-if="!fpf.candidates.length" class="cm-hint">Aucune de vos artilleries ne peut tirer sur ce combat.</p>
+        <!-- Pions de soutien du défenseur (en ligne) : il ne peut pas les
+             poser sur la carte pendant le tour adverse, il les coche ici. -->
+        <template v-if="support?.choices?.length">
+          <p>Pions de soutien à engager en défense :</p>
+          <div class="cm-fpf-list">
+            <button v-for="token in support.choices" :key="token.id" type="button" class="cm-fpf-choice cm-support-choice"
+              :class="{ on: support.selectedIds.includes(String(token.id)) }" @click="$emit('toggle-support', token.id)">
+              <img :src="token.src" :alt="token.name" />
+              {{ token.name }} <b>+{{ support.factor }}</b>
+            </button>
+          </div>
+        </template>
       </template>
       <p v-else-if="fpfMode === 'request'">
-        Le défenseur peut répondre par un tir de protection (FPF) :
+        Le défenseur peut répondre par un tir de protection (FPF) ou par ses pions de soutien :
         soumettez-lui le combat avant de lancer le dé.
       </p>
       <template v-else-if="fpfMode === 'waiting'">
@@ -561,6 +614,23 @@ onUnmounted(() => {
   margin-left: 4px;
 }
 
+/* Pion de soutien engagé en attaque (cf. prop `support`) : vert, comme les
+   hex où on le pose sur la carte (cf. HexMap.vue, .hex-support-target). */
+.cm-attackers .cm-support-unit .cm-factor {
+  background: var(--color-green);
+}
+
+/* Pion de soutien engagé mais privé d'effet ([8.45]). */
+.cm-unit-barred {
+  opacity: 0.5;
+}
+
+.cm-support-note {
+  font-size: var(--font-size-072);
+  color: var(--color-green-light);
+  margin-left: 4px;
+}
+
 /* Artillerie qui tire à distance (cf. prop `attackerDetails`). */
 .cm-ranged-tag {
   display: block;
@@ -613,6 +683,17 @@ onUnmounted(() => {
   color: var(--color-blue-ink);
 }
 
+/* Pion de soutien coché par le défenseur : vert, comme le soutien partout
+   ailleurs (cf. HexMap.vue, .hex-support-target). */
+.cm-support-choice {
+  border-color: var(--color-green);
+}
+
+.cm-support-choice.on {
+  background: var(--color-green);
+  color: var(--panel-bg);
+}
+
 .cm-hexes {
   text-transform: none;
   letter-spacing: 0;
@@ -628,7 +709,7 @@ onUnmounted(() => {
 .cm-unit img {
   width: 40px;
   height: 40px;
-  border-radius: var(--radius-3);
+  border-radius: var(--radius-2);
   display: block;
   margin: 0 auto;
 }

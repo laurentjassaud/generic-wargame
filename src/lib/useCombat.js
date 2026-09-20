@@ -94,10 +94,58 @@
 //     de combat (la phase Combat se déroule sans combat possible).
 //   - `artillery` : règles de l'artillerie (cf. lib/useArtillery.js) —
 //     adjacence au sens du combat, tir à distance, facteur d'attaque, FPF.
+//   - `support` : `{ track, activeSide }` — la tablette de soutien du module
+//     (`module.supportTrack` : `side` = camp propriétaire, `factor` = ce que
+//     vaut un pion, cf. SupportTracker.vue) et un computed du camp actif.
+//     Sans `track.side` déclaré, tout le soutien reste inerte ici (cf.
+//     `supportEnabled`) : le module n'en a pas, ou pas encore de règle.
+//
+// ─── PIONS DE SOUTIEN (règle [9.0] GROUND SUPPORT) ───────────────────────────
+// Le camp propriétaire (`track.side`) pose ses pions de soutien sur un hex
+// occupé par le camp qui n'a pas la main (cf. `canPlaceSupportHex`) ; chacun
+// vaut `track.factor` dans le combat qui vise cet hex — [9.11] : un point de
+// soutien vaut un point d'artillerie, en barrage comme en FPF :
+//   - pendant le tour de son camp, il ATTAQUE — comme une unité attaquante
+//     de plus, son facteur s'ajoute à l'attaque ;
+//   - pendant le tour adverse, il DÉFEND — comme le FPF d'une artillerie,
+//     son facteur s'ajoute à la défense de l'hex attaqué.
+// [9.13] PORTÉE ILLIMITÉE : le soutien peut viser N'IMPORTE QUEL hex ennemi
+// de la carte, même celui qu'aucune unité ne peut atteindre — d'où les
+// attaques faites UNIQUEMENT de soutien (cf. `canBeTarget`/`canResolve`,
+// et [8.21] : le soutien attaque seul, avec de l'artillerie, ou avec des
+// unités adjacentes).
+// [9.12] Le camp propriétaire répartit ses pions comme il l'entend : tous
+// sur une même cible, ou éclatés entre plusieurs combats de la phase.
+// [9.14] La dotation ne se reporte pas d'un tour sur l'autre — cf.
+// SupportTracker.vue (tablette reconstruite à chaque tour).
+// Un pion de soutien n'est jamais une unité (cf. lib/units.js::isFighter) :
+// il ne remplit aucune obligation de combat, ne subit aucun résultat, ne
+// change pas la ligne de terrain. Engagé dans un combat RÉSOLU, il est
+// marqué "a combattu" (cf. `foughtIds`) pour ne pas pouvoir resservir dans
+// un second combat de la même phase — il est de toute façon retiré de la
+// carte à la fin de la phase (cf. HexMap.vue), ce qui le rend à la tablette
+// pour la phase de Combat suivante.
+//
+// ─── ATTAQUE FAITE UNIQUEMENT D'ARTILLERIE ET/OU DE SOUTIEN ──────────────────
+// Trois règles la distinguent d'une attaque ordinaire (cf.
+// `artilleryOnlyAttack`, qui couvre aussi le cas "soutien seul", sans aucune
+// unité attaquante) :
+//   - [8.15] seuls les résultats qui font retraiter le défenseur d'AU MOINS
+//     2 hex, ou qui l'éliminent (D2, D3, D4, De pour Arnhem), l'affectent —
+//     les autres le laissent en place (cf. `defenderImmune` dans le
+//     résultat). Les attaquants, eux, subissent normalement la part du
+//     résultat qui les vise : une artillerie AU CONTACT encaisse ([8.33]),
+//     une artillerie qui tire à distance n'est jamais touchée ([8.14]) ;
+//   - [8.45] le défenseur ne peut PAS y répondre par un FPF, ni par ses
+//     pions de soutien (cf. `supportBarred`, et useArtillery.js::
+//     canProvideFpf pour les artilleries) ;
+//   - [8.62] le défenseur perd le bénéfice de ses HEXSIDES (il garde celui
+//     du terrain de son hex) — cf. `rowForTargetHex`. Dès qu'une unité non
+//     artilleur participe à l'attaque, l'hexside compte de nouveau.
 import { computed, ref, watch } from 'vue'
 import { hexId } from './calibration.js'
 import { neighborsOf } from './hex.js'
-import { isArtillery, isFighter } from './units.js'
+import { isArtillery, isFighter, isSupport } from './units.js'
 import { referenceColumn, rowCells } from './combatTable.js'
 
 // --- Table de combat (CRT) -----------------------------------------------------
@@ -149,7 +197,7 @@ const FPF_WAITING = 'waiting'     // attaquant : demande envoyée, réponse atte
 const FPF_ANSWERED = 'answered'   // attaquant : le défenseur a choisi, reste à lancer le dé
 const FPF_DEFENDING = 'defending' // défenseur : combat adverse affiché, FPF à choisir
 
-export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind, table, artillery) {
+export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind, table, artillery, support = {}) {
   // Hex CIBLES du combat en cours, dans l'ordre où ils ont été désignés —
   // chacun `{ col, row }`. On mémorise des HEX et non des pions : c'est l'hex
   // qu'on attaque, et TOUTES les unités ennemies qui s'y trouvent défendent
@@ -321,7 +369,13 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     const alreadyFought = counters.value.some((otherCounter) =>
       otherCounter.col === counter.col && otherCounter.row === counter.row && isFighter(otherCounter) && !canControl(otherCounter) && hasFought(otherCounter))
     if (alreadyFought) return false
-    return canTargetSet([...targetHexes.value, { col: counter.col, row: counter.row }])
+    const position = { col: counter.col, row: counter.row }
+    // [9.13]/[8.21] Attaque faite uniquement par le soutien : un hex qui
+    // porte des pions de soutien peut être visé même si aucune unité ne
+    // l'atteint — seul, comme une artillerie qui barrage ([8.13]) : ce n'est
+    // alors PAS un hex qu'on ajoute à un combat déjà composé.
+    if (targetHexes.value.length === 0 && supportAttacking.value && supportOnHex(position).length > 0) return true
+    return canTargetSet([...targetHexes.value, position])
   }
 
   /** `c` peut-il être désigné attaquant ? RÈGLE STRICTE : il doit pouvoir
@@ -379,6 +433,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     targetHexes.value = []
     attackerIds.value = new Set()
     fpfIds.value = new Set()
+    supportChoiceIds.value = new Set()
     fpfStatus.value = null
     result.value = null
     frozen.value = null
@@ -395,6 +450,92 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     else return false
     attackerIds.value = next
     result.value = null
+    return true
+  }
+
+  // --- Pions de soutien (cf. l'en-tête, section "PIONS DE SOUTIEN") ----------
+
+  /** Le module déclare-t-il une tablette de soutien AVEC un camp
+   *  propriétaire ? Sinon, aucune règle de soutien ne s'applique. */
+  const supportEnabled = computed(() => assisted.value && !!support.track?.side)
+
+  /** Ce que vaut un pion de soutien dans le combat (défaut : 1). */
+  const supportFactor = support.track?.factor ?? 1
+
+  /** Le soutien ATTAQUE-t-il (tour de son camp) ou DÉFEND-il (tour adverse) ?
+   *  Figé avec le combat au moment du jet, comme tout le reste. */
+  const supportAttacking = computed(() => frozen.value?.supportAttacking
+    ?? (support.activeSide?.value === support.track?.side))
+
+  /** Pions de soutien engagés dans CE combat : ceux posés sur l'un des hex
+   *  cibles (cf. `canPlaceSupportHex` pour le placement). */
+  const supportCounters = computed(() => frozen.value?.supports
+    ?? (supportEnabled.value
+      ? counters.value.filter((counter) => isSupport(counter) && targetKeys.value.has(keyOf(counter.col, counter.row)))
+      : []))
+
+  /** Pions de soutien posés sur l'hex `position` (`{ col, row }`) — sert à
+   *  reconnaître un hex que le soutien peut viser à lui seul (cf.
+   *  `canBeTarget`). */
+  function supportOnHex(position) {
+    if (!supportEnabled.value) return []
+    return counters.value.filter((counter) => isSupport(counter) && counter.col === position.col && counter.row === position.row)
+  }
+
+  /** L'attaque est-elle faite UNIQUEMENT d'artillerie et/ou de pions de
+   *  soutien (cf. l'en-tête : [8.15], [8.45], [8.62]) ? Vrai aussi quand
+   *  aucune unité n'attaque du tout — le soutien frappe alors seul. */
+  const artilleryOnlyAttack = computed(() => frozen.value?.artilleryOnly
+    ?? !attackers.value.some((attacker) => !isArtillery(attacker)))
+
+  /** [8.45] Le soutien du DÉFENSEUR est-il privé d'effet ? Oui contre une
+   *  attaque faite uniquement d'artillerie — comme le FPF des artilleries
+   *  (cf. useArtillery.js::canProvideFpf). Il faut au moins un attaquant
+   *  désigné : un combat encore en composition (aucun attaquant) n'est pas
+   *  une attaque d'artillerie, et son soutien ne doit pas s'afficher barré
+   *  avant l'heure. */
+  const supportBarred = computed(() => !supportAttacking.value && attackers.value.length > 0 && artilleryOnlyAttack.value)
+
+  /** Total apporté par ces pions — à l'attaque ou à la défense selon
+   *  `supportAttacking`, et rien du tout si [8.45] les prive d'effet. */
+  const supportStrength = computed(() => (supportBarred.value ? 0 : supportCounters.value.length * supportFactor))
+
+  // Pions de soutien que le DÉFENSEUR engage depuis son écran, EN LIGNE
+  // seulement (cf. la section "FPF en ligne" plus bas) : pendant le tour
+  // adverse il n'a pas la main, il ne peut donc pas les poser lui-même sur la
+  // carte. Il les choisit ici (ids de sa tablette), les transmet avec sa
+  // réponse de FPF, et c'est le client du joueur actif qui les pose. Vide en
+  // partie locale, où il les pose directement au clic.
+  const supportChoiceIds = ref(new Set())
+
+  /** Défenseur : ajoute (ou retire) le pion de soutien `id` à sa réponse. */
+  function toggleSupportChoice(id) {
+    if (fpfStatus.value !== FPF_DEFENDING) return false
+    const key = String(id)
+    const next = new Set(supportChoiceIds.value)
+    if (!next.delete(key)) next.add(key)
+    supportChoiceIds.value = next
+    return true
+  }
+
+  /** Défenseur : les pions de soutien retenus (ids), joints à sa réponse. */
+  const chosenSupportIds = () => [...supportChoiceIds.value]
+
+  /** L'hex `hex` (`{ c, r }`) peut-il recevoir un pion de soutien ? C'est un
+   *  hex CIBLE possible de cette phase de Combat :
+   *   - occupé par des unités du camp qui n'est PAS actif — l'ennemi du camp
+   *     actif quand le soutien attaque, le camp du soutien lui-même quand il
+   *     défend ;
+   *   - dont aucune n'a déjà combattu (un hex ne peut être attaqué qu'une
+   *     fois par phase).
+   *  Aucune condition d'adjacence ni de portée : [9.13] donne au soutien une
+   *  portée ILLIMITÉE, il peut viser n'importe quel hex ennemi de la carte —
+   *  y compris un hex qu'aucune unité ne peut atteindre (il l'attaquera
+   *  alors seul, cf. `canBeTarget`). */
+  function canPlaceSupportHex(hex) {
+    if (!supportEnabled.value || !combatAllowed.value) return false
+    const here = counters.value.filter((counter) => isFighter(counter) && counter.col === hex.c && counter.row === hex.r)
+    if (here.length === 0 || here.some(canControl) || here.some(hasFought)) return false
     return true
   }
 
@@ -441,10 +582,14 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   // compte pour 0. L'ATTAQUE est la somme des facteurs des attaquants —
   // barrage pour une artillerie (cf. useArtillery.js::attackFactor). La
   // DÉFENSE est la SOMME des facteurs de tous les défenseurs, tous hex cibles
-  // confondus (cf. `defenders`), PLUS les FPF retenus (cf. `fpfUnits`).
-  const attackStrength = computed(() => attackers.value.reduce((sum, attacker) => sum + artillery.attackFactor(attacker), 0))
+  // confondus (cf. `defenders`), PLUS les FPF retenus (cf. `fpfUnits`). Les
+  // pions de SOUTIEN posés sur les hex cibles s'ajoutent d'un côté ou de
+  // l'autre selon le camp qui joue (cf. `supportAttacking`).
+  const attackStrength = computed(() => attackers.value.reduce((sum, attacker) => sum + artillery.attackFactor(attacker), 0)
+    + (supportAttacking.value ? supportStrength.value : 0))
   const fpfStrength = computed(() => fpfUnits.value.reduce((sum, unit) => sum + (unit.fpf ?? 0), 0))
-  const defenseStrength = computed(() => defenders.value.reduce((sum, defender) => sum + (defender.def ?? 0), 0) + fpfStrength.value)
+  const defenseStrength = computed(() => defenders.value.reduce((sum, defender) => sum + (defender.def ?? 0), 0) + fpfStrength.value
+    + (supportAttacking.value ? 0 : supportStrength.value))
   const differential = computed(() => attackStrength.value - defenseStrength.value)
 
   /** Ids (chaînes) des attaquants qui tirent À DISTANCE (artillerie pas au
@@ -579,7 +724,9 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  ennemi qui ne pourrait plus être attaqué ; `name` liste alors ses
    *  occupants), `hex` est le numéro d'hex imprimé — pour la modale. */
   const strandedUnits = computed(() => {
-    if (!combatActive.value || attackers.value.length === 0 || result.value) return []
+    if (!combatActive.value || result.value) return []
+    // Combat pas encore prêt : ni unité attaquante, ni soutien engagé.
+    if (attackers.value.length === 0 && supportCounters.value.length === 0) return []
     // Artilleries refoulées : comme si elles avaient déjà combattu (cf. `isSpent`).
     const now = new Set([...foughtIds.value, ...counters.value.filter(artillery.isDisplaced).map((counter) => counter.id)])
     const after = new Set([
@@ -628,13 +775,15 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  (cf. `strandedUnits`). En ligne, pas pendant que le défenseur choisit
    *  son FPF (cf. `fpfStatus`) — et jamais sur l'écran du défenseur. */
   const canResolve = computed(() =>
-    combatActive.value && attackers.value.length > 0 && strandedUnits.value.length === 0
+    combatActive.value && (attackers.value.length > 0 || (supportAttacking.value && supportCounters.value.length > 0))
+    && strandedUnits.value.length === 0
     && (fpfStatus.value == null || fpfStatus.value === FPF_ANSWERED))
 
   /** Ligne de la table pour UN hex cible `t`, et pourquoi :
-   *   - si au moins une ARTILLERIE attaque, c'est TOUJOURS le terrain de
-   *     l'hex, jamais l'hexside (règle de l'artillerie, cf.
-   *     lib/useArtillery.js) ;
+   *   - si l'attaque est faite UNIQUEMENT d'artillerie et/ou de soutien,
+   *     c'est TOUJOURS le terrain de l'hex, jamais l'hexside ([8.62] : le
+   *     défenseur garde en revanche le bénéfice de l'hexside dès qu'une
+   *     unité non artilleur participe à l'attaque) ;
    *   - si TOUS les attaquants au contact de cet hex franchissent un hexside
    *     de MÊME nature, et que la table substitue une ligne à cette nature
    *     (`table.edgeRows` — pour Arnhem : "Grove, Bridge" pour un pont,
@@ -646,9 +795,12 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  `null` (cf. useAssisted.js::combatEdgeKind) : il ne déclenche donc
    *  jamais de substitution, la règle retombe sur le terrain de l'hex. */
   function rowForTargetHex(targetHex) {
-    const withArtillery = attackers.value.some(isArtillery)
+    // [8.62] : l'hexside ne tombe que pour une attaque faite UNIQUEMENT
+    // d'artillerie et/ou de soutien — et il faut au moins l'un des deux pour
+    // que la mention ait un sens (combat encore en composition : rien).
+    const noHexside = artilleryOnlyAttack.value && (attackers.value.length > 0 || supportCounters.value.length > 0)
     const adjacent = attackers.value.filter((attacker) => isAdjacent(attacker, targetHex))
-    if (!withArtillery && adjacent.length > 0) {
+    if (!noHexside && adjacent.length > 0) {
       const kinds = adjacent.map((attacker) => combatEdgeKind({ c: attacker.col, r: attacker.row }, { c: targetHex.col, r: targetHex.row }))
       const first = kinds[0]
       const substitute = first ? table.edgeRows[first] : null
@@ -658,7 +810,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     }
     const type = terrain?.grid?.[hexId(targetHex.col + 1, targetHex.row)]
     const label = terrain?.types?.[type]?.label ?? type ?? 'non déclaré'
-    return { row: rowForTerrain(type), reason: `terrain de l'hex (${label})${withArtillery ? ', attaque avec artillerie' : ''}` }
+    return { row: rowForTerrain(type), reason: `terrain de l'hex (${label})${noHexside ? ", attaque d'artillerie et/ou de soutien seuls" : ''}` }
   }
 
   /** Ligne de la table applicable au combat, et pourquoi (affiché dans la
@@ -715,16 +867,22 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     if (!canResolve.value || result.value) return null
     // Toutes les unités participantes ont désormais combattu pour cette
     // phase (cf. `foughtIds`) — attaquants ET défenseurs.
+    // Les pions de soutien engagés y sont aussi : ils ne peuvent plus servir
+    // à un autre combat de cette phase (cf. l'en-tête).
     foughtIds.value = new Set([
       ...foughtIds.value,
       ...attackers.value.map((attacker) => attacker.id),
       ...defenders.value.map((defender) => defender.id),
+      ...supportCounters.value.map((counter) => counter.id),
     ])
     // Photo du combat (cf. `frozen`), prise AVANT toute conséquence du jet.
     frozen.value = {
       attackers: attackers.value.map((attacker) => ({ ...attacker })),
       defenders: defenders.value.map((defender) => ({ ...defender })),
       fpf: fpfUnits.value.map((unit) => ({ ...unit })),
+      supports: supportCounters.value.map((counter) => ({ ...counter })),
+      supportAttacking: supportAttacking.value,
+      artilleryOnly: artilleryOnlyAttack.value,
       rangedIds: rangedIds.value,
       terrainRow: terrainRow.value,
       column: column.value,
@@ -732,9 +890,17 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     const die = Math.floor(Math.random() * table.die) + 1
     const col = column.value
     const code = table.results[die - 1][col - 1]
+    // [8.15] Attaque faite uniquement d'artillerie et/ou de soutien : le
+    // défenseur n'encaisse que les résultats qui le font retraiter d'AU
+    // MOINS 2 hex ou qui l'éliminent (D2/D3/D4/De pour Arnhem). Les autres
+    // le laissent en place — seule la part du résultat qui vise les
+    // ATTAQUANTS s'applique alors (cf. HexMap.vue::onCombatFight).
+    const effect = table.effects?.[code] ?? {}
+    const hitsDefender = (effect.retreat?.defenders ?? 0) >= 2 || effect.eliminate === 'defenders'
     result.value = {
       die,
       column: col,
+      defenderImmune: artilleryOnlyAttack.value && !hitsDefender,
       rowKey: terrainRow.value.row.key,
       rowLabel: terrainRow.value.row.label,
       rowReason: terrainRow.value.reason,
@@ -749,12 +915,17 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
   // En ligne, l'attaquant ne peut pas choisir le FPF à la place du défenseur,
   // qui joue sur un autre navigateur. Déroulé :
   //   1. l'attaquant compose son combat ; s'il existe au moins une artillerie
-  //      éligible (cf. `fpfCandidates`), il le SOUMET au défenseur
-  //      (`requestFpf`) au lieu de lancer le dé — la composition est figée ;
+  //      éligible (cf. `fpfCandidates`), ou des pions de soutien que le
+  //      défenseur pourrait engager (cf. HexMap.vue::fpfView), il le SOUMET
+  //      au défenseur (`requestFpf`) au lieu de lancer le dé — la
+  //      composition est figée ;
   //   2. l'écran du défenseur affiche ce combat (`openDefense`) ; il y
-  //      choisit ses FPF (`toggleFpf`) et valide ;
-  //   3. l'attaquant reçoit ce choix (`answerFpf`) et peut lancer le dé. Il
-  //      peut aussi renoncer tant que la réponse n'est pas arrivée
+  //      choisit ses FPF (`toggleFpf`) et ses pions de soutien
+  //      (`toggleSupportChoice`, cf. `supportChoiceIds`), puis valide ;
+  //   3. l'attaquant reçoit ce choix (`answerFpf`) et peut lancer le dé — son
+  //      client pose au passage les pions de soutien retenus sur l'hex
+  //      attaqué (cf. HexMap.vue::applyRemoteFpfReply). Il peut aussi
+  //      renoncer tant que la réponse n'est pas arrivée
   //      (`cancelFpfRequest`), jamais après : l'attaque est engagée.
 
   /** Attaquant : soumet le combat composé au défenseur. Renvoie de quoi le
@@ -821,6 +992,8 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     canBeTarget, canBeAttacker, toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought,
     pendingEngagements, isCombatTargetHex, isCombatAttackerHex, isCombatFpfHex,
     fpfCandidates, fpfUnits, fpfStrength, fpfStatus, toggleFpf, requestFpf, cancelFpfRequest, answerFpf, openDefense, chosenFpfIds,
+    supportCounters, supportStrength, supportAttacking, supportFactor, supportBarred, artilleryOnlyAttack, canPlaceSupportHex,
+    supportChoiceIds, toggleSupportChoice, chosenSupportIds,
     attackStrength, defenseStrength, differential, canResolve, strandedUnits, terrainRow, column,
     resolveCombat, combatResult: result,
     crtRows, crtResults: table?.results ?? [],

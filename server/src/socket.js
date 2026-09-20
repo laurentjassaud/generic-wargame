@@ -141,13 +141,13 @@ export function registerSocketHandlers(io) {
       }
     })
 
-    socket.on('game:fpf-reply', ({ gameId, requestId, fpfIds } = {}) => {
+    socket.on('game:fpf-reply', ({ gameId, requestId, fpfIds, supportIds } = {}) => {
       // Réservé à un joueur de la partie qui n'a PAS la main : le défenseur.
       if (socket.data.gameId !== gameId) return
       const game = getGame(gameId)
       if (!game || isPlayersTurn(game, socket.data.playerId)) return
       try {
-        const reply = recordFpfReply(gameId, { requestId, fpfIds })
+        const reply = recordFpfReply(gameId, { requestId, fpfIds, supportIds })
         socket.to(`game:${gameId}`).emit('game:fpf-reply', reply)
       } catch {
         // Plus de demande en attente (annulée, déjà répondue) : on ignore.

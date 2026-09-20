@@ -42,6 +42,8 @@
   },
   "supportTrack": {
     "label": "Soutien allié",
+    "side": "allies",
+    "factor": 1,
     "marker": "/modules/arnhem/images/Allied Air Support.png",
     "byTurn": [0, 3, 7, 3, 3, 0, 3, 0, 0, 0]
   },

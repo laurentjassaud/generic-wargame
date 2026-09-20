@@ -47,7 +47,9 @@ const props = defineProps({
   dragPx: { type: Object, default: null },
 })
 
-const emit = defineEmits(['select', 'hex-click', 'dragstart', 'contextmenu'])
+// `hover`/`unhover` : entrée/sortie de la souris sur l'image — cf.
+// HexMap.vue::onCounterHover (fenêtre de survol d'une pile).
+const emit = defineEmits(['select', 'hex-click', 'dragstart', 'contextmenu', 'hover', 'unhover'])
 
 /** Centre pixel du pion — même formule que HexMap.vue (grille flat-top, offset odd-q) — plus le décalage d'empilement. */
 const center = computed(() => {
@@ -109,7 +111,8 @@ function onMouseDown(ev) {
     <title v-if="dotTitle">{{ dotTitle }}</title>
     <image :href="src" :x="center.x - counterSizePx / 2" :y="center.y - counterSizePx / 2" :width="counterSizePx" :height="counterSizePx" class="counter-img"
       @mousedown="onMouseDown" @click.stop="onClick"
-      @contextmenu.prevent.stop="emit('contextmenu', id, $event)" />
+      @contextmenu.prevent.stop="emit('contextmenu', id, $event)"
+      @mouseenter="emit('hover', id, $event)" @mouseleave="emit('unhover', id)" />
     <rect v-if="selected" class="counter-ring" :x="center.x - counterSizePx / 2 - 3" :y="center.y - counterSizePx / 2 - 3" :width="counterSizePx + 6"
       :height="counterSizePx + 6" rx="5" ry="5" />
     <rect v-if="moved" class="counter-moved-ring" :x="center.x - counterSizePx / 2" :y="center.y - counterSizePx / 2" :width="counterSizePx" :height="counterSizePx"

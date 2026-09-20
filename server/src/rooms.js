@@ -386,22 +386,28 @@ export function recordFpfRequest(id, request) {
     targets: targets.map((target) => ({ col: target.col, row: target.row })),
     attackerIds,
     fpfIds: null,
+    supportIds: null,
   }
   touch(game)
   return game.fpfRequest
 }
 
 /** Le défenseur répond à la demande `requestId` avec ses artilleries
- *  `fpfIds`. Refusé s'il n'y a pas (ou plus) de demande en attente sous cet
- *  id. Renvoie `{ id, fpfIds }`, relayé au joueur actif. */
-export function recordFpfReply(id, { requestId, fpfIds }) {
+ *  `fpfIds` et ses pions de soutien `supportIds` (cf. SupportTracker.vue —
+ *  il ne peut pas les poser lui-même sur la carte pendant le tour adverse,
+ *  c'est le client du joueur actif qui le fait en recevant cette réponse).
+ *  Refusé s'il n'y a pas (ou plus) de demande en attente sous cet id.
+ *  Renvoie `{ id, fpfIds, supportIds }`, relayé au joueur actif. */
+export function recordFpfReply(id, { requestId, fpfIds, supportIds }) {
   const game = startedGame(id)
   const pending = game.fpfRequest
   const ids = sanitizeIds(fpfIds)
-  if (!pending || pending.id !== requestId || pending.fpfIds || !ids) throw new RoomError('bad-fpf')
+  const supports = sanitizeIds(supportIds ?? [])
+  if (!pending || pending.id !== requestId || pending.fpfIds || !ids || !supports) throw new RoomError('bad-fpf')
   pending.fpfIds = ids
+  pending.supportIds = supports
   touch(game)
-  return { id: requestId, fpfIds: ids }
+  return { id: requestId, fpfIds: ids, supportIds: supports }
 }
 
 /** Le joueur actif renonce à la demande `requestId` (pas encore de réponse).

@@ -42,6 +42,7 @@ import SidePanel from './SidePanel.vue'
 import ReinforcementsPanel from './ReinforcementsPanel.vue'
 import EliminatedPanel from './EliminatedPanel.vue'
 import ContextMenu from './ContextMenu.vue'
+import StackPopup from './StackPopup.vue'
 import RollModal from './RollModal.vue'
 import MovementChartModal from './MovementChartModal.vue'
 import CombatChartModal from './CombatChartModal.vue'
@@ -434,10 +435,16 @@ function applyRemoteTurn(step) { turnTrackerRef.value?.applyRemoteTurn(step) }
 const canEnterThisTurn = (counter) => (counter?.turn ?? 1) <= turnInfo.value.turn
 
 // --- Soutien allié : tablette autonome (cf. SupportTracker.vue, toute la
-// logique — régénération par tour, tablette actuelle — y vit). HexMap.vue ne
-// garde qu'une ref pour y déléguer la résolution/retrait d'un pion glissé
-// depuis la tablette (cf. onCounterDragStart / onMapDrop plus bas).
+// logique — régénération par tour, tablette actuelle — y vit, déduite des
+// pions sur la carte, cf. `placedIds`). HexMap.vue ne garde qu'une ref pour
+// y résoudre un pion glissé depuis la tablette (cf. onCounterDragStart /
+// onMapDrop plus bas).
 const supportTrackerRef = ref(null)
+
+// Pion de la tablette choisi au clic, en attente d'un clic sur un hex pour
+// être posé (mode Assisté — cf. SupportTracker.vue, onSupportSelect et la
+// branche "soutien" de onHex plus bas). `null` : aucun.
+const selectedSupportId = ref(null)
 
 // Calibration déclarée par le module (`map.calibration`), complétée par le
 // repli du moteur — et base du bouton "réinitialiser défauts".
@@ -619,10 +626,15 @@ const {
   toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought, pendingEngagements,
   isCombatTargetHex, isCombatAttackerHex, isCombatFpfHex,
   fpfCandidates, fpfUnits, fpfStrength, fpfStatus, toggleFpf, requestFpf, cancelFpfRequest, answerFpf, openDefense, chosenFpfIds,
+  supportCounters, supportStrength, supportAttacking, supportFactor, supportBarred, canPlaceSupportHex,
+  supportChoiceIds, toggleSupportChoice, chosenSupportIds,
   attackStrength, defenseStrength, differential, canResolve: combatCanResolve, strandedUnits: combatStrandedUnits,
   terrainRow: combatTerrainRow,
   column: combatColumn, resolveCombat, combatResult, crtRows, crtResults,
-} = useCombat(toRef(props, 'assisted'), phase, counters, canControl, props.module.terrain, combatEdgeKind, combatTable, artillery)
+} = useCombat(toRef(props, 'assisted'), phase, counters, canControl, props.module.terrain, combatEdgeKind, combatTable, artillery,
+  // Tablette de soutien du module (cf. SupportTracker.vue) et camp actif :
+  // de quoi savoir ce que vaut un pion de soutien et s'il attaque ou défend.
+  { track: props.module.supportTrack, activeSide: computed(() => turnInfo.value.activeSideKey) })
 
 // Application du résultat d'un combat (retraites au clic, éliminations — cf.
 // lib/useRetreat.js, qui porte toute la règle). HexMap.vue ne lui fournit que
@@ -698,9 +710,17 @@ function onCombatFight() {
     defenderIds: combatDefenders.value.map((defender) => defender.id),
     rangedIds: [...combatRangedIds.value],
     fpfIds: fpfUnits.value.map((unit) => unit.id),
+    // Pions de soutien engagés (cf. lib/useCombat.js) : au rejeu, ils sont
+    // remarqués "ayant combattu" comme les unités, pour ne pas pouvoir
+    // resservir dans un autre combat de la même phase.
+    supportIds: supportCounters.value.map((counter) => counter.id),
     diff: combatOutcome.diff, row: combatOutcome.rowKey, die: combatOutcome.die, result: combatOutcome.result,
   }
-  log('combat', `Combat sur ${combatTargetHexLabels.value.join(', ')} (${names}${fpf ? ` ; FPF ${fpf}` : ''}) : `
+  const supportText = supportCounters.value.length
+    ? ` ; soutien ${supportAttacking.value ? 'en attaque' : 'en défense'} `
+      + (supportBarred.value ? 'sans effet' : `+${supportStrength.value}`)
+    : ''
+  log('combat', `Combat sur ${combatTargetHexLabels.value.join(', ')} (${names}${fpf ? ` ; FPF ${fpf}` : ''}${supportText}) : `
     + `différentiel ${diff}, ${combatOutcome.rowLabel}, dé ${combatOutcome.die} → ${combatOutcome.result} (${combatOutcome.resultLabel})`, data)
   artillery.applyCombat(data)
   // APRÈS le journal du combat : les éliminations/retraites qui suivent s'y
@@ -709,7 +729,20 @@ function onCombatFight() {
   // les attaquants AU CONTACT le subissent.
   const ranged = new Set(data.rangedIds.map(String))
   const contactAttackers = combatAttackers.value.filter((attacker) => !ranged.has(String(attacker.id)))
-  startRetreat(combatOutcome.result, contactAttackers, [...combatDefenders.value], combatTargetHexes.value)
+  // [8.15] Attaque faite uniquement d'artillerie et/ou de soutien : ce
+  // résultat-là ne touche pas le défenseur (cf. lib/useCombat.js,
+  // `defenderImmune`). On applique quand même la part qui vise les
+  // ATTAQUANTS — une artillerie au contact encaisse ([8.33]) — en ne
+  // passant simplement aucun défenseur à la résolution. Si le résultat ne
+  // visait que le défenseur, il ne reste rien à appliquer.
+  const effect = combatTable?.effects[combatOutcome.result] ?? {}
+  const hitsAttackers = effect.eliminate === 'attackers' || (effect.retreat?.attackers ?? 0) > 0
+  if (!combatOutcome.defenderImmune) {
+    startRetreat(combatOutcome.result, contactAttackers, [...combatDefenders.value], combatTargetHexes.value)
+    return
+  }
+  log('info', `${combatOutcome.result} sans effet sur le défenseur : attaque faite uniquement d'artillerie et/ou de soutien`)
+  if (hitsAttackers) startRetreat(combatOutcome.result, contactAttackers, [], combatTargetHexes.value)
 }
 
 // --- FPF du défenseur (cf. lib/useCombat.js, section FPF) : ce que la modale
@@ -728,11 +761,55 @@ const fpfView = computed(() => {
   if (fpfStatus.value === 'defending') return { ...view, mode: 'defender' }
   if (fpfStatus.value === 'waiting') return { ...view, mode: 'waiting' }
   if (fpfStatus.value === 'answered') return { ...view, mode: 'answered' }
-  if (fpfCandidates.value.length === 0) return null
+  // Rien à demander au défenseur : ni artillerie éligible, ni pion de
+  // soutien qu'il pourrait engager (cf. `defenderMaySupport`).
+  if (fpfCandidates.value.length === 0 && !defenderMaySupport.value) return null
   // En ligne, le défenseur choisit sur son propre écran : l'attaquant doit
   // d'abord lui soumettre le combat.
   return { ...view, mode: props.online ? 'request' : 'local' }
 })
+
+// --- Pions de soutien engagés dans le combat en cours : ce que la modale en
+// montre (cf. CombatModal.vue, prop `support`), `null` s'il n'y en a aucun.
+// Côté ATTAQUE, ils s'affichent avec les attaquants (un pion de soutien vaut
+// une unité de plus) ; côté DÉFENSE, avec les FPF (même rôle : un renfort de
+// défense qui ne subit pas le résultat) — cf. lib/useCombat.js.
+// En ligne, le défenseur choisit en plus ses pions dans la modale (cf.
+// `defenderSupportTokens`), n'ayant pas la main pour les poser sur la carte.
+const supportView = computed(() => {
+  const choices = defenderSupportTokens.value
+  if (!supportCounters.value.length && !choices.length) return null
+  return {
+    attacking: supportAttacking.value,
+    counters: supportCounters.value,
+    strength: supportStrength.value,
+    factor: supportFactor,
+    // [8.45] Soutien de défense privé d'effet : l'attaque ne comporte que de
+    // l'artillerie et/ou du soutien (cf. lib/useCombat.js::supportBarred).
+    barred: supportBarred.value,
+    // Pions que le défenseur peut encore engager depuis son écran, et ceux
+    // qu'il a cochés — vides hors de cet écran-là.
+    choices,
+    selectedIds: [...supportChoiceIds.value],
+  }
+})
+
+/** Pions de soutien que le DÉFENSEUR peut engager depuis la modale : sa
+ *  tablette du tour, sur SON écran, en ligne, pendant qu'il répond à un
+ *  combat adverse (cf. lib/useCombat.js, section "FPF en ligne"). Vide
+ *  partout ailleurs — en partie locale, il les pose au clic sur la carte. */
+const defenderSupportTokens = computed(() => {
+  if (!props.online || !props.module.supportTrack?.side || supportAttacking.value) return []
+  if (fpfStatus.value !== 'defending' || supportBarred.value) return []
+  return supportTrackerRef.value?.trayTokens() ?? []
+})
+
+/** Le défenseur POURRAIT-il engager des pions de soutien contre ce combat ?
+ *  Sur l'écran de l'ATTAQUANT en ligne : il doit alors lui soumettre le
+ *  combat, même sans artillerie éligible au FPF (cf. `fpfView`). */
+const defenderMaySupport = computed(() =>
+  props.online && !!props.module.supportTrack?.side && combatActive.value && !supportAttacking.value
+  && !supportBarred.value && (supportTrackerRef.value?.trayTokens().length ?? 0) > 0)
 
 /** Les artilleries éligibles au FPF se choisissent-elles sur CET écran ? */
 const fpfChoosable = computed(() => fpfView.value?.mode === 'local' || fpfView.value?.mode === 'defender')
@@ -791,10 +868,11 @@ function onCombatClose() {
   cancelCombat()
 }
 
-/** Défenseur : valide son choix de FPF (éventuellement aucun). */
+/** Défenseur : valide son choix de FPF et de pions de soutien
+ *  (éventuellement aucun des deux). */
 function onSendFpf() {
   if (defendingRequestId == null) return
-  emit('fpf-reply', { requestId: defendingRequestId, fpfIds: chosenFpfIds() })
+  emit('fpf-reply', { requestId: defendingRequestId, fpfIds: chosenFpfIds(), supportIds: chosenSupportIds() })
   defendingRequestId = null
   cancelCombat()
 }
@@ -811,10 +889,31 @@ function applyRemoteFpfRequest(request) {
   defendingRequestId = request.id
 }
 
-/** Réponse du défenseur (cf. RoomLobby.vue, `game:fpf-reply`). */
-function applyRemoteFpfReply(id, fpfIds) {
+/** Réponse du défenseur (cf. RoomLobby.vue, `game:fpf-reply`) : ses
+ *  artilleries de FPF, et les pions de soutien qu'il engage — que SON écran
+ *  ne peut pas poser sur la carte (il n'a pas la main), c'est donc celui-ci
+ *  qui les pose, sur le premier hex attaqué. L'entrée de journal qui en
+ *  résulte lui revient ensuite par le journal partagé, comme toute autre. */
+function applyRemoteFpfReply(id, fpfIds, supportIds) {
   if (id !== fpfRequestId) return
   answerFpf(fpfIds)
+  placeDefenderSupports(supportIds)
+}
+
+/** Pose les pions de soutien `ids` choisis par le défenseur sur le premier
+ *  hex cible du combat en cours. */
+function placeDefenderSupports(ids) {
+  const target = combatTargetHexes.value[0]
+  if (!target || !ids?.length) return
+  for (const id of ids) {
+    const token = supportTrackerRef.value?.findToken(id)
+    if (!token) continue
+    const placed = { ...token, col: target.col, row: target.row }
+    counters.value.push(placed)
+    emit('move', { counterId: placed.id, col: placed.col, row: placed.row })
+    log('support', `${placed.name} engagé en défense en ${hexId(placed.col + 1, placed.row)}`,
+      { counterId: placed.id, col: placed.col, row: placed.row, counter: placed })
+  }
 }
 
 /** Demande abandonnée par l'attaquant (cf. RoomLobby.vue, `game:fpf-cancel`). */
@@ -1083,12 +1182,14 @@ const draggedCounterId = ref(null)
 
 // --- Menu contextuel (clic droit) : "Replacer le pion" / "Éliminé" sur un
 // pion posé sur la carte ; seulement "Replacer le pion" sur un pion déjà
-// éliminé (panneau "Unités éliminées") ; aucun menu depuis le panneau de
+// éliminé (panneau "Unités éliminées") ou sur un pion de soutien (retour dans
+// la tablette, cf. returnSupportToTray) ; aucun menu depuis le panneau de
 // renforts (pas encore sur la carte, rien à replacer ou éliminer).
 const contextMenu = ref(null) // { x, y, items: [{label, action}] } | null
 
 function openContextMenu(ev, items) {
   ev.preventDefault()
+  hoveredCounter.value = null
   contextMenu.value = { x: ev.clientX, y: ev.clientY, items }
 }
 function closeContextMenu() {
@@ -1113,6 +1214,18 @@ function returnCounterToReinforcements(id) {
     unspendEntryCost(counter)
   }
   log('return', `${counter?.name ?? id} replacé dans les renforts`, { counterId: id })
+}
+/** "Replacer le pion" sur un pion de soutien : le retire de la carte, ce qui
+ *  le remet dans la tablette s'il est du tour courant (cf.
+ *  SupportTracker.vue, tablette déduite de la carte) — perdu sinon, comme un
+ *  pion non posé à temps. Ses déplacements n'ont plus rien à annuler. */
+function returnSupportToTray(id) {
+  const counterIndex = counters.value.findIndex((counter) => String(counter.id) === String(id))
+  if (counterIndex === -1) return
+  const [counter] = counters.value.splice(counterIndex, 1)
+  moveHistory.value = moveHistory.value.filter((move) => String(move.counterId) !== String(id))
+  const back = supportTrackerRef.value?.isTurnToken(id)
+  log('support-return', `${counter.name} ${back ? 'replacé dans la tablette' : 'retiré de la carte'}`, { counterId: id })
 }
 /** Élimine un pion (menu contextuel, ou résultat de combat — cf.
  *  lib/useRetreat.js, qui précise alors pourquoi dans `reason`). */
@@ -1139,6 +1252,16 @@ function onCounterContextMenu(id, ev) {
     items.push({ label: 'Annuler le mouvement', action: () => cancelMovement(id) })
   }
   openContextMenu(ev, items)
+}
+/** Clic droit sur un pion de soutien — ni renforts ni unités éliminées, ni
+ *  mouvement à annuler (pas de liseré "a bougé") : son seul retour possible
+ *  est la tablette. Les autres marqueurs (DZ...) n'ont pas de menu. */
+function onSupportContextMenu(id, ev) {
+  if (inputLocked.value || retreatActive.value) return
+  // Déjà engagé dans un combat résolu (cf. lib/useCombat.js) : il reste sur
+  // la carte jusqu'à la fin de la phase, sans quoi il resservirait ailleurs.
+  if (hasFought(counters.value.find((counter) => String(counter.id) === String(id)))) return
+  openContextMenu(ev, [{ label: 'Replacer le pion', action: () => returnSupportToTray(id) }])
 }
 function onEliminatedContextMenu(id, ev) {
   if (inputLocked.value) return
@@ -1355,24 +1478,36 @@ const { debug, adjacentCotLabels, isInRange, entrySurchargeLabels } = useDebug(
 // sans décalage — les unités qui partagent leur hex commencent leur pile à
 // l'indice 1 (comme les "eventMarkers" d'ambush-tactique), le marqueur
 // servant de socle visuel sous la pile (cf. z-order dans le template : les
-// marqueurs sont rendus avant les unités, donc toujours dessous).
+// marqueurs sont rendus avant les unités, donc toujours dessous). Les pions
+// de soutien, eux, coiffent la pile : un cran au-dessus de la dernière unité
+// de leur hex (rendus après les unités), tous au même cran — le badge de
+// compte (cf. `supportStackBadges`) dit combien il y en a.
 const STACK_STEP = 0.1
 const stackOffsets = computed(() => {
-  const markerHexes = new Set(counters.value.filter((counter) => !isUnit(counter)).map((counter) => counter.col + ',' + counter.row))
-  const seen = new Map()
+  const hexKey = (counter) => counter.col + ',' + counter.row
+  const stackAt = (idx) => ({ dx: -STACK_STEP * idx, dy: -STACK_STEP * idx })
+  const markerHexes = new Set(counters.value.filter((counter) => !isUnit(counter) && !isSupport(counter)).map(hexKey))
+  const unitCounts = new Map()
   const offsets = new Map()
   for (const counter of counters.value) {
     if (!isUnit(counter)) { offsets.set(counter.id, ZERO_OFFSET); continue }
-    const key = counter.col + ',' + counter.row
+    const key = hexKey(counter)
     const stackBase = markerHexes.has(key) ? 1 : 0
-    const stackIndex = seen.get(key) ?? 0
-    seen.set(key, stackIndex + 1)
-    const idx = stackBase + stackIndex
-    offsets.set(counter.id, { dx: -STACK_STEP * idx, dy: -STACK_STEP * idx })
+    const stackIndex = unitCounts.get(key) ?? 0
+    unitCounts.set(key, stackIndex + 1)
+    offsets.set(counter.id, stackAt(stackBase + stackIndex))
+  }
+  // Une fois toutes les unités comptées, quel que soit l'ordre de `counters`.
+  for (const counter of counters.value) {
+    if (!isSupport(counter)) continue
+    const key = hexKey(counter)
+    offsets.set(counter.id, stackAt((markerHexes.has(key) ? 1 : 0) + (unitCounts.get(key) ?? 0)))
   }
   return offsets
 })
 const ZERO_OFFSET = { dx: 0, dy: 0 }
+// Taille d'un pion en fraction du pas de ligne — cf. Counter.vue, prop `size`.
+const COUNTER_SIZE = 0.8
 
 /** Centre pixel d'un hex (col 0-based, row 1-based) — même formule que
  *  Counter.vue, dupliquée ici pour placer les badges d'empilement. */
@@ -1385,20 +1520,114 @@ function hexCenterPx(col, row) {
 // Nombre de pions de soutien empilés sur un même hex, affiché en badge sur
 // la carte (les pions de soutien étant tous identiques, un décalage visuel
 // seul ne suffit pas à voir combien il y en a) — seulement à partir de 2.
+// Suit le décalage de ces pions sur la pile d'unités (cf. `stackOffsets`).
 const supportStackBadges = computed(() => {
   const counts = new Map()
   for (const counter of counters.value) {
     if (!isSupport(counter)) continue
     const key = counter.col + ',' + counter.row
-    const entry = counts.get(key) ?? { col: counter.col, row: counter.row, count: 0 }
+    const entry = counts.get(key) ?? { col: counter.col, row: counter.row, offset: stackOffsets.value.get(counter.id) ?? ZERO_OFFSET, count: 0 }
     entry.count += 1
     counts.set(key, entry)
   }
+  const counterSizePx = calibration.rowStep * COUNTER_SIZE
   return [...counts.values()].filter((supportStack) => supportStack.count >= 2).map((supportStack) => {
     const center = hexCenterPx(supportStack.col, supportStack.row)
-    return { key: supportStack.col + ',' + supportStack.row, count: supportStack.count, x: center.x + calibration.a * 0.55, y: center.y + calibration.a * 0.5 }
+    return {
+      key: supportStack.col + ',' + supportStack.row, count: supportStack.count,
+      x: center.x + calibration.a * 0.55 + supportStack.offset.dx * counterSizePx,
+      y: center.y + calibration.a * 0.5 + supportStack.offset.dy * counterSizePx,
+    }
   })
 })
+
+// --- Fenêtre de survol d'une pile (cf. StackPopup.vue) : survoler un pion
+// d'un hex qui en porte PLUSIEURS — unités, marqueurs DZ, pions de soutien,
+// toute sorte de pion — montre toute la pile en grand, l'empilement sur la
+// carte masquant en partie les pions du dessous. Rien pour un pion seul.
+// Coupée pendant un glisser et à l'ouverture d'un menu contextuel.
+const hoveredCounter = ref(null) // { id, col, row, anchor: rect écran } | null
+function onCounterHover(id, ev) {
+  if (draggedCounterId.value != null) return
+  const counter = counters.value.find((counter) => String(counter.id) === String(id))
+  if (!counter) return
+  const { left, top, right, bottom } = ev.target.getBoundingClientRect()
+  hoveredCounter.value = { id, col: counter.col, row: counter.row, anchor: { left, top, right, bottom } }
+}
+function onCounterUnhover(id) {
+  if (String(hoveredCounter.value?.id) === String(id)) hoveredCounter.value = null
+}
+/** Pions de l'hex survolé, du dessus vers le dessous de la pile (ordre de
+ *  peinture du template inversé : soutien, unités, marqueurs) — vide s'il
+ *  n'y en a qu'un. */
+const hoveredStackCounters = computed(() => {
+  const hover = hoveredCounter.value
+  if (!hover) return []
+  const here = counters.value.filter((counter) => counter.col === hover.col && counter.row === hover.row)
+  if (here.length < 2) return []
+  return [
+    ...here.filter((counter) => !isUnit(counter) && !isSupport(counter)),
+    ...here.filter(isUnit),
+    ...here.filter(isSupport),
+  ].reverse()
+})
+
+// --- Pions de soutien en mode Assisté (cf. lib/useCombat.js, section "PIONS
+// DE SOUTIEN") : clic sur un pion de la tablette, puis clic sur un hex cible
+// possible. Le camp PROPRIÉTAIRE les engage pendant les DEUX phases de
+// Combat du tour — en attaque pendant la sienne, en défense pendant celle de
+// l'adversaire — et les retrouve dans sa tablette entre les deux, puisqu'ils
+// sont retirés de la carte à chaque fin de phase (cf. le watcher plus bas).
+
+/** Peut-on poser un pion de soutien en ce moment ? Phase de Combat du mode
+ *  Assisté, hors application d'un résultat de combat (retraite/avance en
+ *  cours) — et rien à faire avec une saisie verrouillée (rejeu, tour de
+ *  l'adversaire en ligne : le soutien de défense passe alors par la demande
+ *  de FPF, cf. section "FPF en ligne"). */
+const canPlaceSupportNow = computed(() =>
+  combatAllowed.value && !!props.module.supportTrack?.side && !inputLocked.value && !retreatActive.value)
+
+/** Clic sur un pion de la tablette : il attend un hex (recliquer l'annule). */
+function onSupportSelect(id) {
+  if (!canPlaceSupportNow.value) return
+  selectedSupportId.value = String(selectedSupportId.value) === String(id) ? null : id
+}
+
+/** Surlignage des hex où le pion choisi peut être posé (cf.
+ *  lib/useCombat.js::canPlaceSupportHex) — rien tant qu'aucun n'est choisi. */
+const isSupportTargetHex = (hex) => selectedSupportId.value != null && canPlaceSupportHex(hex)
+
+/** Pose le pion de soutien choisi sur `hex` (appelé par onHex). Renvoie
+ *  `false` si le clic ne le concerne pas, pour laisser onHex continuer. */
+function placeSelectedSupport(hex) {
+  if (selectedSupportId.value == null) return false
+  if (!canPlaceSupportHex(hex)) return true // clic consommé : hex refusé
+  const token = supportTrackerRef.value?.findToken(selectedSupportId.value)
+  selectedSupportId.value = null
+  if (!token) return true
+  const placed = { ...token, col: hex.c, row: hex.r }
+  counters.value.push(placed)
+  emit('move', { counterId: placed.id, col: placed.col, row: placed.row })
+  // Même entrée `support` que la pose au glisser-déposer (cf. onMapDrop) :
+  // `counter` embarque le pion entier, que le rejeu ne peut pas retrouver
+  // dans `allCounters` (pions créés à la volée par la tablette).
+  log('support', `${placed.name} engagé en ${hexId(placed.col + 1, placed.row)}`,
+    { counterId: placed.id, col: placed.col, row: placed.row, counter: placed })
+  return true
+}
+
+// Fin de phase : tous les pions de soutien quittent la carte. Ils reviennent
+// d'eux-mêmes dans la tablette (déduite de la carte, cf. SupportTracker.vue),
+// donc utilisables à nouveau pendant l'autre phase de Combat du même tour —
+// la dotation du tour vaut pour l'attaque ET pour la défense. `flush: 'sync'`
+// et aucune journalisation : le retrait se déduit du changement de phase, ce
+// qui le rejoue à l'identique au rechargement d'un journal comme chez
+// l'adversaire en ligne (tous deux rejouent l'entrée `phase`).
+watch(phase, () => {
+  if (!counters.value.some(isSupport)) return
+  counters.value = counters.value.filter((counter) => !isSupport(counter))
+  selectedSupportId.value = null
+}, { flush: 'sync' })
 
 /** Clic sur un pion déjà sur la carte — deux interprétations possibles,
  *  cf. le nouveau comportement demandé pour le mouvement normal :
@@ -1426,6 +1655,10 @@ function onCounterSelect(id) {
     if (!stepRetreat({ col: counter.col, row: counter.row })) selectAdvancer(counter)
     return
   }
+  // Un pion de soutien attend son hex (cf. placeSelectedSupport) : le pion
+  // cliqué recouvre le polygone de son hex, le clic vaut donc clic sur cet
+  // hex — c'est précisément sur un hex occupé qu'on pose un soutien.
+  if (selectedSupportId.value != null) { onHex({ c: counter.col, r: counter.row }); return }
   // Phase Airborne : on ne fait que POSER des aéroportés, aucun pion déjà
   // sur la carte ne se sélectionne ni ne bouge (cf. lib/useAssisted.js,
   // section "Phase Airborne").
@@ -1489,10 +1722,19 @@ function onReinforcementSelect(id) {
 
 /** Clic sur un MARQUEUR (DZ...) : jamais sélectionnable, il ne fait que
  *  recouvrir son hex — le clic vaut donc clic sur cet hex (cf. `onHex` :
- *  y poser un renfort, y déplacer l'unité sélectionnée, y retraiter...). */
+ *  y poser un renfort, y déplacer l'unité sélectionnée, y retraiter...).
+ *  Un pion de soutien, lui, coiffe les unités de son hex (cf. `stackOffsets`)
+ *  et masque celle du dessus : quand les pions se sélectionnent (mode
+ *  Assisté), le clic vaut clic sur cette unité, comme si le soutien n'était
+ *  pas là. */
 function onMarkerClick(id) {
   const marker = counters.value.find((counter) => String(counter.id) === String(id))
-  const hex = marker && hexes.value.find((candidate) => candidate.c === marker.col && candidate.r === marker.row)
+  if (!marker) return
+  if (isSupport(marker) && selectable.value) {
+    const topUnit = counters.value.filter((counter) => isUnit(counter) && counter.col === marker.col && counter.row === marker.row).at(-1)
+    if (topUnit) { onCounterSelect(topUnit.id); return }
+  }
+  const hex = hexes.value.find((candidate) => candidate.c === marker.col && candidate.r === marker.row)
   if (hex) onHex(hex)
 }
 
@@ -1523,6 +1765,11 @@ const onHex = (hex) => {
     if (!stepRetreat(position)) stepAdvance(position)
     return
   }
+  // Un pion de soutien choisi dans la tablette attend son hex (mode Assisté,
+  // cf. placeSelectedSupport) : il passe avant tout le reste — notamment
+  // avant le retrait d'un hex cible juste en dessous, un hex cible étant
+  // justement là où on veut poser ce pion.
+  if (placeSelectedSupport(hex)) return
   // Clic sur un hex cible pendant un combat : le retire des cibles (et
   // annule le combat si c'était le dernier, cf. lib/useCombat.js) — pendant
   // de la même règle dans onCounterSelect, pour le cas où c'est le POLYGONE
@@ -1637,18 +1884,20 @@ function onCounterDragStart(id, ev) {
   // soit depuis la tablette ou déjà posés sur la carte, sans passer par
   // canControl (ni par le tour actif).
   if (!isSupport(counter) && !canControl(counter)) { ev?.preventDefault(); return }
-  // cf. lib/useAssisted.js::draggable — en mode Assisté, une UNITÉ (pion déjà
-  // sur la carte ou renfort pas encore posé) ne se glisse plus du tout : elle
-  // ne peut entrer en jeu ou se déplacer que par clic (sélection, puis clic
-  // sur l'hex de destination — cf. onHex/onCounterSelect/onReinforcementSelect
-  // plus haut). Les pions de soutien restent exemptés, comme pour canControl
-  // ci-dessus : ce ne sont pas des "unités" soumises aux règles de tour/camp.
-  if (!isSupport(counter) && !draggable.value) { ev?.preventDefault(); return }
+  // cf. lib/useAssisted.js::draggable — en mode Assisté, aucun pion ne se
+  // glisse : une unité (déjà sur la carte ou en renfort) comme un pion de
+  // soutien ne s'y joue qu'au clic (sélection, puis clic sur l'hex de
+  // destination — cf. onHex/onCounterSelect/onReinforcementSelect/
+  // onSupportSelect plus haut).
+  if (!draggable.value) { ev?.preventDefault(); return }
   // Un renfort pas encore posé sur la carte ne peut être glissé qu'à partir
   // de son tour d'arrivée (cf. `canEnterThisTurn`) — un pion déjà sur la
   // carte (mouvement) ou un pion de soutien (tablette) n'est pas concerné.
   if (!onMap && !isSupport(counter) && !canEnterThisTurn(counter)) { ev?.preventDefault(); return }
   draggedCounterId.value = id
+  // Le pion glissé quitte sa pile : au dépôt, il se retrouverait sous la
+  // souris sans nouveau `mouseenter`, avec la pile de son ANCIEN hex.
+  hoveredCounter.value = null
   if (ev?.dataTransfer) {
     // Glisser natif HTML5 (pion pas encore sur la carte : <img> de la
     // tablette de soutien ou du panneau "Renfort ...", tous deux hors du
@@ -1739,7 +1988,8 @@ function onMapDrop(ev) {
     // on n'arrive ici que pour un pion pas encore sur la carte : renfort
     // glissé depuis le panneau "Renfort ..." (glisser-déposer libre, système
     // 1, cf. entrée en jeu dans le commentaire de `entryHexSet`) ou pion de
-    // soutien tiré de la tablette (cf. SupportTracker.vue::removeToken).
+    // soutien tiré de la tablette (cf. SupportTracker.vue::findToken — le
+    // poser sur la carte suffit à l'en retirer).
     const reinforcement = allCounters.value.find((counter) => String(counter.id) === String(draggedCounterId.value))
     if (reinforcement && canEnterThisTurn(reinforcement)) {
       const placed = { ...reinforcement, ...hex }
@@ -1748,7 +1998,7 @@ function onMapDrop(ev) {
       log('place', `${placed.name} entre en jeu en ${hexId(placed.col + 1, placed.row)}`,
         { counterId: placed.id, col: placed.col, row: placed.row })
     } else {
-      const token = supportTrackerRef.value?.removeToken(draggedCounterId.value)
+      const token = supportTrackerRef.value?.findToken(draggedCounterId.value)
       if (token) {
         const placed = { ...token, ...hex }
         counters.value.push(placed)
@@ -1957,7 +2207,7 @@ function applyReplayEntry(entry) {
   } else if (entry.kind === 'gameover') {
     blitzLoser.value = entryData.loser ?? null
   } else if (entry.kind === 'combat') {
-    markFought([...(entryData.attackerIds ?? []), ...(entryData.defenderIds ?? [])])
+    markFought([...(entryData.attackerIds ?? []), ...(entryData.defenderIds ?? []), ...(entryData.supportIds ?? [])])
     // FPF faits et résultats subis par l'artillerie (cf. lib/useArtillery.js).
     artillery.applyCombat(entryData)
   } else if (entry.kind === 'support') {
@@ -1971,6 +2221,11 @@ function applyReplayEntry(entry) {
     if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
     eliminatedIds.value.add(String(entryData.counterId))
     eliminatedIds.value = new Set(eliminatedIds.value)
+  } else if (entry.kind === 'support-return') {
+    // Pion de soutien replacé (cf. returnSupportToTray) : le retirer de la
+    // carte suffit, la tablette se déduit de la carte.
+    const counterIndex = counters.value.findIndex((counter) => String(counter.id) === String(entryData.counterId))
+    if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
   } else if (entry.kind === 'return') {
     const counterIndex = counters.value.findIndex((counter) => String(counter.id) === String(entryData.counterId))
     if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
@@ -2122,6 +2377,8 @@ function zoomOut() {
 
 /** Zoom à la molette (Ctrl/pas de modificateur — sur toute la zone carte). */
 function onMapWheel(event) {
+  // Le zoom déplace le pion survolé sous la souris : fenêtre de pile périmée.
+  hoveredCounter.value = null
   const step = 0.05
   const delta = event.deltaY < 0 ? step : -step
   zoom.value = Math.min(2, Math.max(0.1, +(zoom.value + delta).toFixed(2)))
@@ -2177,7 +2434,8 @@ function onMapDragEnd() {
         </div>
 
         <SupportTracker ref="supportTrackerRef" :config="module.supportTrack" :turn="turnInfo.turn"
-          @dragstart="onCounterDragStart" />
+          :placed-ids="placedIds" :selectable="selectable" :placeable="canPlaceSupportNow" :selected-id="selectedSupportId"
+          @dragstart="onCounterDragStart" @select="onSupportSelect" />
       </div>
 
       <div class="controls">
@@ -2228,7 +2486,7 @@ function onMapDragEnd() {
 
     <main class="map-wrap" ref="mapWrapRef" :class="{ dragging: !!mapDrag }" @mousedown.right.prevent="onMapDragStart"
       @mousemove="onMapDragMove" @mouseup="onMapDragEnd" @mouseleave="onMapDragEnd" @contextmenu.prevent
-      @wheel.prevent="onMapWheel">
+      @wheel.prevent="onMapWheel" @scroll="hoveredCounter = null">
       <svg ref="svgRef" class="map-svg"
         :style="{ width: map.imageWidth * zoom + 'px', height: map.imageHeight * zoom + 'px' }"
         :viewBox="`0 0 ${map.imageWidth} ${map.imageHeight}`" preserveAspectRatio="none" @dragover.prevent
@@ -2272,6 +2530,16 @@ function onMapDragEnd() {
             :points="hex.pts" vector-effect="non-scaling-stroke" />
           <polygon v-for="hex in hexes.filter((hex) => isCombatFpfHex(hex))" :key="'fpf' + hex.id" class="hex-fpf"
             :points="hex.pts" vector-effect="non-scaling-stroke" />
+        </g>
+
+        <!-- cf. lib/useCombat.js::canPlaceSupportHex — un pion de soutien
+             attend son hex (mode Assisté) : hex cibles possibles en
+             pointillé vert, cliquables pour l'y poser. Hors du groupe
+             `combatActive` ci-dessus : on pose un soutien avant même
+             d'ouvrir le combat. -->
+        <g v-if="selectedSupportId != null">
+          <polygon v-for="hex in hexes.filter(isSupportTargetHex)" :key="'sup' + hex.id" class="hex-support-target"
+            :points="hex.pts" vector-effect="non-scaling-stroke" @click="onHex(hex)" />
         </g>
 
         <!-- cf. lib/useRetreat.js — avance après combat : chemin de retraite
@@ -2321,16 +2589,24 @@ function onMapDragEnd() {
         <g v-if="showCounters" class="counters">
           <!-- Marqueurs (DZ...) rendus en premier : toujours sous les unités
                dans l'ordre de peinture SVG, quel que soit le hex. -->
-          <Counter v-for="counter in counters.filter((counter) => !isUnit(counter))" :key="counter.id" :id="counter.id" :src="counter.src" :col="counter.col"
+          <Counter v-for="counter in counters.filter((counter) => !isUnit(counter) && !isSupport(counter))" :key="counter.id" :id="counter.id" :src="counter.src" :col="counter.col"
             :row="counter.row" :calibration="calibration" :selected="selectedCounterId === counter.id" :selectable="false"
             :offset="stackOffsets.get(counter.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === counter.id ? dragCurrentPx : null"
-            @dragstart="onCounterDragStart" @hex-click="onMarkerClick" />
+            @dragstart="onCounterDragStart" @hex-click="onMarkerClick" @hover="onCounterHover" @unhover="onCounterUnhover" />
           <Counter v-for="counter in counters.filter(isUnit)" :key="counter.id" :id="counter.id" :src="counter.src" :col="counter.col"
             :row="counter.row" :calibration="calibration" :selected="selectedCounterId === counter.id" :selectable="selectable"
             :moved="movedThisTurnIds.has(String(counter.id))" :spent="hasFought(counter)"
             :disrupted="artillery.isDisrupted(counter)" :displaced="artillery.isDisplaced(counter)"
             :offset="stackOffsets.get(counter.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === counter.id ? dragCurrentPx : null"
-            @select="onCounterSelect" @dragstart="onCounterDragStart" @contextmenu="onCounterContextMenu" />
+            @select="onCounterSelect" @dragstart="onCounterDragStart" @contextmenu="onCounterContextMenu"
+            @hover="onCounterHover" @unhover="onCounterUnhover" />
+          <!-- Pions de soutien rendus en dernier : toujours au-dessus des
+               unités qu'ils coiffent (cf. `stackOffsets`). -->
+          <Counter v-for="counter in counters.filter(isSupport)" :key="counter.id" :id="counter.id" :src="counter.src" :col="counter.col"
+            :row="counter.row" :calibration="calibration" :selected="selectedCounterId === counter.id" :selectable="false"
+            :offset="stackOffsets.get(counter.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === counter.id ? dragCurrentPx : null"
+            @dragstart="onCounterDragStart" @hex-click="onMarkerClick" @contextmenu="onSupportContextMenu"
+            @hover="onCounterHover" @unhover="onCounterUnhover" />
         </g>
 
         <g v-if="showCounters" class="support-badges">
@@ -2361,6 +2637,8 @@ function onMapDragEnd() {
 
     <ContextMenu v-if="contextMenu" :left-px="contextMenu.x" :top-px="contextMenu.y" :items="contextMenu.items"
       @choose="chooseContextMenuItem" @close="closeContextMenu" />
+    <StackPopup v-if="hoveredStackCounters.length" :counters="hoveredStackCounters" :anchor="hoveredCounter.anchor"
+      :title="`Hex ${hexId(hoveredCounter.col + 1, hoveredCounter.row)} — ${hoveredStackCounters.length} pions`" />
 
     <!-- cf. lib/useCombat.js — modale de combat, ouverte par un clic sur une
          unité ennemie en phase Combat. Non bloquante : la carte reste
@@ -2371,8 +2649,9 @@ function onMapDragEnd() {
       :terrain-row="combatTerrainRow" :column="combatColumn" :combat-result="combatResult"
       :crt-rows="crtRows" :crt-results="crtResults" :retreat="retreatInfo" :retreat-notes="retreatNotes"
       :advance="advanceInfo" @close="onCombatClose" @fight="onCombatFight" @end-advance="endAdvance"
-      @reduce-retreat="reduceRetreat" @cancel-push="cancelPush" :fpf="fpfView" @toggle-fpf="onToggleFpf"
-      @request-fpf="onRequestFpf" @cancel-fpf-request="onCancelFpfRequest" @send-fpf="onSendFpf" />
+      @reduce-retreat="reduceRetreat" @cancel-push="cancelPush" :fpf="fpfView" :support="supportView" @toggle-fpf="onToggleFpf"
+      @request-fpf="onRequestFpf" @cancel-fpf-request="onCancelFpfRequest" @send-fpf="onSendFpf"
+      @toggle-support="toggleSupportChoice" />
 
     <!-- cf. onPhaseNext — changement de phase refusé : unités empilées en fin
          de Mouvement (cf. lib/useAssisted.js::stackedHexes) ou combats
@@ -2644,6 +2923,20 @@ polygon.hex.entry:hover {
 /* cf. lib/useCombat.js — FPF du défenseur : artillerie éligible (pointillé
    bleu) et artillerie retenue (bleu plein). Les clics traversent : c'est le
    pion qui les reçoit (cf. onCounterSelect). */
+/* cf. lib/useCombat.js::canPlaceSupportHex — hex où poser le pion de soutien
+   choisi dans la tablette. Vert pointillé, comme une sélection en attente. */
+.hex-support-target {
+  fill: var(--green-a28);
+  stroke: var(--color-selection);
+  stroke-width: 2.5;
+  stroke-dasharray: 6 4;
+  cursor: pointer;
+}
+
+.hex-support-target:hover {
+  fill: var(--green-a60);
+}
+
 .hex-fpf-candidate {
   fill: none;
   stroke: var(--color-blue);

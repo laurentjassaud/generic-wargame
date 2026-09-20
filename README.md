@@ -123,7 +123,7 @@ Champs du JSON (cf. `arnhem.json`) :
 | `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, `zoc` (`lockIfStarting`, `stopOnEntry`, `blocksRetreat`), `entryCongestion` (`multiply` / `none`), et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`) — cf. `src/lib/rules.js` |
 | `sides` | Camps jouables → factions (`{"allies": ["commonwealth","us","pol"], "german": ["german"]}`) |
 | `turnTrack` | `turns`, `order` des camps, libellé et marqueur de chaque camp |
-| `supportTrack` | Tablette de soutien : pions par tour (`byTurn`) |
+| `supportTrack` | Tablette de soutien : pions par tour (`byTurn`), camp propriétaire (`side`) et apport au combat d'un pion (`factor`, défaut 1) — cf. `src/components/SupportTracker.vue` et la section "PIONS DE SOUTIEN" de `src/lib/useCombat.js` |
 | `terrain` | `types` (libellé, coût en MP), `grid` (hex → type), les couches d'arêtes (`roads`, `rivers`… : listes `"AAAA-BBBB"`) et `edges`, qui déclare ce que vaut chaque couche : coût fixe ou surcoût, infranchissable, interdite ou ouverte aux véhicules, coupe la ZOC ou l'attaque, et l'ordre de priorité quand plusieurs se superposent (mouvement / combat) — cf. `src/lib/edges.js` |
 | `counters` | Par faction : `id`, `name`, `code`, `type`, `atk`/`def`/`mov` (ou `bar`/`fpf`/`range` pour l'artillerie), `src`, `turn` d'arrivée, `setup` |
 

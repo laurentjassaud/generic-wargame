@@ -34,9 +34,10 @@
 //   - une artillerie REFOULÉE par une retraite amie (cf. useRetreat.js) ne
 //     peut plus tirer jusqu'à la fin de la phase de Combat en cours — POINT
 //     ORANGE sur le pion (cf. `isDisplaced`) ;
-//   - une unité attaquée par au moins une artillerie ne profite que du
-//     terrain de SON HEX, jamais de l'hexside (cf. useCombat.js::
-//     rowForTargetHex).
+//   - [8.62] une unité attaquée UNIQUEMENT par de l'artillerie et/ou des
+//     pions de soutien ne profite que du terrain de SON HEX, jamais de
+//     l'hexside — dès qu'une unité non artilleur participe à l'attaque,
+//     l'hexside compte de nouveau (cf. useCombat.js::rowForTargetHex).
 //
 // ─── FINAL PROTECTIVE FIRE (défense) ─────────────────────────────────────────
 // Pendant la phase de Combat ADVERSE, le défenseur peut ajouter le facteur
@@ -48,7 +49,9 @@
 //   - elle n'a subi aucun résultat de combat pendant cette phase de Combat,
 //     ni pendant la précédente — POINT ROUGE sur le pion (cf. `isDisrupted`) ;
 //   - elle n'a pas été refoulée pendant cette phase (point orange) ;
-//   - l'attaque n'est pas faite UNIQUEMENT par de l'artillerie.
+//   - [8.45] l'attaque n'est pas faite UNIQUEMENT par de l'artillerie et/ou
+//     des pions de soutien (cf. useCombat.js::supportBarred, qui applique la
+//     même règle aux pions de soutien du défenseur).
 // Elle n'est jamais affectée par le résultat du combat qu'elle soutient.
 //
 // Tout l'état tenu ici (résultats subis, refoulements, FPF déjà faits) se

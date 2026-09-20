@@ -225,11 +225,14 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   //     destination — cf. onHex/onCounterSelect/onReinforcementSelect dans
   //     HexMap.vue, déjà en place et inchangés par cette règle).
   //
-  // Exemption : les pions de soutien (kind: 'support', cf. SupportTracker.vue)
-  // restent glissables dans les DEUX modes — ce sont une ressource commune,
-  // pas rattachée à un camp ni à un tour (cf. déjà `canControl` ci-dessus,
-  // et le guard `kind !== 'support'` dans HexMap.vue::onCounterDragStart qui
-  // applique concrètement cette valeur).
+  // Les pions de SOUTIEN (kind: 'support', cf. SupportTracker.vue) suivent la
+  // même règle : glissés en mode Libre, posés au clic (tablette puis hex) en
+  // mode Assisté, où ils obéissent alors à la règle du module — phase de
+  // Combat, hex cible (cf. useCombat.js::canPlaceSupportHex). Ils restent en
+  // revanche exemptés de `canControl` ci-dessus : ce ne sont pas des unités
+  // d'un camp actif, mais une ressource que son camp propriétaire engage
+  // aussi bien pendant SON tour (en attaque) que pendant le tour adverse (en
+  // défense).
   const draggable = computed(() => !assisted.value)
 
   // --- Restriction de mouvement par camp actif -------------------------------
