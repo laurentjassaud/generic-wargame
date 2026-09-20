@@ -55,7 +55,8 @@ aucune restriction de tour ni de règle, dé libre.
   pions ;
 - règles particulières au module (cf. `src/lib/useArnhem.js` : déploiement
   initial, allocation réduite des aéroportés à l'arrivée, réduction des
-  retraites en ville).
+  retraites en ville, soutien au sol guidé seulement à 3 hex d'une unité
+  alliée non aéroportée, au plus deux artilleries par camp dans un combat).
 
 **Timings** (partie Assistée) : *Limité* accorde N minutes à **chaque** phase
 de Mouvement (compte à rebours, clignote sous 20 s, alerte à zéro) ; *Blitz*
@@ -120,7 +121,7 @@ Champs du JSON (cf. `arnhem.json`) :
 | `combat` | Table de combat : `die`, colonnes de différentiel, lignes de terrain (décalage), substitutions par hexside, résultats, libellés et **effets** de chaque résultat (retraite, élimination), avance après combat — cf. `src/lib/combatTable.js` ; sans table, pas de combat |
 | `scenarios` | Scénarios proposés : `id`, `label`, `deployment` (`setup` — seul mode appliqué par le moteur ; `free` : bientôt), `weather` (`required` / `optional`) — cf. `src/lib/gameSettings.js` |
 | `turnStructure` | Phases du tour d'un camp, en plus du Mouvement : `airbornePhase`, `combatPhase`, `endOfTurnPhase` (booléens) — cf. `src/lib/rules.js` |
-| `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, `zoc` (`lockIfStarting`, `stopOnEntry`, `blocksRetreat`), `entryCongestion` (`multiply` / `none`), `mapExit` (sortie de carte : `side` autorisé et `zones` de bord `{ id, label, hexes }`, une unité sortie revenant en renfort par la même bande au tour suivant), et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`) — cf. `src/lib/rules.js` |
+| `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, `zoc` (`lockIfStarting`, `stopOnEntry`, `blocksRetreat`), `entryCongestion` (`multiply` / `none`), `mapExit` (sortie de carte : `side` autorisé et `zones` de bord `{ id, label, hexes }`, une unité sortie revenant en renfort par la même bande au tour suivant), et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`, `groundSupportSpotterRange`, `maxArtilleryPerCombat`) — cf. `src/lib/rules.js` |
 | `sides` | Camps jouables → factions (`{"allies": ["commonwealth","us","pol"], "german": ["german"]}`) |
 | `turnTrack` | `turns`, `order` des camps, libellé et marqueur de chaque camp |
 | `supportTrack` | Tablette de soutien : pions par tour (`byTurn`), camp propriétaire (`side`) et apport au combat d'un pion (`factor`, défaut 1) — cf. `src/components/SupportTracker.vue` et la section "PIONS DE SOUTIEN" de `src/lib/useCombat.js` |
@@ -219,7 +220,8 @@ room jamais lancée, 72 h pour une partie lancée).
   le moteur ne les applique pas encore.
 - Certaines règles restent propres à un module et vivent donc dans son
   composable de règles particulières (`src/lib/useArnhem.js` : déploiement
-  initial, arrivée des aéroportés, retraite en ville) ; la sémantique des
+  initial, arrivée des aéroportés, retraite en ville, portée du soutien au
+  sol, plafond d'artilleries par combat) ; la sémantique des
   résultats de combat se limite à retraite / élimination / avance.
 - Pas de suite de tests automatisée dans le dépôt (les vérifications se font
   par scripts ad hoc et navigateur automatisé).

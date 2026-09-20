@@ -127,6 +127,12 @@ const DEFAULT_GROUND_SUPPORT_SPOTTER_RANGE = 3
 // qu'il porte l'un des deux mots.
 const AIRBORNE_TYPE = /airborne|glider/i
 
+// Règle de CONCENTRATION DE L'ARTILLERIE (cf. `maxArtilleryPerCombat` plus
+// bas) — nombre maximal d'artilleries qu'un même joueur peut faire tirer sur
+// un même combat, barrage comme FPF. La valeur vient du module
+// (`rules.maxArtilleryPerCombat`, cf. arnhem.json ; 2 à défaut).
+const DEFAULT_MAX_ARTILLERY_PER_COMBAT = 2
+
 export function useArnhem(moduleId, ctx = {}) {
   // Vrai seulement si la partie en cours EST Arnhem. Toutes les règles
   // ci-dessous commencent par le consulter : c'est lui qui garantit
@@ -244,6 +250,36 @@ export function useArnhem(moduleId, ctx = {}) {
    *  de camp/tour ET à la remise à zéro du plateau pour un rejeu. */
   function clearTurnState() {
     airborneArrivals.clear()
+  }
+
+  /** Règle de CONCENTRATION DE L'ARTILLERIE — un joueur ne peut pas
+   *  combiner plus de DEUX artilleries dans un même combat. La limite vaut
+   *  PAR CAMP et PAR COMBAT, des deux côtés de la table :
+   *   - en ATTAQUE, au plus deux artilleries y ajoutent leur barrage — au
+   *     contact comme à distance (choix validé : une artillerie au contact
+   *     tire elle aussi avec son facteur de barrage, cf.
+   *     lib/useArtillery.js::attackFactor, elle compte donc comme les
+   *     autres) ;
+   *   - en DÉFENSE, au plus deux artilleries y apportent leur FPF.
+   *  Les pions de SOUTIEN n'entrent pas dans ce décompte (choix validé) :
+   *  [9.11] leur donne la valeur d'un point d'artillerie, pas le statut
+   *  d'une unité d'artillerie, et [9.12] laisse leur répartition libre.
+   *
+   *  Appelée par lib/useCombat.js, qui en tire toutes les conséquences :
+   *  une artillerie de trop ne peut plus être désignée attaquante ni cochée
+   *  pour le FPF, et — c'est le point délicat — elle est DISPENSÉE de
+   *  l'obligation d'attaquer qui pèse sur toute unité au contact (cf.
+   *  `strandedUnits`), sans quoi trois artilleries au contact d'un même hex
+   *  ennemi rendraient le combat impossible à résoudre ET la phase
+   *  impossible à terminer.
+   *
+   *  @returns le nombre maximal (2), ou `null` quand la règle ne se prononce
+   *    pas : hors module Arnhem, et hors mode Assisté — en mode Libre, aucun
+   *    combat n'est composé par le moteur, c'est le joueur qui compte. */
+  function maxArtilleryPerCombat() {
+    if (!active.value || !unref(ctx.assisted)) return null
+    const declared = ctx.rules?.maxArtilleryPerCombat
+    return Number.isFinite(declared) ? declared : DEFAULT_MAX_ARTILLERY_PER_COMBAT
   }
 
   // --- Soutien au sol : qui peut le guider ? ---------------------------------
@@ -366,6 +402,6 @@ export function useArnhem(moduleId, ctx = {}) {
 
   return {
     active, autoPlacesAtLoad, noteAirborneArrival, airborneArrivalSpentMp, clearTurnState,
-    supportHexAllowed, cityRetreatReduction,
+    supportHexAllowed, maxArtilleryPerCombat, cityRetreatReduction,
   }
 }

@@ -29,6 +29,8 @@ export const INERT_RULES = Object.freeze({
   clearTurnState: () => {},
   /** Cet hex peut-il recevoir un pion de soutien ? `false` pour l'interdire, `null` sinon. */
   supportHexAllowed: () => null,
+  /** Combien d'artilleries un camp peut-il combiner dans un combat ? Un nombre, ou `null` (sans limite). */
+  maxArtilleryPerCombat: () => null,
   /** Réduction de retraite offerte dans cet hex — `{ total, reason }` ou `null`. */
   cityRetreatReduction: () => null,
 })

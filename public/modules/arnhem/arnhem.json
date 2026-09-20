@@ -1425,6 +1425,7 @@
     "entryCongestion": "multiply",
     "airborneArrivalSpentMp": 4,
     "groundSupportSpotterRange": 3,
+    "maxArtilleryPerCombat": 2,
     "mapExit": {
       "side": "german",
       "zones": [

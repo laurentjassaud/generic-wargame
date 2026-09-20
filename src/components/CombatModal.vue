@@ -72,6 +72,12 @@ const props = defineProps({
   // `attacking` : ils renforcent l'ATTAQUE (tour de leur camp) ; sinon la
   // DÉFENSE (tour adverse), comme un FPF.
   support: { type: Object, default: null },
+  // Plafond d'artilleries du module (cf. lib/useCombat.js, section "COMBIEN
+  // D'ARTILLERIES DANS UN COMBAT ?", et HexMap.vue::artilleryCapView) —
+  // `{ max, attackFull, fpfFull }`, ou `null` pour un module sans plafond.
+  // `attackFull`/`fpfFull` : le plafond est atteint, de ce côté-là de la
+  // table — plus aucune artillerie ne peut s'y joindre.
+  artilleryCap: { type: Object, default: null },
 })
 
 // `end-advance` : bouton "Terminer l'avance" (cf. useRetreat.js::endAdvance).
@@ -101,6 +107,12 @@ const RANGED_TITLE = "Tir d'artillerie à distance : jamais affectée par le ré
 // [8.45] : ni FPF ni soutien contre une attaque faite uniquement
 // d'artillerie et/ou de soutien (cf. prop `support`, champ `barred`).
 const SUPPORT_BARRED_TITLE = "Soutien sans effet : l'attaque est faite uniquement d'artillerie et/ou de soutien"
+
+// Plafond d'artilleries atteint (cf. prop `artilleryCap`) : le clic sur une
+// artillerie de plus reste sans effet, autant le dire.
+const artilleryCapNote = computed(() => (props.artilleryCap
+  ? `Au plus ${props.artilleryCap.max} artilleries par combat : aucune autre ne peut s'y joindre.`
+  : null))
 
 // Animation du dé : purement décorative. La VALEUR retenue est celle tirée
 // par useCombat.js::resolveCombat (émise via `fight` à la fin du roulement),
@@ -258,6 +270,8 @@ onUnmounted(() => {
           <p v-else-if="attackerDetails.length === 0" class="cm-hint">
             Attaque faite uniquement par le soutien : le défenseur ne peut reculer que de 2 hex ou plus, ou être éliminé.
           </p>
+          <!-- Plafond d'artilleries du module (cf. prop `artilleryCap`). -->
+          <p v-if="composing && artilleryCap?.attackFull" class="cm-hint">{{ artilleryCapNote }}</p>
         </div>
         <p class="cm-total">
           Attaque <b>{{ attackStrength }}</b>
@@ -294,12 +308,17 @@ onUnmounted(() => {
           {{ fpfMode === 'local' ? 'au défenseur de choisir ses artilleries :' : 'choisissez vos artilleries, puis validez :' }}
         </p>
         <div class="cm-fpf-list">
+          <!-- Plafond atteint (cf. prop `artilleryCap`) : les artilleries non
+               retenues sont éteintes, pas retirées — le défenseur voit ce
+               qu'il devrait décocher pour en choisir une autre. -->
           <button v-for="unit in fpf.candidates" :key="unit.id" type="button" class="cm-fpf-choice"
-            :class="{ on: fpf.selectedIds.includes(String(unit.id)) }" @click="$emit('toggle-fpf', unit.id)">
+            :class="{ on: fpf.selectedIds.includes(String(unit.id)) }" @click="$emit('toggle-fpf', unit.id)"
+            :disabled="artilleryCap?.fpfFull && !fpf.selectedIds.includes(String(unit.id))">
             <img :src="unit.src" :alt="unit.name" />
             {{ unit.name }} <b>+{{ unit.fpf }}</b>
           </button>
         </div>
+        <p v-if="artilleryCap?.fpfFull" class="cm-hint">{{ artilleryCapNote }}</p>
         <p v-if="fpfMode === 'local'" class="cm-hint">Ou cliquez sur l'artillerie sur la carte.</p>
         <p v-if="!fpf.candidates.length" class="cm-hint">Aucune de vos artilleries ne peut tirer sur ce combat.</p>
         <!-- Pions de soutien du défenseur (en ligne) : il ne peut pas les
@@ -676,6 +695,13 @@ onUnmounted(() => {
   width: 24px;
   height: 24px;
   border-radius: var(--radius-2);
+}
+
+/* Artillerie que le plafond du module écarte (cf. prop `artilleryCap`) :
+   éteinte, comme un pion de la tablette de soutien hors phase de Combat. */
+.cm-fpf-choice:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .cm-fpf-choice.on {

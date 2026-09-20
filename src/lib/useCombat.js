@@ -135,6 +135,18 @@
 // carte à la fin de la phase (cf. HexMap.vue), ce qui le rend à la tablette
 // pour la phase de Combat suivante.
 //
+// ─── COMBIEN D'ARTILLERIES DANS UN COMBAT ? ──────────────────────────────────
+// Un module peut plafonner le nombre d'artilleries qu'un MÊME CAMP fait tirer
+// sur un même combat (cf. `artilleryLimit` et lib/useArnhem.js::
+// maxArtilleryPerCombat — deux à Arnhem). Le plafond vaut des deux côtés de
+// la table, séparément : au plus N barrages à l'attaque (cf.
+// `artilleryOverLimit`), au plus N FPF en défense (cf. `fpfUnits`,
+// `fpfLimitReached`). Les pions de soutien n'y entrent pas.
+// Conséquence à ne pas manquer : une artillerie AU CONTACT que le plafond
+// écarte d'un combat en est aussi DISPENSÉE de l'obligation d'attaquer (cf.
+// `strandedUnits`) — sans quoi, trois artilleries au contact d'un même hex
+// ennemi rendraient ce combat irrésoluble et la phase interminable.
+//
 // ─── ATTAQUE FAITE UNIQUEMENT D'ARTILLERIE ET/OU DE SOUTIEN ──────────────────
 // Trois règles la distinguent d'une attaque ordinaire (cf.
 // `artilleryOnlyAttack`, qui couvre aussi le cas "soutien seul", sans aucune
@@ -387,10 +399,34 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     return canTargetSet([...targetHexes.value, position])
   }
 
+  // --- Plafond d'artilleries (cf. l'en-tête) --------------------------------
+
+  /** Nombre maximal d'artilleries qu'un même camp peut faire tirer sur ce
+   *  combat (cf. lib/useArnhem.js::maxArtilleryPerCombat) — `null` : aucune
+   *  limite, c'est le cas de tout module qui n'en déclare pas. */
+  const artilleryLimit = computed(() => moduleRules.maxArtilleryPerCombat?.() ?? null)
+
+  /** L'artillerie `counter` est-elle EN TROP dans ce combat : le plafond est
+   *  déjà atteint par les autres artilleries désignées attaquantes ? Faux
+   *  pour une unité ordinaire, et faux pour une artillerie DÉJÀ désignée
+   *  tant qu'elles ne sont pas plus nombreuses que le plafond (elle ne
+   *  s'exclut pas elle-même — cf. `pruneAttackers`, qui repasse par là). */
+  function artilleryOverLimit(counter) {
+    const limit = artilleryLimit.value
+    if (limit == null || !isArtillery(counter)) return false
+    return attackers.value.filter((attacker) => isArtillery(attacker) && attacker.id !== counter.id).length >= limit
+  }
+
+  /** Le plafond est-il atteint à l'ATTAQUE ? Pour la modale, qui l'annonce
+   *  plutôt que de laisser un clic sans effet (cf. CombatModal.vue). */
+  const attackArtilleryFull = computed(() =>
+    artilleryLimit.value != null && attackers.value.filter(isArtillery).length >= artilleryLimit.value)
+
   /** `c` peut-il être désigné attaquant ? RÈGLE STRICTE : il doit pouvoir
-   *  attaquer TOUS les hex cibles (cf. `canAttackAll`). */
+   *  attaquer TOUS les hex cibles (cf. `canAttackAll`) — et ne pas être
+   *  l'artillerie de trop (cf. `artilleryOverLimit`). */
   function canBeAttacker(counter) {
-    return canAttackAll(counter, targetHexes.value)
+    return canAttackAll(counter, targetHexes.value) && !artilleryOverLimit(counter)
   }
 
   /** Ne garde, parmi les attaquants désignés, que ceux qui respectent encore
@@ -572,9 +608,21 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
 
   /** Artilleries dont le FPF compte dans CE combat : celles désignées (cf.
    *  `fpfIds`) qui sont encore éligibles — ou, une fois le dé lancé, celles
-   *  de la photo du combat (cf. `frozen`). */
-  const fpfUnits = computed(() => frozen.value?.fpf
-    ?? fpfCandidates.value.filter((counter) => fpfIds.value.has(String(counter.id))))
+   *  de la photo du combat (cf. `frozen`). Jamais plus que le plafond du
+   *  module (cf. `artilleryLimit`) : `toggleFpf` en refuse déjà une de trop,
+   *  la troncature ne protège que du choix reçu d'un AUTRE écran (cf.
+   *  `answerFpf`, en ligne). */
+  const fpfUnits = computed(() => {
+    if (frozen.value?.fpf) return frozen.value.fpf
+    const chosen = fpfCandidates.value.filter((counter) => fpfIds.value.has(String(counter.id)))
+    return artilleryLimit.value == null ? chosen : chosen.slice(0, artilleryLimit.value)
+  })
+
+  /** Le plafond d'artilleries est-il atteint par les FPF déjà retenus ?
+   *  Aucune autre ne peut alors se joindre à ce combat — la modale grise les
+   *  candidates restantes plutôt que de laisser un clic sans effet. */
+  const fpfLimitReached = computed(() =>
+    artilleryLimit.value != null && fpfUnits.value.length >= artilleryLimit.value)
 
   /** Le défenseur ajoute (ou retire) l'artillerie `c` au FPF de ce combat —
    *  en partie locale (modale ou clic sur la carte), ou sur l'écran du
@@ -585,6 +633,8 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     const id = String(counter.id)
     const next = new Set(fpfIds.value)
     if (next.has(id)) next.delete(id)
+    // Une de plus que le plafond du module (cf. `fpfLimitReached`) : refusée.
+    else if (fpfLimitReached.value) return false
     else if (fpfCandidates.value.some((candidate) => String(candidate.id) === id)) next.add(id)
     else return false
     fpfIds.value = next
@@ -755,6 +805,12 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     // (A) Côté AMI : chaque unité qui devra encore attaquer.
     for (const friendly of friendlies) {
       if (after.has(friendly.id)) continue
+      // Artillerie que le plafond du module écarte de CE combat (cf.
+      // `artilleryOverLimit`) : la règle qui lui interdit d'y tirer l'en
+      // dispense aussi. Sans cette ligne, trois artilleries au contact d'un
+      // même hex ennemi bloqueraient la partie — la troisième serait déclarée
+      // orpheline pour un combat qu'elle n'a pas le droit de rejoindre.
+      if (artilleryOverLimit(friendly)) continue
       const reachable = enemies.filter((enemy) => canReachHex(friendly, enemy))
       const freshNow = reachable.some((enemy) => !now.has(enemy.id))
       const freshAfter = reachable.some((enemy) => !after.has(enemy.id))
@@ -1006,6 +1062,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     canBeTarget, canBeAttacker, toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought,
     pendingEngagements, isCombatTargetHex, isCombatAttackerHex, isCombatFpfHex,
     fpfCandidates, fpfUnits, fpfStrength, fpfStatus, toggleFpf, requestFpf, cancelFpfRequest, answerFpf, openDefense, chosenFpfIds,
+    artilleryLimit, attackArtilleryFull, fpfLimitReached,
     supportCounters, supportStrength, supportAttacking, supportFactor, supportBarred, artilleryOnlyAttack, canPlaceSupportHex,
     supportChoiceIds, toggleSupportChoice, chosenSupportIds,
     attackStrength, defenseStrength, differential, canResolve, strandedUnits, terrainRow, column,

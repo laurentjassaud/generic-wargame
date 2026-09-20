@@ -630,6 +630,7 @@ const {
   toggleTarget, removeTargetHex, cancelCombat, toggleAttacker, hasFought, markFought, pendingEngagements,
   isCombatTargetHex, isCombatAttackerHex, isCombatFpfHex,
   fpfCandidates, fpfUnits, fpfStrength, fpfStatus, toggleFpf, requestFpf, cancelFpfRequest, answerFpf, openDefense, chosenFpfIds,
+  artilleryLimit, attackArtilleryFull, fpfLimitReached,
   supportCounters, supportStrength, supportAttacking, supportFactor, supportBarred, canPlaceSupportHex,
   supportChoiceIds, toggleSupportChoice, chosenSupportIds,
   attackStrength, defenseStrength, differential, canResolve: combatCanResolve, strandedUnits: combatStrandedUnits,
@@ -775,6 +776,16 @@ const fpfView = computed(() => {
   // d'abord lui soumettre le combat.
   return { ...view, mode: props.online ? 'request' : 'local' }
 })
+
+// --- Plafond d'artilleries du module (cf. lib/useCombat.js, section "COMBIEN
+// D'ARTILLERIES DANS UN COMBAT ?", et lib/useArnhem.js::maxArtilleryPerCombat)
+// : ce que la modale en montre (cf. CombatModal.vue, prop `artilleryCap`),
+// `null` pour un module qui n'en déclare pas — la modale n'en dit alors rien.
+const artilleryCapView = computed(() => (artilleryLimit.value == null ? null : {
+  max: artilleryLimit.value,
+  attackFull: attackArtilleryFull.value,
+  fpfFull: fpfLimitReached.value,
+}))
 
 // --- Pions de soutien engagés dans le combat en cours : ce que la modale en
 // montre (cf. CombatModal.vue, prop `support`), `null` s'il n'y en a aucun.
@@ -2815,7 +2826,8 @@ function onMapDragEnd() {
       :terrain-row="combatTerrainRow" :column="combatColumn" :combat-result="combatResult"
       :crt-rows="crtRows" :crt-results="crtResults" :retreat="retreatInfo" :retreat-notes="retreatNotes"
       :advance="advanceInfo" @close="onCombatClose" @fight="onCombatFight" @end-advance="endAdvance"
-      @reduce-retreat="reduceRetreat" @cancel-push="cancelPush" :fpf="fpfView" :support="supportView" @toggle-fpf="onToggleFpf"
+      @reduce-retreat="reduceRetreat" @cancel-push="cancelPush" :fpf="fpfView" :support="supportView"
+      :artillery-cap="artilleryCapView" @toggle-fpf="onToggleFpf"
       @request-fpf="onRequestFpf" @cancel-fpf-request="onCancelFpfRequest" @send-fpf="onSendFpf"
       @toggle-support="toggleSupportChoice" />
 
