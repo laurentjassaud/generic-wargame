@@ -27,6 +27,8 @@ export const INERT_RULES = Object.freeze({
   airborneArrivalSpentMp: () => null,
   /** Nouveau camp/tour : oublier ce qui ne valait que pour le tour écoulé. */
   clearTurnState: () => {},
+  /** Cet hex peut-il recevoir un pion de soutien ? `false` pour l'interdire, `null` sinon. */
+  supportHexAllowed: () => null,
   /** Réduction de retraite offerte dans cet hex — `{ total, reason }` ou `null`. */
   cityRetreatReduction: () => null,
 })

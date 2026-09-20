@@ -99,6 +99,13 @@
 //     vaut un pion, cf. SupportTracker.vue) et un computed du camp actif.
 //     Sans `track.side` déclaré, tout le soutien reste inerte ici (cf.
 //     `supportEnabled`) : le module n'en a pas, ou pas encore de règle.
+//   - `moduleRules` : règles PARTICULIÈRES au module joué (cf.
+//     lib/moduleRules.js et lib/useArnhem.js), dont ce fichier n'utilise que
+//     les deux qui touchent au combat — `supportHexAllowed` (où le soutien
+//     peut être engagé) et `maxArtilleryPerCombat` (combien d'artilleries un
+//     camp peut combiner). Chacune rend `null` quand elle ne se prononce
+//     pas, y compris pour un module sans règles particulières : la règle
+//     générique ci-dessous s'applique alors telle quelle.
 //
 // ─── PIONS DE SOUTIEN (règle [9.0] GROUND SUPPORT) ───────────────────────────
 // Le camp propriétaire (`track.side`) pose ses pions de soutien sur un hex
@@ -113,7 +120,9 @@
 // de la carte, même celui qu'aucune unité ne peut atteindre — d'où les
 // attaques faites UNIQUEMENT de soutien (cf. `canBeTarget`/`canResolve`,
 // et [8.21] : le soutien attaque seul, avec de l'artillerie, ou avec des
-// unités adjacentes).
+// unités adjacentes). Un module peut la borner par une règle particulière
+// (cf. `moduleRules.supportHexAllowed` et lib/useArnhem.js : à Arnhem,
+// l'appui ne se guide qu'à 3 hex d'une unité alliée arrivée par la route).
 // [9.12] Le camp propriétaire répartit ses pions comme il l'entend : tous
 // sur une même cible, ou éclatés entre plusieurs combats de la phase.
 // [9.14] La dotation ne se reporte pas d'un tour sur l'autre — cf.
@@ -197,7 +206,7 @@ const FPF_WAITING = 'waiting'     // attaquant : demande envoyée, réponse atte
 const FPF_ANSWERED = 'answered'   // attaquant : le défenseur a choisi, reste à lancer le dé
 const FPF_DEFENDING = 'defending' // défenseur : combat adverse affiché, FPF à choisir
 
-export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind, table, artillery, support = {}) {
+export function useCombat(assisted, phase, counters, canControl, terrain, combatEdgeKind, table, artillery, support = {}, moduleRules = {}) {
   // Hex CIBLES du combat en cours, dans l'ordre où ils ont été désignés —
   // chacun `{ col, row }`. On mémorise des HEX et non des pions : c'est l'hex
   // qu'on attaque, et TOUTES les unités ennemies qui s'y trouvent défendent
@@ -536,6 +545,11 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     if (!supportEnabled.value || !combatAllowed.value) return false
     const here = counters.value.filter((counter) => isFighter(counter) && counter.col === hex.c && counter.row === hex.r)
     if (here.length === 0 || here.some(canControl) || here.some(hasFought)) return false
+    // Règle particulière du module, qui peut RESTREINDRE cette portée
+    // illimitée (cf. lib/useArnhem.js::supportHexAllowed — le soutien allié
+    // d'Arnhem ne se guide qu'à 3 hex d'une unité non aéroportée) : `false`
+    // ferme l'hex, `null` laisse la règle générique ci-dessus faire foi.
+    if (moduleRules.supportHexAllowed?.({ col: hex.c, row: hex.r }) === false) return false
     return true
   }
 

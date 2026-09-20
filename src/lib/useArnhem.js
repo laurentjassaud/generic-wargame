@@ -70,11 +70,19 @@
 //         reste du moteur ignore.
 //       • `terrain` : `module.terrain` (`grid` hexId → type, `types`) — pour
 //         les règles liées au terrain (ex. retraite en ville).
+//       • `counters` : FONCTION `() => pions actuellement posés sur la
+//         carte` — pour les règles qui regardent la POSITION des unités
+//         (ex. la portée du soutien au sol ci-dessous). Une fonction, et non
+//         une ref, parce que HexMap.vue appelle ce composable AVANT de
+//         déclarer ses `counters` (même raison que `reinforcements` dans
+//         lib/useAssisted.js) ; appelée depuis un `computed` ou un rendu,
+//         elle reste parfaitement réactive.
 //       • `rules` : `module.rules` résolues (cf. lib/rules.js) — les
 //         VALEURS des règles particulières y sont déclarées par le module
 //         (ex. `airborneArrivalSpentMp`), leur LOGIQUE reste ici.
 import { computed, unref } from 'vue'
 import { hexId } from './calibration.js'
+import { hexDistance } from './hex.js'
 import { isAirborneEntry } from './setup.js'
 
 // Identifiant du module concerné, tel qu'il figure dans
@@ -104,6 +112,20 @@ export const ARNHEM_MODULE_ID = 'arnhem'
 //     entamé, ce qui compte pour toutes les règles qui regardent les MP
 //     dépensés, pas seulement pour le reste disponible.
 const DEFAULT_AIRBORNE_ARRIVAL_SPENT_MP = 4
+
+// Règle du SOUTIEN AU SOL (cf. `supportHexAllowed` plus bas) — restriction
+// propre à Arnhem : l'appui ne se guide que depuis le sol, et seules les
+// troupes venues par la route en ont les moyens. Portée (en hex) entre l'hex
+// visé et l'unité alliée qui le guide ; la valeur vient du module
+// (`rules.groundSupportSpotterRange`, cf. arnhem.json ; 3 à défaut).
+const DEFAULT_GROUND_SUPPORT_SPOTTER_RANGE = 3
+
+// Unités alliées qui NE PEUVENT PAS guider le soutien : tout ce qui est
+// arrivé par les airs. Test sur le `type` du pion (cf. arnhem.json) plutôt
+// que sur une liste d'ids : "airborne infantry", "airborne arty" et "glider"
+// sont ainsi tous écartés, et un type ajouté plus tard le sera aussi dès lors
+// qu'il porte l'un des deux mots.
+const AIRBORNE_TYPE = /airborne|glider/i
 
 export function useArnhem(moduleId, ctx = {}) {
   // Vrai seulement si la partie en cours EST Arnhem. Toutes les règles
@@ -224,6 +246,60 @@ export function useArnhem(moduleId, ctx = {}) {
     airborneArrivals.clear()
   }
 
+  // --- Soutien au sol : qui peut le guider ? ---------------------------------
+
+  /** Portée (en hex) de la règle ci-dessous, déclarée par le module
+   *  (`rules.groundSupportSpotterRange`, cf. arnhem.json), ou 3 à défaut. */
+  function groundSupportSpotterRange() {
+    const declared = ctx.rules?.groundSupportSpotterRange
+    return Number.isFinite(declared) ? declared : DEFAULT_GROUND_SUPPORT_SPOTTER_RANGE
+  }
+
+  /** L'unité `counter` peut-elle GUIDER le soutien au sol ? Il lui faut
+   *  être une vraie unité (cf. `ctx.isUnit` : ni marqueur "DZ", ni pion de
+   *  soutien, qui n'a d'ailleurs pas de faction), d'une faction ALLIÉE (cf.
+   *  `ctx.sides` — le soutien d'Arnhem est allié, cf. `supportTrack.side`
+   *  dans arnhem.json), et n'être arrivée NI par parachute NI par planeur
+   *  (cf. `AIRBORNE_TYPE`). */
+  function spotsGroundSupport(counter) {
+    if (!ctx.isUnit?.(counter)) return false
+    if (!alliedFactions.value.includes(counter.faction)) return false
+    return !AIRBORNE_TYPE.test(counter.type ?? '')
+  }
+
+  /** Règle du SOUTIEN AU SOL (ground support) — RESTRICTION D'EMPLOI propre
+   *  à Arnhem : un pion de soutien ne peut être engagé, EN ATTAQUE COMME EN
+   *  DÉFENSE, que sur un hex situé à `groundSupportSpotterRange` hex (3) ou
+   *  moins d'une unité alliée qui n'est ni aéroportée ni planeur (cf.
+   *  `spotsGroundSupport`).
+   *
+   *  Pourquoi : l'appui se règle depuis le sol, et seules les unités venues
+   *  par la route en ont les moyens — les aéroportés, eux, ont perdu leurs
+   *  liaisons. La règle générique du moteur, elle, donne au soutien une
+   *  portée ILLIMITÉE ([9.13], cf. lib/useCombat.js::canPlaceSupportHex) :
+   *  c'est exactement ce que cette règle-ci vient borner.
+   *
+   *  Appelée par lib/useCombat.js::canPlaceSupportHex, pour chaque hex où le
+   *  joueur pourrait poser un pion de soutien (surlignage de la carte compris,
+   *  cf. HexMap.vue::isSupportTargetHex), et par HexMap.vue pour l'engagement
+   *  EN LIGNE du soutien de défense (le défenseur n'a pas la main : ses pions
+   *  sont posés par le client adverse sur le premier hex attaqué).
+   *
+   *  @param hex `{ col, row }` — l'hex où le pion serait posé, c.-à-d. l'hex
+   *    attaqué (le soutien est toujours posé sur sa cible).
+   *  @returns `false` pour INTERDIRE l'hex, `null` quand la règle ne se
+   *    prononce pas — hors module Arnhem, hors mode Assisté (en mode Libre
+   *    les pions se glissent librement, comme tout le reste), ou hex bien
+   *    guidé. Ne renvoie jamais `true` : cette règle ne fait que retirer des
+   *    hex, elle n'en ouvre aucun que le moteur aurait refusé. */
+  function supportHexAllowed(hex) {
+    if (!active.value || !unref(ctx.assisted)) return null
+    const range = groundSupportSpotterRange()
+    const guided = (ctx.counters?.() ?? []).some((counter) =>
+      spotsGroundSupport(counter) && hexDistance(counter, hex) <= range)
+    return guided ? null : false
+  }
+
   /** Type de terrain de l'hex `hex` ({ col, row }, col 0-based comme les
    *  pions) — lu dans `ctx.terrain.grid`, même clé que
    *  lib/useAssisted.js::terrainAreaCost. `undefined` si non déclaré. */
@@ -288,5 +364,8 @@ export function useArnhem(moduleId, ctx = {}) {
     return { total, reason: 'hex City (règle Arnhem)' }
   }
 
-  return { active, autoPlacesAtLoad, noteAirborneArrival, airborneArrivalSpentMp, clearTurnState, cityRetreatReduction }
+  return {
+    active, autoPlacesAtLoad, noteAirborneArrival, airborneArrivalSpentMp, clearTurnState,
+    supportHexAllowed, cityRetreatReduction,
+  }
 }

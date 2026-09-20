@@ -538,6 +538,10 @@ const moduleRules = useModuleRules(toRef(props, 'moduleId'), {
   assisted: toRef(props, 'assisted'),
   terrain: props.module.terrain,
   rules,
+  // Pions posés sur la carte, passés en FONCTION : `counters` n'est déclaré
+  // que plus bas (il dépend de `autoPlacesAtLoad`, donc de ce composable) —
+  // même détour que `reinforcements` avec useAssisted().
+  counters: () => counters.value,
 })
 
 // Marqueurs / pions de soutien / unités combattantes : cf. lib/units.js
@@ -634,7 +638,10 @@ const {
 } = useCombat(toRef(props, 'assisted'), phase, counters, canControl, props.module.terrain, combatEdgeKind, combatTable, artillery,
   // Tablette de soutien du module (cf. SupportTracker.vue) et camp actif :
   // de quoi savoir ce que vaut un pion de soutien et s'il attaque ou défend.
-  { track: props.module.supportTrack, activeSide: computed(() => turnInfo.value.activeSideKey) })
+  { track: props.module.supportTrack, activeSide: computed(() => turnInfo.value.activeSideKey) },
+  // Règles particulières du module qui touchent au combat (cf.
+  // lib/useArnhem.js) — inertes pour un module qui n'en déclare pas.
+  moduleRules)
 
 // Application du résultat d'un combat (retraites au clic, éliminations — cf.
 // lib/useRetreat.js, qui porte toute la règle). HexMap.vue ne lui fournit que
@@ -801,7 +808,22 @@ const supportView = computed(() => {
 const defenderSupportTokens = computed(() => {
   if (!props.online || !props.module.supportTrack?.side || supportAttacking.value) return []
   if (fpfStatus.value !== 'defending' || supportBarred.value) return []
+  if (!defenderSupportHexOk.value) return []
   return supportTrackerRef.value?.trayTokens() ?? []
+})
+
+/** L'hex où les pions de soutien du DÉFENSEUR seraient posés accepte-t-il le
+ *  soutien ? En ligne, le défenseur n'a pas la main : il coche ses pions dans
+ *  la modale et c'est le client de l'attaquant qui les pose, toujours sur le
+ *  PREMIER hex cible (cf. `placeDefenderSupports`) — c'est donc cet hex-là
+ *  qu'il faut soumettre à la règle de placement (cf.
+ *  lib/useCombat.js::canPlaceSupportHex, et la restriction de portée du
+ *  module, cf. lib/useArnhem.js::supportHexAllowed). Calculé à l'identique
+ *  sur les deux écrans : celui du défenseur (pour lui proposer ses pions) et
+ *  celui de l'attaquant (pour savoir s'il doit lui soumettre le combat). */
+const defenderSupportHexOk = computed(() => {
+  const target = combatTargetHexes.value[0]
+  return !!target && canPlaceSupportHex({ c: target.col, r: target.row })
 })
 
 /** Le défenseur POURRAIT-il engager des pions de soutien contre ce combat ?
@@ -809,7 +831,7 @@ const defenderSupportTokens = computed(() => {
  *  combat, même sans artillerie éligible au FPF (cf. `fpfView`). */
 const defenderMaySupport = computed(() =>
   props.online && !!props.module.supportTrack?.side && combatActive.value && !supportAttacking.value
-  && !supportBarred.value && (supportTrackerRef.value?.trayTokens().length ?? 0) > 0)
+  && !supportBarred.value && defenderSupportHexOk.value && (supportTrackerRef.value?.trayTokens().length ?? 0) > 0)
 
 /** Les artilleries éligibles au FPF se choisissent-elles sur CET écran ? */
 const fpfChoosable = computed(() => fpfView.value?.mode === 'local' || fpfView.value?.mode === 'defender')

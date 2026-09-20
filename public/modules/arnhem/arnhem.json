@@ -1424,6 +1424,7 @@
     },
     "entryCongestion": "multiply",
     "airborneArrivalSpentMp": 4,
+    "groundSupportSpotterRange": 3,
     "mapExit": {
       "side": "german",
       "zones": [
