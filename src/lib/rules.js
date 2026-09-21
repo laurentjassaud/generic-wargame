@@ -39,11 +39,15 @@ export const DEFAULT_RULES = Object.freeze({
   // aucune unité ne peut quitter la carte. Un module qui l'autorise déclare
   // `{ side, zones: [{ id, label, hexes }] }` (cf. `resolveMapExit`).
   mapExit: null,
-  // Démolition des ponts (cf. lib/useDemolition.js) : `null` — aucun pont
+  // Démolition des ponts (cf. lib/useBridges.js) : `null` — aucun pont
   // n'est démolissable. Un module qui la connaît déclare
   // `{ layers, trigger, by, destroyOn, reveals, fallback }` (cf.
   // `resolveBridgeDemolition`).
   bridgeDemolition: null,
+  // Réparation des ponts (cf. lib/useBridges.js) : `null` — un pont démoli
+  // le reste. Un module qui la connaît déclare `{ layers, by, unitTypes,
+  // undisturbedSide }` (cf. `resolveBridgeRepair`).
+  bridgeRepair: null,
 })
 
 export const ENTRY_CONGESTION_MODES = ['multiply', 'none']
@@ -87,7 +91,7 @@ export function resolveMapExit(raw) {
 /** `rules.bridgeDemolition` → `{ layers, trigger, by, destroyOn, reveals,
  *  fallback }` vérifié, ou `null` (aucun pont démolissable dans ce module).
  *
- *  La règle (cf. lib/useDemolition.js) : un pont posé sur l'une des `layers`
+ *  La règle (cf. lib/useBridges.js) : un pont posé sur l'une des `layers`
  *  du module (couches d'arêtes, cf. lib/edges.js — pour Arnhem, les ponts de
  *  canal et de chemin de fer, jamais les ponts routiers) peut être démoli dès
  *  qu'une unité du camp `trigger` occupe l'un des deux hex qu'il relie. C'est
@@ -111,7 +115,7 @@ export function resolveBridgeDemolition(raw) {
   return {
     layers,
     // Camp dont la présence ouvre l'occasion ; à défaut, n'importe quelle
-    // unité ennemie du camp qui décide (cf. lib/useDemolition.js).
+    // unité ennemie du camp qui décide (cf. lib/useBridges.js).
     trigger: typeof raw.trigger === 'string' && raw.trigger ? raw.trigger : null,
     by: raw.by,
     // Nombre de faces du dé (6 à défaut) et faces qui font sauter le pont.
@@ -122,6 +126,35 @@ export function resolveBridgeDemolition(raw) {
     // Comment nommer un pont de chaque couche, pour la modale et le journal.
     labels: Object.fromEntries(layers.map((layer) => [layer,
       typeof labels[layer] === 'string' && labels[layer] ? labels[layer] : 'pont'])),
+  }
+}
+
+/** `rules.bridgeRepair` → `{ layers, by, unitTypes, undisturbedSide }`
+ *  vérifié, ou `null` (aucun pont ne se répare dans ce module).
+ *
+ *  La règle (cf. lib/useBridges.js) : une unité du camp `by` dont le type est
+ *  dans `unitTypes` (le génie), postée dans un hex que borde un pont DÉMOLI
+ *  d'une des `layers`, peut le remettre en état — à condition d'avoir passé
+ *  TOUT le tour du camp `undisturbedSide` hors de ses zones de contrôle. La
+ *  réparation se confirme pendant la phase de Fin de tour, et le pont
+ *  redevient ce qu'il était : franchissable, et hors d'atteinte d'une
+ *  nouvelle démolition.
+ *
+ *  `layers` est un SOUS-ENSEMBLE des couches démolissables : à Arnhem, le
+ *  génie relève les ponts de canal, jamais ceux du chemin de fer. `by` et
+ *  `unitTypes` sont indispensables — sans eux, personne pour réparer. */
+export function resolveBridgeRepair(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.by !== 'string' || !raw.by) return null
+  const layers = (Array.isArray(raw.layers) ? raw.layers : []).filter((layer) => typeof layer === 'string' && layer)
+  const unitTypes = (Array.isArray(raw.unitTypes) ? raw.unitTypes : []).filter((type) => typeof type === 'string' && type)
+  if (!layers.length || !unitTypes.length) return null
+  return {
+    layers,
+    by: raw.by,
+    unitTypes,
+    // Camp dont le tour doit se passer sans que le réparateur entre dans ses
+    // ZOC ; à défaut, aucune condition de ce genre.
+    undisturbedSide: typeof raw.undisturbedSide === 'string' && raw.undisturbedSide ? raw.undisturbedSide : null,
   }
 }
 
@@ -144,5 +177,6 @@ export function resolveRules(raw) {
     entryCongestion: ENTRY_CONGESTION_MODES.includes(rules.entryCongestion) ? rules.entryCongestion : DEFAULT_RULES.entryCongestion,
     mapExit: resolveMapExit(rules.mapExit),
     bridgeDemolition: resolveBridgeDemolition(rules.bridgeDemolition),
+    bridgeRepair: resolveBridgeRepair(rules.bridgeRepair),
   }
 }

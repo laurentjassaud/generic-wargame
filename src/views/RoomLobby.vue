@@ -127,13 +127,14 @@ function attachSocketListeners() {
   socket.on('game:fpf-cancel', ({ id }) => {
     hexMapRef.value?.applyRemoteFpfCancel(id)
   })
-  // Démolition des ponts (cf. src/lib/useDemolition.js) : l'occasion soumise
-  // au camp qui décide, puis le sort du pont, que tous appliquent.
-  socket.on('game:demolition-request', ({ request }) => {
-    hexMapRef.value?.applyRemoteDemolitionRequest(request)
+  // Sort des ponts (cf. src/lib/useBridges.js) : l'occasion soumise au camp
+  // qui doit la trancher — démolir ou réparer —, puis sa décision, que tous
+  // appliquent.
+  socket.on('game:bridge-request', ({ request }) => {
+    hexMapRef.value?.applyRemoteBridgeRequest(request)
   })
-  socket.on('game:demolition', (result) => {
-    hexMapRef.value?.applyRemoteDemolition(result)
+  socket.on('game:bridge', (result) => {
+    hexMapRef.value?.applyRemoteBridge(result)
   })
   socket.on('connect', () => {
     // Reconnexion (auto par socket.io après coupure réseau) : on rejoint à
@@ -207,14 +208,14 @@ function onFpfReply({ requestId, fpfIds, supportIds }) {
   getSocket().emit('game:fpf-reply', { gameId: props.id, requestId, fpfIds, supportIds })
 }
 
-/** Le plateau soumet une occasion de démolition au camp qui décide. */
-function onDemolitionRequest(request) {
-  getSocket().emit('game:demolition-request', { gameId: props.id, request })
+/** Le plateau soumet une occasion au camp qui doit la trancher. */
+function onBridgeRequest(request) {
+  getSocket().emit('game:bridge-request', { gameId: props.id, request })
 }
 
-/** Le camp décideur publie le sort d'un pont — `{ edge, die, destroyed }`. */
-function onDemolition(result) {
-  getSocket().emit('game:demolition', { gameId: props.id, ...result })
+/** Le camp qui tranche publie sa décision — `{ edge, kind, ... }`. */
+function onBridge(result) {
+  getSocket().emit('game:bridge', { gameId: props.id, ...result })
 }
 
 // Déploiement initial (et tour de départ) proposés par le plateau : ceux que
@@ -260,8 +261,8 @@ onUnmounted(() => {
   socket.off('game:fpf-request')
   socket.off('game:fpf-reply')
   socket.off('game:fpf-cancel')
-  socket.off('game:demolition-request')
-  socket.off('game:demolition')
+  socket.off('game:bridge-request')
+  socket.off('game:bridge')
   socket.off('connect')
 })
 </script>
@@ -338,8 +339,8 @@ onUnmounted(() => {
       :initial-blitz-used-ms="room.blitzUsedMs ?? {}"
       :initial-blitz-loser="room.blitzLoser ?? null"
       :initial-fpf-request="room.fpfRequest ?? null"
-      :initial-demolitions="room.demolitions ?? []"
-      :initial-demolition-request="room.demolitionRequest ?? null"
+      :initial-bridge-log="room.bridgeLog ?? []"
+      :initial-bridge-request="room.bridgeRequest ?? null"
       :local-side="mySide"
       online
       :initial-journal="sharedJournal"
@@ -356,8 +357,8 @@ onUnmounted(() => {
       @fpf-request="onFpfRequest"
       @fpf-cancel="onFpfCancel"
       @fpf-reply="onFpfReply"
-      @demolition-request="onDemolitionRequest"
-      @demolition="onDemolition"
+      @bridge-request="onBridgeRequest"
+      @bridge="onBridge"
     />
   </div>
 </template>

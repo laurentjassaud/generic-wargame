@@ -125,14 +125,16 @@ export function createGame({ moduleId, scenarioId, variants, settings, maxPlayer
     // à `null` tant qu'il n'a pas répondu — ou `null`. Conservé pour qu'un
     // joueur qui recharge la page retrouve la négociation en cours.
     fpfRequest: null,
-    // Démolition des ponts (cf. src/lib/useDemolition.js) : sort de chaque
-    // pont déjà tranché — `[{ edge, destroyed }]` —, transmis à qui (re)joint
-    // la partie pour qu'il retrouve la carte telle qu'elle est.
-    demolitions: [],
-    // Occasion de démolition soumise au camp qui décide, quand il n'a pas la
-    // main — `{ id, edge }` ou `null`. Conservée pour qu'un joueur qui
-    // recharge sa page retrouve la décision en attente.
-    demolitionRequest: null,
+    // Sort des ponts (cf. src/lib/useBridges.js) : chaque décision déjà
+    // prise, DANS L'ORDRE — `[{ edge, kind, die, destroyed, unitId }]`, une
+    // démolition puis, le cas échéant, la réparation qui la défait. Transmis
+    // à qui (re)joint la partie pour qu'il retrouve la carte telle qu'elle
+    // est ; c'est l'ordre qui la reconstitue, pas la seule dernière entrée.
+    bridgeLog: [],
+    // Occasion soumise au camp qui doit la trancher, quand il n'a pas la main
+    // — `{ id, edge, kind, unitId }` ou `null`. Conservée pour qu'un joueur
+    // qui recharge sa page retrouve la décision en attente.
+    bridgeRequest: null,
   }
   games.set(id, game)
   return game
@@ -176,8 +178,8 @@ export function toPublic(game) {
     blitzUsedMs: game.blitzUsedMs,
     blitzLoser: game.blitzLoser,
     fpfRequest: game.fpfRequest,
-    demolitions: game.demolitions,
-    demolitionRequest: game.demolitionRequest,
+    bridgeLog: game.bridgeLog,
+    bridgeRequest: game.bridgeRequest,
   }
 }
 
@@ -430,54 +432,87 @@ export function cancelFpfRequest(id, requestId) {
   return true
 }
 
-// --- Démolition des ponts en ligne ----------------------------------------------
-// Le sort d'un pont est tranché par UN camp (cf. src/lib/useDemolition.js —
-// l'allemand à Arnhem), qui n'a pas toujours la main. Quand c'est le cas, le
-// joueur actif lui SOUMET l'occasion (`recordDemolitionRequest`) et attend ;
-// le camp décideur lance son dé et publie le RÉSULTAT (`recordDemolition`),
-// que tous appliquent. Quand le camp décideur a la main, il décide sans
-// demande préalable et publie directement son résultat.
+// --- Sort des ponts en ligne ----------------------------------------------------
+// Démolir un pont et le relever sont tranchés par des camps OPPOSÉS (cf.
+// src/lib/useBridges.js — l'allemand fait sauter, le génie allié répare), et
+// aucun des deux n'a systématiquement la main. Quand celui qui décide ne l'a
+// pas, le joueur actif lui SOUMET l'occasion (`recordBridgeRequest`) et
+// attend ; le camp décideur publie sa décision (`recordBridgeResult`), que
+// tous appliquent. Quand il a la main, il décide sans demande préalable.
 // Comme pour le FPF, le serveur ne connaît pas les règles : il relaie, garde
-// l'occasion en attente pour une page rechargée, et tient la liste des ponts
-// déjà réglés pour un joueur qui rejoint en cours de partie.
+// l'occasion en attente pour une page rechargée, et tient l'historique des
+// ponts pour un joueur qui rejoint en cours de partie.
 
 /** Clé d'arête reçue d'un client ("CCRR-CCRR"), ou `null` si invalide. */
 function sanitizeEdge(edge) {
   return typeof edge === 'string' && /^\d{4}-\d{4}$/.test(edge) ? edge : null
 }
 
+/** Sorte de décision reçue d'un client, ou `null`. */
+function sanitizeKind(kind) {
+  return kind === 'repair' || kind === 'demolition' ? kind : null
+}
+
+/** Id de pion reçu d'un client (le génie qui répare), ou `null`. */
+function sanitizeUnitId(unitId) {
+  if (unitId == null) return null
+  const ok = (typeof unitId === 'string' || typeof unitId === 'number') && String(unitId).length <= 64
+  return ok ? String(unitId) : null
+}
+
 /** Le joueur actif soumet l'occasion au camp décideur. `request` :
- *  `{ id, edge }`. Renvoie la demande assainie (celle qui est relayée). */
-export function recordDemolitionRequest(id, request) {
+ *  `{ id, edge, kind, unitId }`. Renvoie la demande assainie (relayée). */
+export function recordBridgeRequest(id, request) {
   const game = startedGame(id)
   if (game.blitzLoser) throw new RoomError('game-over')
   const requestId = request?.id
   const edge = sanitizeEdge(request?.edge)
-  if (typeof requestId !== 'string' || !requestId || requestId.length > 64 || !edge) throw new RoomError('bad-demolition')
-  game.demolitionRequest = { id: requestId, edge }
+  const kind = sanitizeKind(request?.kind) ?? 'demolition'
+  if (typeof requestId !== 'string' || !requestId || requestId.length > 64 || !edge) throw new RoomError('bad-bridge')
+  game.bridgeRequest = { id: requestId, edge, kind, unitId: sanitizeUnitId(request?.unitId) }
   touch(game)
-  return game.demolitionRequest
+  return game.bridgeRequest
 }
 
-/** Le camp décideur publie le sort d'un pont : `{ edge, die, destroyed }` —
- *  `die` à `null` s'il a renoncé sans lancer. Clôt l'occasion en attente, si
- *  c'est bien de ce pont qu'elle parlait, et retient le résultat pour les
- *  joueurs qui rejoindront ensuite. Renvoie le résultat relayé. */
-export function recordDemolition(id, { edge, die = null, destroyed } = {}) {
+/** Le camp décideur publie sa décision : `{ edge, kind, die, destroyed,
+ *  unitId, declined }` — `die` à `null` s'il a renoncé sans lancer,
+ *  `declined` pour une réparation refusée (qui ne change rien à la carte mais
+ *  clôt l'occasion). Retenue DANS L'ORDRE pour les joueurs qui rejoindront
+ *  ensuite, et clôt l'occasion en attente si c'est bien de ce pont qu'elle
+ *  parlait. Renvoie le résultat relayé. */
+export function recordBridgeResult(id, { edge, kind, die = null, destroyed, unitId, declined } = {}) {
   const game = startedGame(id)
   const clean = sanitizeEdge(edge)
-  if (!clean) throw new RoomError('bad-demolition')
-  const result = { edge: clean, die: Number.isInteger(die) ? die : null, destroyed: !!destroyed }
-  // Un pont ne se tranche qu'une fois : une seconde publication (deux clients
-  // qui se croisent) ne doit pas doubler la liste.
-  if (!game.demolitions.some((settled) => sameEdge(settled.edge, clean))) game.demolitions.push(result)
-  if (game.demolitionRequest && sameEdge(game.demolitionRequest.edge, clean)) game.demolitionRequest = null
+  if (!clean) throw new RoomError('bad-bridge')
+  const result = {
+    edge: clean,
+    kind: sanitizeKind(kind) ?? 'demolition',
+    die: Number.isInteger(die) ? die : null,
+    destroyed: !!destroyed,
+    unitId: sanitizeUnitId(unitId),
+    declined: !!declined,
+  }
+  // Une réparation refusée ne laisse aucune trace sur la carte : inutile de
+  // la rejouer à qui rejoint la partie.
+  if (!result.declined && !isRepeat(game.bridgeLog, result)) game.bridgeLog.push(result)
+  if (game.bridgeRequest && sameEdge(game.bridgeRequest.edge, clean)) game.bridgeRequest = null
   touch(game)
   return result
 }
 
+/** Cette décision est-elle celle que l'historique porte DÉJÀ en dernier pour
+ *  ce pont (deux clients qui se croisent) ? Un même pont peut y figurer
+ *  plusieurs fois — démoli, puis relevé —, mais jamais deux fois de suite
+ *  pour la même chose. */
+function isRepeat(log, result) {
+  for (let index = log.length - 1; index >= 0; index -= 1) {
+    if (sameEdge(log[index].edge, result.edge)) return log[index].kind === result.kind
+  }
+  return false
+}
+
 /** Deux clés d'arête désignent-elles le même hexside ? Le client peut nommer
- *  l'arête dans l'un ou l'autre sens (cf. src/lib/useDemolition.js). */
+ *  l'arête dans l'un ou l'autre sens (cf. src/lib/useBridges.js). */
 function sameEdge(edgeA, edgeB) {
   if (edgeA === edgeB) return true
   const [hexA, hexB] = String(edgeA).split('-')

@@ -1,12 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// useDemolition — DÉMOLITION DES PONTS du mode "Assisté"
+// useBridges — SORT DES PONTS du mode "Assisté" : démolition et réparation
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// Certains ponts d'une carte peuvent SAUTER en cours de partie. Le module
-// déclare lesquels et à quelles conditions (`rules.bridgeDemolition`, cf.
-// lib/rules.js::resolveBridgeDemolition) ; ce fichier porte la règle, et
-// lib/edges.js le versant "nature d'arête" (ce que laisse un pont démoli).
-// Sans cette déclaration, tout ici reste INERTE : aucune occasion ne s'ouvre
+// Certains ponts d'une carte peuvent SAUTER en cours de partie, et certains
+// de ceux-là peuvent ensuite être REMIS EN ÉTAT. Le module déclare les deux
+// (`rules.bridgeDemolition` et `rules.bridgeRepair`, cf. lib/rules.js) ; ce
+// fichier porte les deux règles et l'état qu'elles partagent, et lib/edges.js
+// le versant "nature d'arête" (ce que laisse un pont démoli).
+// Sans ces déclarations, tout ici reste INERTE : aucune occasion ne s'ouvre
 // et `isDemolished` répond toujours faux — un module qui n'en a pas joue donc
 // exactement comme avant.
 //
@@ -19,6 +20,17 @@
 // destruction, ou si le jet ne détruit pas le pont, il ne pourra plus le
 // faire : le pont restera intact pour tout le reste de la partie. »
 //
+// ─── LA RÈGLE DE RÉPARATION (Arnhem) ─────────────────────────────────────────
+// « Le génie allié peut réparer les ponts de canal détruits. S'il se trouve
+// dans un hex que borde un pont de canal détruit ET qu'il passe TOUT le tour
+// allemand hors des zones de contrôle allemandes, une modale lui est
+// présentée pendant la phase allemande de Fin de tour pour confirmer la
+// réparation d'un pont. Un pont réparé vaut un pont jamais détruit — et il ne
+// peut plus être démoli. »
+//
+// La réparation ramène donc le pont à l'état SCELLÉ ci-dessous : franchissable
+// comme avant, et hors d'atteinte d'une nouvelle démolition (rond VERT).
+//
 // Trois états, donc, pour chaque pont démolissable :
 //   - EN SURSIS : rien ne s'est encore passé. Tant qu'aucune unité du camp
 //     `trigger` ne borde le pont, il n'y a pas d'occasion ; dès qu'il y en a
@@ -26,8 +38,8 @@
 //   - DÉTRUIT (`demolishedKeys`) : l'arête ne vaut plus que par l'obstacle
 //     que le pont franchissait (cf. lib/edges.js::revealedKind) — rond ROUGE ;
 //   - SCELLÉ (`sealedKeys`) : l'occasion a été tranchée sans destruction (dé
-//     raté ou renoncement) ; le pont tient pour le reste de la partie et ne
-//     sera plus jamais proposé — rond VERT.
+//     raté ou renoncement), OU le pont a été réparé ; il tient pour le reste
+//     de la partie et ne sera plus jamais proposé — rond VERT.
 // Les ponts en sursis ne portent aucune marque : la carte n'a pas à se
 // couvrir de ronds pour quinze ponts dont rien n'est encore joué.
 //
@@ -41,24 +53,46 @@
 // carte : elle se recalcule d'elle-même dès qu'un pion bouge, d'où qu'il
 // vienne.
 //
+// ─── « TOUT LE TOUR HORS ZOC » : COMMENT ON LE SAIT ──────────────────────────
+// Le réparateur, lui, ne bouge pas pendant le tour adverse — ce sont les
+// ennemis qui viennent à lui, et qui peuvent tout aussi bien repartir. Une
+// vérification faite à la seule Fin de tour manquerait donc l'ennemi qui est
+// passé à côté au milieu de la phase de Mouvement. `watchUndisturbed` suit
+// l'état de la carte pendant tout le pas du camp surveillé et retient, dès
+// qu'elle se produit, l'entrée d'un réparateur en ZOC (cf. `disturbedIds`) ;
+// la Fin de tour n'a plus qu'à lire cette mémoire, remise à zéro à chaque
+// nouveau pas.
+//
 // ─── CE QUI EST JOURNALISÉ ───────────────────────────────────────────────────
-// Chaque décision donne une entrée de journal `demolition` (cf. HexMap.vue) :
-// l'arête, le dé s'il a été lancé, et si le pont est tombé. `applyReplay` la
-// rejoue telle quelle — c'est elle qui fait autorité, jamais un nouveau
-// tirage, sans quoi un journal rechargé raconterait une autre partie.
+// Chaque décision donne une entrée de journal — `demolition` (l'arête, le dé
+// s'il a été lancé, si le pont est tombé) ou `repair` (l'arête, l'unité qui
+// l'a relevé), cf. HexMap.vue. `applyReplay` les rejoue telles quelles : elles
+// font autorité, jamais un nouveau tirage, sans quoi un journal rechargé
+// raconterait une autre partie.
 //
 // Paramètres reçus :
 //   - `assisted` : ref/computed booléen — hors mode Assisté, aucune règle.
 //   - `terrain` : `module.terrain` — pour retrouver les arêtes des couches
 //     démolissables (cf. lib/edges.js).
 //   - `demolition` : `rules.bridgeDemolition` résolu, ou `null`.
+//   - `repair` : `rules.bridgeRepair` résolu, ou `null`.
 //   - `counters` : ref des pions posés sur la carte.
 //   - `sideOf` : `(counter) => clé de camp | null` (cf. HexMap.vue::
 //     sideOfCounter) — pour reconnaître le camp `trigger`.
 //   - `isFighter` : cf. lib/units.js — ni marqueur, ni pion de soutien : une
 //     zone de largage posée près d'un pont n'ouvre aucune occasion.
+//   - `enemyZocSet` : `(counter) => Set("col,row")` (cf. lib/useAssisted.js)
+//     — les hex sous ZOC ennemie, pour la condition « hors ZOC » de la
+//     réparation. Passée en LAMBDA : HexMap.vue crée ce composable avant
+//     useAssisted(), d'où elle vient.
+//   - `activeSide` : ref/computed de la clé du camp qui a la main (cf.
+//     HexMap.vue::turnInfo) — le pas surveillé est celui du camp
+//     `undisturbedSide`.
+//   - `step` : ref/computed du pas courant de la piste de tour (un par camp
+//     et par tour, cf. TurnTracker.vue) — change de pas, et la mémoire du
+//     « tour passé tranquille » repart de zéro.
 import { computed, ref } from 'vue'
-import { parseHexId } from './calibration.js'
+import { hexId, parseHexId } from './calibration.js'
 import { resolveEdges } from './edges.js'
 
 /** Les deux sens d'une arête "AAAA-BBBB" — le JSON ne la liste qu'une fois,
@@ -68,7 +102,11 @@ function bothWays(edgeKey) {
   return [hexA + '-' + hexB, hexB + '-' + hexA]
 }
 
-export function useDemolition({ assisted, terrain, demolition = null, counters, sideOf = () => null, isFighter = () => true }) {
+export function useBridges({
+  assisted, terrain, demolition = null, repair = null, counters,
+  sideOf = () => null, isFighter = () => true,
+  enemyZocSet = () => new Set(), activeSide = { value: null }, step = { value: 0 },
+}) {
   // Interprète des arêtes, reconstruit ICI plutôt que reçu de
   // lib/useAssisted.js : c'est un objet PUR (il ne dépend que de `terrain`,
   // qui ne change pas en cours de partie), et l'ordre d'appel l'impose —
@@ -188,6 +226,123 @@ export function useDemolition({ assisted, terrain, demolition = null, counters, 
     settle(edge, !!destroyed)
   }
 
+  // --- Réparation (cf. l'en-tête) --------------------------------------------
+
+  /** La règle de réparation s'applique-t-elle dans ce module ? */
+  const repairActive = computed(() => !!assisted.value && !!repair)
+
+  // Pas de la piste de tour actuellement SURVEILLÉ (cf. l'en-tête), et
+  // réparateurs qui y sont entrés en ZOC ennemie — ils ne pourront rien
+  // relever à la Fin de ce tour-là. Repart de zéro à chaque nouveau pas.
+  const watchedStep = ref(null)
+  const disturbedIds = ref(new Set())
+
+  // Réparateurs ayant DÉJÀ été employés (ou écartés) pendant le pas courant :
+  // un pont par réparateur et par tour, et une occasion refusée ne revient pas
+  // se proposer en boucle. Remis à zéro avec `disturbedIds`.
+  const spentRepairerIds = ref(new Set())
+
+  /** Les unités capables de réparer : celles du camp `by` dont le type figure
+   *  dans `unitTypes` (le génie allié à Arnhem). */
+  const repairers = computed(() => {
+    if (!repairActive.value) return []
+    return counters.value.filter((counter) => isFighter(counter)
+      && sideOf(counter) === repair.by && repair.unitTypes.includes(counter.type))
+  })
+
+  /** Suit le pas surveillé et note les réparateurs dérangés (cf. l'en-tête).
+   *  À appeler dès que la carte change — HexMap.vue le branche sur un
+   *  `watchEffect` créé AU MONTAGE, parce que `enemyZocSet` lui vient d'un
+   *  composable construit après celui-ci. */
+  function watchUndisturbed() {
+    if (!repairActive.value || !repair.undisturbedSide) return
+    if (activeSide.value !== repair.undisturbedSide) return
+    // Nouveau pas du camp surveillé : la mémoire du tour précédent ne vaut
+    // plus rien.
+    if (watchedStep.value !== step.value) {
+      watchedStep.value = step.value
+      disturbedIds.value = new Set()
+      spentRepairerIds.value = new Set()
+    }
+    const disturbed = new Set(disturbedIds.value)
+    for (const unit of repairers.value) {
+      if (enemyZocSet(unit).has(unit.col + ',' + unit.row)) disturbed.add(String(unit.id))
+    }
+    if (disturbed.size !== disturbedIds.value.size) disturbedIds.value = disturbed
+  }
+
+  /** Ce réparateur a-t-il passé le tour surveillé tranquille — jamais en ZOC
+   *  ennemie, et pas déjà employé ce tour-ci ? Sans camp surveillé déclaré, la
+   *  condition tombe et seule la présence près du pont compte. */
+  function isUndisturbed(unit) {
+    const id = String(unit.id)
+    if (spentRepairerIds.value.has(id)) return false
+    if (!repair.undisturbedSide) return true
+    // Le pas surveillé doit être CELUI-CI : une mémoire qui date d'un autre
+    // pas ne prouve rien (page rechargée en pleine Fin de tour, par exemple).
+    if (watchedStep.value !== step.value) return false
+    return !disturbedIds.value.has(id)
+  }
+
+  /** OCCASIONS DE RÉPARATION ouvertes : pour chaque réparateur resté
+   *  tranquille, les ponts DÉMOLIS d'une couche réparable que borde son hex.
+   *  Chaque entrée : `{ key, layer, label, hexes, unit }` — `unit`, le pion
+   *  qui relèverait ce pont, pour la modale et le journal.
+   *
+   *  C'est l'APPELANT qui décide QUAND les présenter (à Arnhem, pendant la
+   *  phase de Fin de tour, cf. HexMap.vue) : ce composable ne connaît pas les
+   *  phases. */
+  const repairs = computed(() => {
+    if (!repairActive.value) return []
+    const list = []
+    for (const unit of repairers.value) {
+      if (!isUndisturbed(unit)) continue
+      const here = hexId(unit.col + 1, unit.row)
+      for (const edge of edges.demolishableEdges) {
+        if (!repair.layers.includes(edge.layer)) continue
+        if (edge.from !== here && edge.to !== here) continue
+        if (!demolishedKeys.value.has(edge.key)) continue
+        list.push({
+          key: edge.key,
+          layer: edge.layer,
+          label: demolition?.labels?.[edge.layer] ?? 'pont',
+          hexes: [edge.from, edge.to],
+          unit: { id: unit.id, name: unit.name },
+        })
+      }
+    }
+    return list
+  })
+
+  /** L'occasion de réparation à présenter MAINTENANT, `null` s'il n'y en a
+   *  aucune (cf. `repairs` : c'est l'appelant qui choisit le moment). */
+  const currentRepair = computed(() => repairs.value[0] ?? null)
+
+  /** Le pont `edgeKey` est REMIS EN ÉTAT : il redevient franchissable, et
+   *  passe du même coup hors d'atteinte d'une nouvelle démolition (cf.
+   *  `settle` : l'état SCELLÉ est exactement celui d'un pont qu'on ne peut
+   *  plus faire sauter). `unitId` : le réparateur, qui a fini son tour.
+   *  @returns `true` si la réparation a été enregistrée. */
+  function repairBridge(edgeKey, unitId = null) {
+    if (!repairActive.value) return false
+    const keys = bothWays(edgeKey)
+    const stillDown = new Set(demolishedKeys.value)
+    for (const key of keys) stillDown.delete(key)
+    demolishedKeys.value = stillDown
+    settle(edgeKey, false)
+    if (unitId != null) spentRepairerIds.value = new Set(spentRepairerIds.value).add(String(unitId))
+    return true
+  }
+
+  /** Le camp réparateur RENONCE pour ce tour-ci : son unité ne relèvera rien
+   *  avant le prochain (le pont, lui, reste démoli et réparable plus tard —
+   *  c'est toute la différence avec un renoncement à démolir). */
+  function declineRepair(unitId) {
+    if (unitId == null) return false
+    spentRepairerIds.value = new Set(spentRepairerIds.value).add(String(unitId))
+    return true
+  }
+
   /** Marques à peindre sur la carte (cf. HexMap.vue) : un rond par pont dont
    *  le sort est réglé — ROUGE s'il est détruit, VERT s'il tient. Les ponts
    *  en sursis n'en portent aucune (cf. l'en-tête). Chaque entrée :
@@ -205,12 +360,25 @@ export function useDemolition({ assisted, terrain, demolition = null, counters, 
       }))
   })
 
+  /** Rejeu d'une entrée `repair` du journal (cf. HexMap.vue) : le pont est
+   *  remis en état exactement comme il l'a été dans la partie d'origine. */
+  function applyRepairReplay({ edge, unitId = null } = {}) {
+    if (!edge) return
+    repairBridge(edge, unitId)
+  }
+
   /** Rechargement d'un journal : on repart de zéro (cf. HexMap.vue::
    *  resetBoardForReplay). */
   function reset() {
     demolishedKeys.value = new Set()
     sealedKeys.value = new Set()
+    watchedStep.value = null
+    disturbedIds.value = new Set()
+    spentRepairerIds.value = new Set()
   }
 
-  return { active, isDemolished, opportunities, current, bridgeAt, attempt, decline, applyReplay, marks, reset }
+  return {
+    active, isDemolished, opportunities, current, bridgeAt, attempt, decline, applyReplay, marks, reset,
+    repairActive, repairs, currentRepair, repairBridge, declineRepair, watchUndisturbed, applyRepairReplay,
+  }
 }

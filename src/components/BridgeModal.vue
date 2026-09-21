@@ -1,9 +1,15 @@
 <script setup>
-// Modale de DÉMOLITION D'UN PONT (mode Assisté — cf. lib/useDemolition.js,
-// qui porte toute la règle : quels ponts, qui décide, ce que fait le dé).
+// Modale du SORT D'UN PONT (mode Assisté — cf. lib/useBridges.js, qui porte
+// toute la règle : quels ponts, qui décide, ce que fait le dé). Elle sert les
+// deux décisions, selon sa prop `mode` :
+//   - 'demolition' : faire sauter un pont que l'ennemi borde. Le camp qui le
+//     tient tente le coup (un dé) ou renonce ; dans les deux cas c'est sa
+//     seule occasion, le pont ne se redemande plus jamais ;
+//   - 'repair' : relever un pont démoli, par un génie qui a passé le tour
+//     adverse tranquille. Pas de dé — il suffit de confirmer ; et refuser
+//     n'engage que ce tour-ci, le pont restant réparable plus tard.
 // Ce composant ne fait qu'AFFICHER l'occasion ouverte et renvoyer les deux
-// intentions du camp décideur : "attempt" (tenter la destruction) et
-// "decline" (renoncer — le pont tient alors pour le reste de la partie).
+// intentions du camp décideur : "attempt" (tenter/réparer) et "decline".
 //
 // BLOQUANTE (overlay), comme PhaseBlockedModal.vue et contrairement à
 // CombatModal.vue : la règle veut que la décision soit prise IMMÉDIATEMENT,
@@ -12,13 +18,16 @@
 // possibles sont des décisions de jeu, aucune n'est un "annuler".
 //
 // Le dé est purement décoratif pendant son roulement : la face retenue est
-// celle que lib/useDemolition.js::attempt a tirée, reçue ensuite par la prop
+// celle que lib/useBridges.js::attempt a tirée, reçue ensuite par la prop
 // `result` (même principe que CombatModal.vue).
 import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
-  // L'occasion à trancher — `{ key, label, hexes: ["0209", "0310"] }`, cf.
-  // lib/useDemolition.js::current.
+  // Laquelle des deux décisions cette modale présente (cf. l'en-tête).
+  mode: { type: String, default: 'demolition' },
+  // L'occasion à trancher — `{ key, label, hexes: ["0209", "0310"] }`, et
+  // pour une réparation `unit` (le génie qui relèverait le pont). Cf.
+  // lib/useBridges.js::current et ::currentRepair.
   bridge: { type: Object, default: null },
   // Résultat du jet, une fois lancé — `{ die, destroyed }`, ou `null` tant
   // que le camp décideur n'a pas tranché.
@@ -48,8 +57,12 @@ watch(() => props.result, (result) => {
   clearInterval(interval)
 })
 
+const repairing = computed(() => props.mode === 'repair')
+
 function attempt() {
   if (rolling.value || props.result || props.waiting) return
+  // Une réparation ne se joue pas aux dés : il n'y a qu'à confirmer.
+  if (repairing.value) { emit('attempt'); return }
   rolling.value = true
   interval = setInterval(() => { spinFace.value = Math.floor(Math.random() * 6) + 1 }, 70)
   // Le tirage lui-même appartient à la règle : on le lui demande, et la prop
@@ -70,42 +83,55 @@ const hexesLabel = computed(() => (props.bridge?.hexes ?? []).join(' – '))
 
 <template>
   <div v-if="bridge" class="dm-overlay">
-    <div class="dm-modal" role="alertdialog" aria-labelledby="dm-title">
-      <h3 id="dm-title">Démolition</h3>
+    <div class="dm-modal" :class="{ repair: repairing }" role="alertdialog" aria-labelledby="dm-title">
+      <h3 id="dm-title">{{ repairing ? 'Réparation' : 'Démolition' }}</h3>
 
-      <p>
+      <p v-if="repairing">
+        <b>{{ bridge.unit?.name }}</b> a passé le tour adverse au calme et peut relever le
+        <b>{{ bridge.label }}</b><span class="dm-hex">{{ hexesLabel }}</span>.
+      </p>
+      <p v-else>
         Une unité ennemie borde le <b>{{ bridge.label }}</b>
         <span class="dm-hex">{{ hexesLabel }}</span>.
       </p>
 
       <!-- En ligne, l'écran de celui qui n'a pas la décision : il attend. -->
       <p v-if="waiting && !result" class="dm-hint">
-        En attente de la décision du joueur qui tient ce pont…
+        {{ repairing ? 'En attente de la décision du joueur dont le génie tient ce pont…'
+                     : 'En attente de la décision du joueur qui tient ce pont…' }}
       </p>
 
       <template v-else-if="!result">
-        <p class="dm-hint">
-          C'est la seule occasion de le faire sauter : si le jet échoue, ou si vous y renoncez,
-          le pont tiendra jusqu'à la fin de la partie.
+        <p v-if="repairing" class="dm-hint">
+          Le pont redeviendra franchissable et ne pourra plus être détruit. Refuser n'engage que ce
+          tour-ci : il restera réparable.
         </p>
-        <p class="dm-odds">Le pont est détruit sur un jet de <b>{{ destroyOnLabel }}</b>.</p>
+        <template v-else>
+          <p class="dm-hint">
+            C'est la seule occasion de le faire sauter : si le jet échoue, ou si vous y renoncez,
+            le pont tiendra jusqu'à la fin de la partie.
+          </p>
+          <p class="dm-odds">Le pont est détruit sur un jet de <b>{{ destroyOnLabel }}</b>.</p>
+        </template>
       </template>
 
-      <!-- Le dé : en train de rouler, puis la face retenue et son effet. -->
-      <div v-if="rolling || result" class="dm-die" :class="{ spin: rolling }">
+      <!-- Le dé : en train de rouler, puis la face retenue et son effet.
+           Une réparation ne s'y joue pas (cf. `attempt`). -->
+      <div v-if="!repairing && (rolling || result)" class="dm-die" :class="{ spin: rolling }">
         {{ FACES[(result && !rolling ? result.die : spinFace) - 1] }}
       </div>
       <p v-if="result && !rolling" class="dm-result" :class="result.destroyed ? 'gone' : 'held'">
-        <template v-if="result.destroyed">Le pont saute — l'obstacle est de nouveau à franchir.</template>
+        <template v-if="repairing">Le pont est relevé. Il ne pourra plus être détruit.</template>
+        <template v-else-if="result.destroyed">Le pont saute — l'obstacle est de nouveau à franchir.</template>
         <template v-else>Le pont tient. Il ne pourra plus être détruit.</template>
       </p>
 
       <footer v-if="!waiting && !result" class="dm-foot">
         <button type="button" class="dm-decline" :disabled="rolling" @click="emit('decline')">
-          Laisser intact
+          {{ repairing ? 'Laisser détruit' : 'Laisser intact' }}
         </button>
         <button type="button" class="dm-attempt" :disabled="rolling" @click="attempt">
-          Faire sauter le pont
+          {{ repairing ? 'Réparer le pont' : 'Faire sauter le pont' }}
         </button>
       </footer>
     </div>
@@ -133,6 +159,20 @@ const hexesLabel = computed(() => (props.bridge?.hexes ?? []).join(' – '))
   box-shadow: var(--shadow-modal);
   padding: 14px 18px 16px;
   text-align: center;
+}
+
+/* Une réparation est une bonne nouvelle pour celui qui la décide : le liseré
+   et le titre passent au vert, là où une démolition est rouge. */
+.dm-modal.repair {
+  border-top-color: var(--color-green);
+}
+
+.dm-modal.repair h3 {
+  color: var(--color-green);
+}
+
+.dm-modal.repair .dm-attempt {
+  background: var(--color-green);
 }
 
 .dm-modal h3 {

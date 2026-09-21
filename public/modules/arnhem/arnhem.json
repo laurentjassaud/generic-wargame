@@ -1438,6 +1438,12 @@
         "railroadBridges": "pont de chemin de fer"
       }
     },
+    "bridgeRepair": {
+      "layers": ["canalBridges"],
+      "by": "allies",
+      "unitTypes": ["engineer"],
+      "undisturbedSide": "german"
+    },
     "mapExit": {
       "side": "german",
       "zones": [

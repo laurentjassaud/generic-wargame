@@ -467,10 +467,16 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
   background: var(--danger-a20);
 }
 
-/* Démolition d'un pont (cf. lib/useDemolition.js) : même famille que les
+/* Démolition d'un pont (cf. lib/useBridges.js) : même famille que les
    éliminations — c'est un élément de la carte qui disparaît. */
 .jn-row.jn-demolition {
   background: var(--danger-a20);
+}
+
+/* Réparation d'un pont : l'inverse, donc la même famille que les entrées en
+   jeu et les retours. */
+.jn-row.jn-repair {
+  background: var(--selection-a14);
 }
 
 .jn-row.jn-place,

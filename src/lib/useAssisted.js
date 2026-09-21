@@ -155,7 +155,7 @@ import { resolveEdges } from './edges.js'
 //     `endOfTurnPhase`), cf. section "Phases" plus bas. À défaut, toutes les
 //     phases.
 //   - `isDemolished` : `(clé d'arête "CCRR-CCRR") => bool` — ce pont a-t-il
-//     SAUTÉ (cf. lib/useDemolition.js, qui tient la liste) ? Une arête dont
+//     SAUTÉ (cf. lib/useBridges.js, qui tient la liste) ? Une arête dont
 //     le pont est démoli ne vaut plus que par l'obstacle qu'il franchissait
 //     (cf. `edgeKind`/`combatEdgeKind`, et lib/edges.js::revealedKind) : ni
 //     la route qui l'empruntait, ni le pont lui-même ne comptent plus. À

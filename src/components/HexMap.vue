@@ -30,7 +30,7 @@ import { useArtillery } from '../lib/useArtillery.js'
 import { useRetreat } from '../lib/useRetreat.js'
 import { useModuleRules } from '../lib/moduleRules.js'
 import { isUnit, isFighter, isSupport } from '../lib/units.js'
-import { useDemolition } from '../lib/useDemolition.js'
+import { useBridges } from '../lib/useBridges.js'
 import { parseSetup, isAirborneEntry, deploymentCells, rangeCells, landingCells } from '../lib/setup.js'
 import { resolveRules, resolveTurnStructure } from '../lib/rules.js'
 import { resolveCombatTable } from '../lib/combatTable.js'
@@ -48,7 +48,7 @@ import RollModal from './RollModal.vue'
 import MovementChartModal from './MovementChartModal.vue'
 import CombatChartModal from './CombatChartModal.vue'
 import CombatModal from './CombatModal.vue'
-import DemolitionModal from './DemolitionModal.vue'
+import BridgeModal from './BridgeModal.vue'
 import PhaseBlockedModal from './PhaseBlockedModal.vue'
 import BugReportModal from './BugReportModal.vue'
 import { APP_VERSION, REPORT_ENTRIES } from '../lib/bugReport.js'
@@ -79,12 +79,13 @@ const props = defineProps({
   // (partie en ligne reprise en route, cf. server/src/rooms.js::
   // recordFpfRequest) — `{ id, targets, attackerIds, fpfIds }`, ou `null`.
   initialFpfRequest: { type: Object, default: null },
-  // Ponts déjà tranchés (partie en ligne reprise en route, cf.
-  // server/src/rooms.js::recordDemolition) — `[{ edge, destroyed }]`.
-  initialDemolitions: { type: Array, default: () => [] },
-  // Occasion de démolition soumise au camp qui décide et pas encore
-  // tranchée (même reprise) — `{ id, edge }`, ou `null`.
-  initialDemolitionRequest: { type: Object, default: null },
+  // Décisions déjà prises sur les ponts, dans l'ordre (partie en ligne
+  // reprise en route, cf. server/src/rooms.js::recordBridgeResult) —
+  // `[{ edge, kind, die, destroyed, unitId }]`.
+  initialBridgeLog: { type: Array, default: () => [] },
+  // Occasion soumise au camp qui doit la trancher et restée sans réponse
+  // (même reprise) — `{ id, edge, kind, unitId }`, ou `null`.
+  initialBridgeRequest: { type: Object, default: null },
   // Camp du joueur sur ce navigateur (multijoueur, cf. RoomLobby.vue) :
   // l'alerte "Temps imparti terminé" n'est montrée qu'au joueur actif.
   // Vide en solo/démo (un seul navigateur pour tous les camps).
@@ -129,7 +130,7 @@ const props = defineProps({
 // demande abandonnée ; `fpf-reply` — `{ requestId, fpfIds }`, choix du
 // défenseur.
 const emit = defineEmits(['move', 'turn', 'phase', 'game-over', 'log', 'unlog', 'deploy', 'restart-with',
-  'fpf-request', 'fpf-cancel', 'fpf-reply', 'demolition-request', 'demolition'])
+  'fpf-request', 'fpf-cancel', 'fpf-reply', 'bridge-request', 'bridge'])
 
 const map = computed(() => props.module.map)
 
@@ -611,19 +612,27 @@ const counters = ref(buildInitialCounters())
 // avant tout mouvement.
 const initialDeployment = counters.value.map((counter) => ({ id: counter.id, col: counter.col, row: counter.row }))
 
-// DÉMOLITION DES PONTS (cf. lib/useDemolition.js, qui porte toute la règle :
-// quels ponts peuvent sauter, qui décide, ce que fait le dé). Appelé ICI, et
-// pas plus bas : useAssisted() a besoin de son `isDemolished` pour lire les
-// arêtes (un pont démoli ne laisse plus que l'obstacle qu'il franchissait),
-// et lui n'a besoin que de `counters`, déjà déclaré juste au-dessus.
-// Inerte pour un module qui ne déclare pas `rules.bridgeDemolition`.
-const demolition = useDemolition({
+// SORT DES PONTS (cf. lib/useBridges.js, qui porte les deux règles : quels
+// ponts peuvent sauter, qui décide, ce que fait le dé — et quels ponts un
+// génie peut ensuite relever). Appelé ICI, et pas plus bas : useAssisted() a
+// besoin de son `isDemolished` pour lire les arêtes (un pont démoli ne laisse
+// plus que l'obstacle qu'il franchissait), et lui n'a besoin que de
+// `counters`, déjà déclaré juste au-dessus. Inerte pour un module qui ne
+// déclare ni `rules.bridgeDemolition` ni `rules.bridgeRepair`.
+const demolition = useBridges({
   assisted: toRef(props, 'assisted'),
   terrain: props.module.terrain,
   demolition: rules.bridgeDemolition,
+  repair: rules.bridgeRepair,
   counters,
   sideOf: (counter) => sideOfCounter(counter),
   isFighter,
+  // Tous trois n'existent que plus bas dans ce fichier (useAssisted() pour la
+  // ZOC, la piste de tour pour le reste) : enveloppés, ils ne sont lus qu'à
+  // l'usage, jamais à la construction.
+  enemyZocSet: (counter) => enemyZocSet(counter),
+  activeSide: computed(() => turnInfo.value.activeSideKey),
+  step: computed(() => turnTrackerRef.value?.currentStep ?? 0),
 })
 
 // cf. lib/useAssisted.js — toute la logique propre au mode "Assisté"
@@ -786,10 +795,10 @@ function onCombatFight() {
   if (hitsAttackers) startRetreat(combatOutcome.result, contactAttackers, [], combatTargetHexes.value)
 }
 
-// --- Démolition des ponts (cf. lib/useDemolition.js) -------------------------
+// --- Démolition des ponts (cf. lib/useBridges.js) -------------------------
 // La règle dit QUELS ponts peuvent sauter et QUAND l'occasion s'ouvre ; ce
 // composant-ci ne fait que la présenter au camp qui décide (cf.
-// DemolitionModal.vue), journaliser sa décision et laisser le composable
+// BridgeModal.vue), journaliser sa décision et laisser le composable
 // tenir l'état.
 //
 // L'occasion ouverte BLOQUE la saisie tant qu'elle n'est pas tranchée (cf.
@@ -847,7 +856,7 @@ const demolitionOpen = computed(() => !actionsLocked.value && !retreatActive.val
 /** Le pont dont la modale parle : celui dont on montre le résultat, sinon
  *  celui qu'on a reçu à trancher, sinon celui qu'on a soumis et qu'on attend,
  *  sinon — décision locale — la première occasion ouverte (cf.
- *  lib/useDemolition.js::current). `null` = pas de modale. */
+ *  lib/useBridges.js::current). `null` = pas de modale. */
 const demolitionBridge = computed(() => {
   if (demolitionShown.value) return demolitionShown.value
   if (demolitionIncoming.value) return demolitionIncoming.value
@@ -875,7 +884,7 @@ function pumpDemolition() {
   if (!bridge) return
   demolitionRequestId = newUid()
   demolitionAsked.value = bridge
-  emit('demolition-request', { id: demolitionRequestId, edge: bridge.key })
+  emit('bridge-request', { id: demolitionRequestId, edge: bridge.key, kind: 'demolition' })
 }
 /** Met `pumpDemolition` en veille sur ses ingrédients. Créé AU MONTAGE et non
  *  ici : `watch` évalue ses sources dès sa création, et `demolitionOpen` lit
@@ -884,11 +893,34 @@ function pumpDemolition() {
 function startDemolitionWatch() {
   watch([demolitionOpen, () => demolition.current.value, demolitionAsked, demolitionIncoming, demolitionShown],
     pumpDemolition)
+  watch([repairOpen, () => demolition.currentRepair.value, repairAsked, repairIncoming, repairShown],
+    pumpRepair)
+  // Condition « tout le tour hors ZOC » de la réparation (cf.
+  // lib/useBridges.js::watchUndisturbed) : elle se juge en continu, puisque
+  // ce sont les ennemis qui vont et viennent autour du génie. Sources
+  // explicites (et non un `watchEffect`) : le suivi ÉCRIT dans les refs
+  // qu'il lit, et un effet auto-suivi se relancerait sur sa propre écriture.
+  watch([counters, () => turnInfo.value.activeSideKey, () => turnTrackerRef.value?.currentStep],
+    () => demolition.watchUndisturbed(), { deep: true })
 }
 
 /** Le joueur actif nous soumet une occasion (cf. RoomLobby.vue,
- *  `game:demolition-request`) : elle s'affiche sur l'écran du camp décideur,
- *  et sur celui-là seul. */
+ *  `game:bridge-request`) : elle s'affiche sur l'écran du camp décideur, et
+ *  sur celui-là seul. Les deux décisions passent par le même canal, d'où
+ *  l'aiguillage sur `kind`. */
+function applyRemoteBridgeRequest(request) {
+  if (request?.kind === 'repair') applyRemoteRepairRequest(request)
+  else applyRemoteDemolitionRequest(request)
+}
+
+/** Le camp décideur a publié le sort d'un pont (cf. RoomLobby.vue,
+ *  `game:bridge`) — démolition ou réparation. */
+function applyRemoteBridge(result) {
+  if (result?.kind === 'repair') applyRemoteRepair(result)
+  else applyRemoteDemolition(result)
+}
+
+/** Démolition : le joueur actif nous soumet une occasion. */
 function applyRemoteDemolitionRequest(request) {
   if (!props.online || !request?.edge || !demolitionMine.value) return
   const bridge = demolition.bridgeAt(request.edge)
@@ -897,9 +929,8 @@ function applyRemoteDemolitionRequest(request) {
   demolitionIncoming.value = bridge
 }
 
-/** Le camp décideur a publié le sort d'un pont (cf. RoomLobby.vue,
- *  `game:demolition`) : on l'applique, et le navigateur qui attendait voit le
- *  résultat avant de reprendre la main. */
+/** Démolition : le camp décideur a publié le sort du pont ; on l'applique, et
+ *  le navigateur qui attendait voit le résultat avant de reprendre la main. */
 function applyRemoteDemolition({ edge, die = null, destroyed } = {}) {
   if (!edge) return
   const bridge = demolition.bridgeAt(edge)
@@ -909,25 +940,14 @@ function applyRemoteDemolition({ edge, die = null, destroyed } = {}) {
   if (bridge) showDemolitionResult(bridge, { die, destroyed })
 }
 
-/** Centre (en pixels natifs de l'image) de l'hex `{ col, row }` — même
- *  calcul que `hexes` plus haut, mais pour un hex quelconque, y compris hors
- *  de la grille dessinée. */
-function hexCenter({ col, row }) {
-  const { x0, y0, colStep, rowStep } = calibration
-  return {
-    x: x0 + col * colStep,
-    y: y0 + (row - 1) * rowStep + (col % 2 === 1 ? rowStep / 2 : 0),
-  }
-}
-
-/** MARQUES DES PONTS dont le sort est réglé (cf. lib/useDemolition.js::marks)
+/** MARQUES DES PONTS dont le sort est réglé (cf. lib/useBridges.js::marks)
  *  — un rond posé au MILIEU de l'hexside, c'est-à-dire à mi-chemin entre les
  *  centres des deux hex qu'il relie : ROUGE si le pont est détruit, VERT s'il
  *  tient pour le reste de la partie. Les ponts encore en sursis n'en portent
- *  aucune (cf. lib/useDemolition.js, en-tête). */
+ *  aucune (cf. lib/useBridges.js, en-tête). */
 const demolitionMarks = computed(() => demolition.marks.value.map((mark) => {
-  const from = hexCenter(mark.from)
-  const to = hexCenter(mark.to)
+  const from = hexCenterPx(mark.from.col, mark.from.row)
+  const to = hexCenterPx(mark.to.col, mark.to.row)
   return { key: mark.key, destroyed: mark.destroyed, x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }
 }))
 
@@ -963,11 +983,11 @@ function publishDemolition(bridge, outcome) {
   logDemolition(bridge, outcome)
   demolitionIncoming.value = null
   demolitionRequestId = null
-  if (props.online) emit('demolition', { edge: bridge.key, die: outcome.die ?? null, destroyed: outcome.destroyed })
+  if (props.online) emit('bridge', { edge: bridge.key, kind: 'demolition', die: outcome.die ?? null, destroyed: outcome.destroyed })
 }
 
 /** Le camp décideur tente la destruction : le dé est lancé par la règle (cf.
- *  lib/useDemolition.js::attempt), le résultat reste affiché un instant, puis
+ *  lib/useBridges.js::attempt), le résultat reste affiché un instant, puis
  *  la modale passe à l'occasion suivante s'il y en a une. */
 function onDemolitionAttempt() {
   const bridge = demolitionBridge.value
@@ -993,6 +1013,140 @@ function closeDemolitionResult() {
   demolitionTimer = null
   demolitionShown.value = null
   demolitionResult.value = null
+}
+
+// --- Réparation des ponts (cf. lib/useBridges.js) ----------------------------
+// Pendant la phase de FIN DE TOUR — la seule que le module place après le
+// dernier camp de l'ordre, donc au bout du tour surveillé —, un génie resté
+// tranquille peut relever un pont démoli qu'il borde. La décision revient au
+// camp qui possède ce génie, et non à celui qui a la main.
+
+// Phase "Fin de tour" (cf. lib/useAssisted.js : 0 Mouvement, 1 Combat, 2 Fin
+// de tour — elle n'existe que pour le dernier camp de l'ordre).
+const PHASE_END_OF_TURN = 2
+
+// Mêmes rôles que pour la démolition (cf. la section précédente) : ce qu'on
+// affiche après coup, ce qu'on a soumis, ce qu'on a reçu.
+const repairShown = ref(null)
+const repairResult = ref(null)
+const repairAsked = ref(null)
+const repairIncoming = ref(null)
+let repairRequestId = null
+let repairTimer = null
+
+/** Ce navigateur est-il celui du camp qui répare ? En partie locale, oui. */
+const repairMine = computed(() => !props.online || props.localSide === (rules.bridgeRepair?.by ?? null))
+
+/** Une occasion de réparation peut-elle être présentée MAINTENANT ? Mêmes
+ *  gardes que pour la démolition (ni rejeu, ni retraite en cours), plus la
+ *  phase et le camp voulus : la Fin du tour que le génie devait passer au
+ *  calme. Une démolition en cours passe devant — elle bloque déjà l'écran. */
+const repairOpen = computed(() => !actionsLocked.value && !retreatActive.value
+  && demolition.repairActive.value && !demolitionBridge.value
+  && phase.value === PHASE_END_OF_TURN
+  && (!rules.bridgeRepair?.undisturbedSide || turnInfo.value.activeSideKey === rules.bridgeRepair.undisturbedSide))
+
+/** Le pont que la modale de réparation propose, `null` s'il n'y en a pas.
+ *  Même découpage que pour la démolition : ce qu'on vient de décider (figé le
+ *  temps de l'afficher), ce qu'on a reçu à trancher, ce qu'on a soumis, ou la
+ *  première occasion ouverte quand la décision se prend ici. */
+const repairTarget = computed(() => {
+  if (repairShown.value) return repairShown.value
+  if (repairIncoming.value) return repairIncoming.value
+  if (repairAsked.value) return repairAsked.value
+  if (!repairOpen.value) return null
+  if (props.online && !(isLocalTurn.value && repairMine.value)) return null
+  return demolition.currentRepair.value
+})
+
+/** Cet écran ATTEND la décision de l'autre : rien à y cliquer. */
+const repairWaiting = computed(() => !!repairAsked.value && !repairShown.value)
+
+/** Journalise une réparation — entrée `repair`, relue au rejeu (cf.
+ *  applyReplayEntry) et par l'autre joueur en ligne. */
+function logRepair(bridge) {
+  log('repair', `${bridge.label} ${bridge.hexes.join('-')} réparé par ${bridge.unit?.name ?? 'le génie'}`,
+    { edge: bridge.key, unitId: bridge.unit?.id ?? null })
+}
+
+/** Affiche le résultat d'une réparation le temps qu'on le lise — sur l'écran
+ *  qui a décidé comme sur celui qui attendait. */
+function showRepairResult(bridge) {
+  clearTimeout(repairTimer)
+  repairShown.value = bridge
+  repairResult.value = { die: null, destroyed: false }
+  repairTimer = setTimeout(closeRepairResult, DEMOLITION_RESULT_MS)
+}
+
+function closeRepairResult() {
+  clearTimeout(repairTimer)
+  repairTimer = null
+  repairShown.value = null
+  repairResult.value = null
+}
+
+/** Le camp réparateur confirme : le pont redevient franchissable, et hors
+ *  d'atteinte d'une nouvelle démolition. */
+function onRepairAttempt() {
+  const bridge = repairTarget.value
+  if (!bridge || repairResult.value || repairWaiting.value) return
+  if (!demolition.repairBridge(bridge.key, bridge.unit?.id)) return
+  showRepairResult(bridge)
+  logRepair(bridge)
+  repairIncoming.value = null
+  repairRequestId = null
+  if (props.online) emit('bridge', { edge: bridge.key, kind: 'repair', unitId: bridge.unit?.id ?? null })
+}
+
+/** Le camp réparateur renonce POUR CE TOUR : son génie ne relève rien, mais
+ *  le pont reste démoli — donc réparable à un tour suivant. Rien n'est
+ *  journalisé : aucun état de la partie n'en garde trace au-delà du tour. */
+function onRepairDecline() {
+  const bridge = repairTarget.value
+  if (!bridge || repairResult.value || repairWaiting.value) return
+  demolition.declineRepair(bridge.unit?.id)
+  repairIncoming.value = null
+  repairRequestId = null
+  if (props.online) emit('bridge', { edge: bridge.key, kind: 'repair', declined: true, unitId: bridge.unit?.id ?? null })
+}
+
+/** Soumet l'occasion au camp réparateur, quand c'est ce navigateur qui a la
+ *  main sans être le sien (cf. `pumpDemolition`, même mécanique). */
+function pumpRepair() {
+  if (!props.online || !repairOpen.value) return
+  if (repairAsked.value || repairIncoming.value || repairShown.value) return
+  if (!isLocalTurn.value || repairMine.value) return
+  const bridge = demolition.currentRepair.value
+  if (!bridge) return
+  repairRequestId = newUid()
+  repairAsked.value = bridge
+  emit('bridge-request', { id: repairRequestId, edge: bridge.key, kind: 'repair', unitId: bridge.unit?.id ?? null })
+}
+
+/** Le joueur actif nous soumet une occasion de réparation. */
+function applyRemoteRepairRequest(request) {
+  if (!props.online || !request?.edge || !repairMine.value) return
+  const bridge = demolition.bridgeAt(request.edge)
+  if (!bridge) return
+  // L'unité vient de la demande : sur cet écran, c'est bien le génie du camp
+  // réparateur, mais c'est l'autre client qui a lu l'occasion.
+  const unit = counters.value.find((counter) => String(counter.id) === String(request.unitId))
+  repairRequestId = request.id
+  repairIncoming.value = { ...bridge, unit: unit ? { id: unit.id, name: unit.name } : null }
+}
+
+/** Le camp réparateur a publié sa décision. */
+function applyRemoteRepair({ edge, unitId = null, declined = false } = {}) {
+  if (!edge) return
+  const bridge = demolition.bridgeAt(edge)
+  if (declined) {
+    demolition.declineRepair(unitId)
+  } else {
+    demolition.repairBridge(edge, unitId)
+    if (bridge) showRepairResult({ ...bridge, unit: { id: unitId, name: '' } })
+  }
+  if (repairAsked.value && bridge && repairAsked.value.key === bridge.key) repairAsked.value = null
+  repairRequestId = null
 }
 
 // --- FPF du défenseur (cf. lib/useCombat.js, section FPF) : ce que la modale
@@ -1373,14 +1527,17 @@ onMounted(() => {
     turnStep: props.initialTurnStep, phase: props.initialPhase, phaseElapsedMs: props.initialPhaseElapsedMs,
     blitzUsedMs: props.initialBlitzUsedMs, blitzLoser: props.initialBlitzLoser, fpfRequest: props.initialFpfRequest,
   })
-  // Ponts déjà détruits ou définitivement épargnés (cf. restoreDemolitions).
-  restoreDemolitions(props.initialDemolitions, props.initialDemolitionRequest)
+  // Ponts déjà détruits, relevés ou définitivement épargnés (cf.
+  // restoreBridges).
+  restoreBridges(props.initialBridgeLog, props.initialBridgeRequest)
   // Une unité du camp déclencheur déjà en place au coup d'envoi borde peut-
   // être un pont : la première occasion s'examine donc dès maintenant, et les
   // suivantes par le watcher (cf. startDemolitionWatch, qui ne peut pas être
   // créé plus tôt).
   startDemolitionWatch()
+  demolition.watchUndisturbed()
   pumpDemolition()
+  pumpRepair()
   // Partie relancée avec les réglages d'une sauvegarde (cf. DemoPlay.vue) :
   // on rejoue maintenant le journal mis de côté — APRÈS `initPhase`, que le
   // rejeu doit pouvoir corriger. Jamais en ligne (la reprise en attente
@@ -2479,13 +2636,17 @@ function applyServerState({ turnStep, phase: serverPhase, phaseElapsedMs, blitzU
   restoreFpfRequest(fpfRequest)
 }
 
-/** En ligne : ponts déjà tranchés et occasion encore en attente, tels que le
- *  serveur les tient (cf. server/src/rooms.js, section "Démolition des ponts
- *  en ligne"). Appliqués au montage et à chaque resynchronisation : c'est le
- *  serveur qui fait foi, un pont ne se retranche jamais. */
-function restoreDemolitions(settled, request) {
-  for (const result of settled ?? []) demolition.applyReplay(result)
-  if (request) applyRemoteDemolitionRequest(request)
+/** En ligne : décisions déjà prises sur les ponts et occasion encore en
+ *  attente, telles que le serveur les tient (cf. server/src/rooms.js, section
+ *  "Sort des ponts en ligne"). Appliquées au montage et à chaque
+ *  resynchronisation, DANS L'ORDRE — un pont démoli puis relevé doit finir
+ *  relevé, pas l'inverse. */
+function restoreBridges(settled, request) {
+  for (const result of settled ?? []) {
+    if (result?.kind === 'repair') demolition.applyRepairReplay(result)
+    else demolition.applyReplay(result)
+  }
+  if (request) applyRemoteBridgeRequest(request)
 }
 
 /** En ligne, après une RECONNEXION : le serveur fait foi. Le journal partagé
@@ -2500,13 +2661,13 @@ function resyncFromServer(list, room) {
   startSharedJournal(list ?? [])
   applyServerState(room ?? {})
   // Ponts tranchés pendant la coupure, et occasion restée en attente (cf.
-  // restoreDemolitions).
-  restoreDemolitions(room?.demolitions, room?.demolitionRequest)
+  // restoreBridges).
+  restoreBridges(room?.bridgeLog, room?.bridgeRequest)
 }
 
 defineExpose({ applyRemoteMove, applyRemoteTurn, applyRemotePhase, applyRemoteGameOver, applyRemoteEntry, removeRemoteEntry, resyncFromServer,
   applyRemoteFpfRequest, applyRemoteFpfReply, applyRemoteFpfCancel,
-  applyRemoteDemolitionRequest, applyRemoteDemolition })
+  applyRemoteBridgeRequest, applyRemoteBridge })
 
 /** Reçoit le journal chargé (cf. JournalPanel.vue, évènement `loaded`) en
  *  ordre chronologique et remet la carte au déploiement initial pour
@@ -2541,9 +2702,10 @@ function resetBoardForReplay() {
   // par les entrées rejouées.
   artillery.reset()
   // Ponts détruits ou définitivement épargnés : rétablis par les entrées
-  // `demolition` rejouées (cf. lib/useDemolition.js::applyReplay).
+  // `demolition` rejouées (cf. lib/useBridges.js::applyReplay).
   demolition.reset()
   closeDemolitionResult()
+  closeRepairResult()
   // Un combat resté ouvert n'a plus de sens sur un plateau remis à zéro.
   cancelCombat()
   turnTrackerRef.value?.applyRemoteTurn(0)
@@ -2650,6 +2812,10 @@ function applyReplayEntry(entry) {
     if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
     eliminatedIds.value.add(String(entryData.counterId))
     eliminatedIds.value = new Set(eliminatedIds.value)
+  } else if (entry.kind === 'repair') {
+    // Pont relevé par le génie (cf. la section "Réparation des ponts") : le
+    // journal fait foi, comme pour une démolition.
+    demolition.applyRepairReplay(entryData)
   } else if (entry.kind === 'demolition') {
     // Démolition d'un pont (cf. la section du même nom) : c'est le JOURNAL
     // qui fait foi, jamais un nouveau tirage — le pont est détruit, ou
@@ -2732,7 +2898,7 @@ const actionsLocked = computed(() => replayLocked.value || blitzLoser.value != n
 // section "Démolition des ponts") : la règle veut une décision immédiate, et
 // rien d'autre ne doit pouvoir se faire tant qu'elle n'est pas prise.
 const inputLocked = computed(() => actionsLocked.value || (props.online && !isLocalTurn.value)
-  || demolitionBridge.value != null)
+  || demolitionBridge.value != null || repairTarget.value != null)
 
 // --- Timings "Limité" et "Blitz" (cf. lib/gameSettings.js, MoveTimer.vue).
 // Toutes les phases sont conservées : SEULE la phase Mouvement (phase 0) est
@@ -2977,7 +3143,7 @@ function onMapDragEnd() {
             :points="hex.pts" vector-effect="non-scaling-stroke" />
         </g>
 
-        <!-- cf. lib/useDemolition.js — ponts démolissables dont le sort est
+        <!-- cf. lib/useBridges.js — ponts démolissables dont le sort est
              réglé : rond ROUGE sur un pont détruit, VERT sur un pont qui
              tiendra jusqu'à la fin de la partie. Purement informatif : les
              clics les traversent (cf. .hex-demolition en bas de fichier). -->
@@ -3126,11 +3292,16 @@ function onMapDragEnd() {
     <PhaseBlockedModal v-if="showPhaseBlocked" :engagements="pendingEngagements" :stacks="stackedHexes"
       @close="showPhaseBlocked = false" />
 
-    <!-- cf. lib/useDemolition.js — un pont démolissable est bordé par une
+    <!-- cf. lib/useBridges.js — un pont démolissable est bordé par une
          unité ennemie : au camp qui le tient de décider, tout de suite. -->
-    <DemolitionModal :bridge="demolitionBridge" :result="demolitionResult" :waiting="demolitionWaiting"
+    <BridgeModal :bridge="demolitionBridge" :result="demolitionResult" :waiting="demolitionWaiting"
       :destroy-on="rules.bridgeDemolition?.destroyOn ?? []"
       @attempt="onDemolitionAttempt" @decline="onDemolitionDecline" />
+
+    <!-- cf. lib/useBridges.js — fin du tour adverse : un génie resté au calme
+         peut relever un pont démoli qu'il borde. -->
+    <BridgeModal mode="repair" :bridge="repairTarget" :result="repairResult" :waiting="repairWaiting"
+      @attempt="onRepairAttempt" @decline="onRepairDecline" />
 
     <!-- cf. MoveTimer.vue — timing "Limité" : temps de la phase de Mouvement écoulé. -->
     <PhaseBlockedModal v-if="showTimeUp" title="Temps imparti terminé" @close="showTimeUp = false">
@@ -3403,7 +3574,7 @@ polygon.hex.entry:hover {
   pointer-events: none;
 }
 
-/* cf. lib/useDemolition.js — sort d'un pont démolissable, marqué au milieu de
+/* cf. lib/useBridges.js — sort d'un pont démolissable, marqué au milieu de
    son hexside. Même cerne sombre que les points d'état des pions (cf.
    Counter.vue), pour rester lisible sur une carte claire comme sur une
    rivière. */

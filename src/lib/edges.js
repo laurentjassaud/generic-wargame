@@ -50,7 +50,7 @@
 // ─── PONTS DÉMOLISSABLES ─────────────────────────────────────────────────────
 // Un module peut déclarer que certaines couches de ponts peuvent SAUTER en
 // cours de partie (`rules.bridgeDemolition`, cf. lib/rules.js et
-// lib/useDemolition.js, qui portent la règle). Ce fichier n'en retient que le
+// lib/useBridges.js, qui portent la règle). Ce fichier n'en retient que le
 // versant "nature d'arête" :
 //   - `demolishable(clé)` : cette arête porte-t-elle un pont démolissable ?
 //   - `demolishableEdges` : la liste de ces arêtes (une entrée par arête, pas
