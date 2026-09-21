@@ -53,6 +53,11 @@ export const DEFAULT_RULES = Object.freeze({
   // blockingKinds, bridgeKinds, ground: { sources, stages }, airborne:
   // { range } }` (cf. `resolveSupplyLine`).
   supplyLine: null,
+  // Points de victoire (cf. lib/useVictoryPoints.js) : `null` — le module
+  // n'en compte pas. Un module qui les connaît déclare `{ sides,
+  // elimination, unsupplied, zones, zoneBarriers }` (cf.
+  // `resolveVictoryPoints`).
+  victoryPoints: null,
 })
 
 export const ENTRY_CONGESTION_MODES = ['multiply', 'none']
@@ -194,6 +199,45 @@ export function resolveSupplyLine(raw) {
   }
 }
 
+/** `rules.victoryPoints` → règle des points de victoire vérifiée, ou `null`
+ *  (ce module n'en compte pas).
+ *
+ *  La règle (cf. lib/useVictoryPoints.js) : `sides` sont les camps qui
+ *  marquent ; `elimination` ce que chacun reçoit par unité ADVERSE perdue ;
+ *  `unsupplied` ce qu'un camp reçoit par unité adverse coupée de ses arrières
+ *  à la fin d'un tour ; `zones` les positions payées à qui les tient en
+ *  traçant une ligne (chacune : `id`, `label`, `seed` — l'hex témoin —, `to`
+ *  et `points`) ; `zoneBarriers` les couches d'arêtes qui délimitent ces
+ *  zones (les rivières), et qu'un remplissage ne franchit jamais.
+ *
+ *  `sides` est indispensable : sans camp, rien à compter. */
+export function resolveVictoryPoints(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const sides = (Array.isArray(raw.sides) ? raw.sides : []).filter((side) => typeof side === 'string' && side)
+  if (!sides.length) return null
+  const points = (value) => (Number.isInteger(value) && value >= 0 ? value : 0)
+  const elimination = raw.elimination && typeof raw.elimination === 'object' ? raw.elimination : {}
+  const unsupplied = raw.unsupplied && typeof raw.unsupplied === 'object' ? raw.unsupplied : {}
+  const zones = (Array.isArray(raw.zones) ? raw.zones : [])
+    .filter((zone) => zone && typeof zone.id === 'string' && typeof zone.seed === 'string' && sides.includes(zone.to))
+    .map((zone) => ({
+      id: zone.id,
+      label: typeof zone.label === 'string' && zone.label ? zone.label : zone.id,
+      seed: zone.seed,
+      to: zone.to,
+      points: points(zone.points),
+    }))
+  return {
+    sides,
+    elimination: Object.fromEntries(sides.map((side) => [side, points(elimination[side])])),
+    unsupplied: sides.includes(unsupplied.to)
+      ? { to: unsupplied.to, points: points(unsupplied.points) }
+      : null,
+    zones,
+    zoneBarriers: (Array.isArray(raw.zoneBarriers) ? raw.zoneBarriers : []).filter((layer) => typeof layer === 'string' && layer),
+  }
+}
+
 /** `module.rules` (objet libre, éventuellement absent) → règles prêtes à
  *  l'emploi : listes converties en `Set`, entiers vérifiés, défauts
  *  appliqués, clés inconnues conservées. */
@@ -215,5 +259,6 @@ export function resolveRules(raw) {
     bridgeDemolition: resolveBridgeDemolition(rules.bridgeDemolition),
     bridgeRepair: resolveBridgeRepair(rules.bridgeRepair),
     supplyLine: resolveSupplyLine(rules.supplyLine),
+    victoryPoints: resolveVictoryPoints(rules.victoryPoints),
   }
 }

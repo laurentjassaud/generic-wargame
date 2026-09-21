@@ -1481,6 +1481,16 @@
       "unitTypes": ["engineer"],
       "undisturbedSide": "german"
     },
+    "victoryPoints": {
+      "sides": ["allies", "german"],
+      "elimination": { "allies": 1, "german": 5 },
+      "unsupplied": { "to": "german", "points": 3 },
+      "zoneBarriers": ["rivers"],
+      "zones": [
+        { "id": "waal", "label": "au-dela de la Waal", "seed": "3005", "to": "allies", "points": 5 },
+        { "id": "rijn", "label": "au-dela du Neder Rijn", "seed": "3706", "to": "allies", "points": 10 }
+      ]
+    },
     "supplyLine": {
       "side": "allies",
       "excludeFactions": ["pol"],

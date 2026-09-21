@@ -32,6 +32,7 @@ import { useModuleRules } from '../lib/moduleRules.js'
 import { isUnit, isFighter, isSupport } from '../lib/units.js'
 import { useBridges } from '../lib/useBridges.js'
 import { useSupplyLine } from '../lib/useSupplyLine.js'
+import { useVictoryPoints } from '../lib/useVictoryPoints.js'
 import { parseSetup, isAirborneEntry, deploymentCells, rangeCells, landingCells } from '../lib/setup.js'
 import { resolveRules, resolveTurnStructure } from '../lib/rules.js'
 import { resolveCombatTable } from '../lib/combatTable.js'
@@ -50,6 +51,8 @@ import MovementChartModal from './MovementChartModal.vue'
 import CombatChartModal from './CombatChartModal.vue'
 import CombatModal from './CombatModal.vue'
 import BridgeModal from './BridgeModal.vue'
+import VictoryPoints from './VictoryPoints.vue'
+import VictoryModal from './VictoryModal.vue'
 import PhaseBlockedModal from './PhaseBlockedModal.vue'
 import BugReportModal from './BugReportModal.vue'
 import { APP_VERSION, REPORT_ENTRIES } from '../lib/bugReport.js'
@@ -657,6 +660,16 @@ const supplyLine = useSupplyLine({
   isAirborneEntry,
   enemyZocSet: (counter) => enemyZocSet(counter),
   edgeKinds: (from, hex) => edgeKinds(from, hex),
+  hexOnMap,
+})
+
+// POINTS DE VICTOIRE (cf. lib/useVictoryPoints.js) : un total par camp, tenu
+// par les joueurs en mode Libre et par le moteur en mode Assisté. Inerte pour
+// un module qui ne déclare pas `rules.victoryPoints`.
+const victory = useVictoryPoints({
+  assisted: toRef(props, 'assisted'),
+  victory: rules.victoryPoints,
+  terrain: props.module.terrain,
   hexOnMap,
 })
 
@@ -1636,6 +1649,7 @@ onMounted(() => {
   // suivantes par le watcher (cf. startDemolitionWatch, qui ne peut pas être
   // créé plus tôt).
   startDemolitionWatch()
+  startVictoryWatch()
   demolition.watchUndisturbed()
   pumpDemolition()
   pumpRepair()
@@ -1774,6 +1788,116 @@ function reinforcementsForTab(key) {
 const openTab = ref(null)
 const draggedCounterId = ref(null)
 
+// --- Points de victoire (cf. lib/useVictoryPoints.js) ------------------------
+// En mode LIBRE, les joueurs tiennent le compte eux-mêmes et chaque
+// modification part au journal. En mode ASSISTÉ, le moteur seul marque :
+//   - à chaque unité éliminée, pour son adversaire ;
+//   - à chaque Fin de tour, pour les positions tenues au-delà des fleuves par
+//     une unité ravitaillée, et pour chaque unité alliée coupée de ses
+//     arrières.
+// Une modale annonce ce qui vient d'être marqué (cf. VictoryModal.vue).
+//
+// Tout passe par une entrée de journal `victory`, ce qui suffit à la partie
+// en ligne : les entrées reçues des autres joueurs sont appliquées au plateau
+// comme au rejeu (cf. applyRemoteEntry), sans canal réseau dédié.
+
+/** Camps à afficher, dans l'ordre du module, avec le libellé de la piste de
+ *  tour (« Alliés », « Allemands »). */
+const victorySides = computed(() => (rules.victoryPoints?.sides ?? [])
+  .map((side) => ({ key: side, label: sideLabel(side) })))
+
+// Totaux et saisie, pour le template (cf. VictoryPoints.vue).
+const victoryScores = computed(() => victory.scores.value)
+const victoryEditable = computed(() => victory.editable.value)
+
+// Attributions à annoncer (cf. VictoryModal.vue), vidées à l'acquittement.
+const victoryNotice = ref([])
+const victoryNoticeTitle = ref('Points de victoire')
+
+/** Inscrit `points` au camp `side` et le journalise. `reason` paraît dans le
+ *  journal et dans la modale. Renvoie la ligne à annoncer, ou `null`. */
+function awardVictory(side, points, reason) {
+  const result = victory.award(side, points)
+  if (!result) return null
+  log('victory', `${sideLabel(side)} : +${points} point${points > 1 ? 's' : ''} (${reason}) — total ${result.total}`,
+    { side, points, total: result.total, reason })
+  return { side, label: sideLabel(side), points, total: result.total, reason }
+}
+
+/** Mode Libre : le joueur fixe un total à la main (cf. VictoryPoints.vue). */
+function onVictoryChange({ side, value }) {
+  if (!victory.editable.value || inputLocked.value) return
+  const result = victory.set(side, value)
+  if (!result) return
+  const sign = result.delta > 0 ? `+${result.delta}` : String(result.delta)
+  log('victory', `${sideLabel(side)} : ${sign} point${Math.abs(result.delta) > 1 ? 's' : ''} — total ${result.total}`,
+    { side, points: result.delta, total: result.total, reason: 'saisie' })
+}
+
+/** Mode Assisté : une unité vient d'être éliminée pour de bon (une unité qui
+ *  se reconstitue n'a pas été perdue, cf. lib/useArnhem.js). */
+function scoreElimination(counter) {
+  if (!props.assisted || !victory.active.value || actionsLocked.value) return
+  const award = victory.eliminationAward(sideOfCounter(counter))
+  if (!award) return
+  const line = awardVictory(award.side, award.points, `${counter?.name ?? 'unité'} éliminé`)
+  if (line) { victoryNoticeTitle.value = 'Points de victoire'; victoryNotice.value = [line] }
+}
+
+/** Mode Assisté, Fin de tour : positions tenues au-delà des fleuves, et
+ *  unités coupées de leurs arrières. Ces comptes-là s'AJOUTENT à chaque tour
+ *  (choix validé) — tenir une position cinq tours rapporte cinq fois.
+ *
+ *  En ligne, seul le joueur qui a la main compte : l'entrée de journal qu'il
+ *  produit porte les points chez l'autre. */
+function scoreEndOfTurn() {
+  if (!props.assisted || !victory.active.value || actionsLocked.value) return
+  if (props.online && !isLocalTurn.value) return
+  const lines = []
+  const cut = supplyLine.unsuppliedIds(counters.value)
+
+  // Positions au-delà des fleuves : à l'unité de tenir ET d'être ravitaillée.
+  const held = new Map()
+  for (const counter of counters.value) {
+    if (!isFighter(counter) || !victory.holdsPosition(counter)) continue
+    if (!supplyLine.concerns(counter) || cut.has(String(counter.id))) continue
+    const zone = victory.zoneOf(counter)
+    if (!zone) continue
+    if (!held.has(zone.id)) held.set(zone.id, { zone, count: 0 })
+    held.get(zone.id).count += 1
+  }
+  for (const { zone, count } of held.values()) {
+    const line = awardVictory(zone.to, zone.points * count,
+      `${count} unité${count > 1 ? 's' : ''} ${zone.label}`)
+    if (line) lines.push(line)
+  }
+
+  // Unités coupées de leurs arrières, comptées pour l'adversaire.
+  const unsupplied = rules.victoryPoints?.unsupplied
+  if (unsupplied?.points) {
+    const count = counters.value.filter((counter) => supplyLine.concerns(counter) && cut.has(String(counter.id))).length
+    if (count) {
+      const line = awardVictory(unsupplied.to, unsupplied.points * count,
+        `${count} unité${count > 1 ? 's' : ''} sans ligne de communication`)
+      if (line) lines.push(line)
+    }
+  }
+
+  if (lines.length) {
+    victoryNoticeTitle.value = 'Fin de tour — points de victoire'
+    victoryNotice.value = lines
+  }
+}
+
+// Entrée dans la phase de Fin de tour : c'est là qu'on fait les comptes (cf.
+// `scoreEndOfTurn`). Créé au montage, comme les autres veilles de ce fichier,
+// pour ne pas lire trop tôt ce qui est déclaré plus bas.
+function startVictoryWatch() {
+  watch(phase, (now, before) => {
+    if (now === PHASE_END_OF_TURN && before !== PHASE_END_OF_TURN) scoreEndOfTurn()
+  })
+}
+
 // --- Ligne de communication affichée (mode debug) ----------------------------
 // La règle (cf. lib/useSupplyLine.js) ne pénalise personne pour l'instant :
 // elle se REGARDE. Pendant la phase de Fin de tour — celle du dernier camp de
@@ -1871,10 +1995,15 @@ function returnSupportToTray(id) {
 /** Élimine un pion (menu contextuel, ou résultat de combat — cf.
  *  lib/useRetreat.js, qui précise alors pourquoi dans `reason`). */
 function eliminateCounter(id, reason) {
+  const lost = counters.value.find((counter) => String(counter.id) === String(id))
   const rebuilt = noteElimination(id)
   const counter = allCounters.value.find((counter) => String(counter.id) === String(id))
   const comeback = rebuilt ? `, se reconstitue et revient au tour ${rebuilt.turn}` : ''
   log('eliminate', `${counter?.name ?? id} éliminé${reason ? ` (${reason})` : ''}${comeback}`, { counterId: id })
+  // Points de victoire (cf. la section du même nom) : une unité qui se
+  // reconstitue et revient en renfort n'a pas été perdue, elle ne rapporte
+  // rien à l'adversaire.
+  if (!rebuilt) scoreElimination(lost ?? counter)
 }
 function onCounterContextMenu(id, ev) {
   // Pendant une retraite (cf. lib/useRetreat.js), retirer ou replacer un
@@ -2920,6 +3049,9 @@ function resetBoardForReplay() {
   // `demolition` rejouées (cf. lib/useBridges.js::applyReplay).
   demolition.reset()
   closeDemolitionResult()
+  // Points de victoire : rétablis par les entrées `victory` rejouées.
+  victory.reset()
+  victoryNotice.value = []
   closeRepairResult()
   // Un combat resté ouvert n'a plus de sens sur un plateau remis à zéro.
   cancelCombat()
@@ -3026,6 +3158,11 @@ function applyReplayEntry(entry) {
     // Même chemin qu'en jeu (cf. `noteElimination`) : un pion que la règle du
     // module fait revenir se retrouve dans les renforts, pas chez les morts.
     noteElimination(entryData.counterId)
+  } else if (entry.kind === 'victory') {
+    // Points de victoire (cf. la section du même nom) : le TOTAL de l'entrée
+    // fait foi, jamais un recalcul — sinon une partie rechargée, ou l'entrée
+    // reçue d'un autre joueur, compterait deux fois.
+    victory.applyReplay(entryData)
   } else if (entry.kind === 'repair') {
     // Pont relevé par le génie (cf. la section "Réparation des ponts") : le
     // journal fait foi, comme pour une démolition.
@@ -3291,6 +3428,11 @@ function onMapDragEnd() {
         <SupportTracker ref="supportTrackerRef" :config="module.supportTrack" :turn="turnInfo.turn"
           :placed-ids="placedIds" :selectable="selectable" :placeable="canPlaceSupportNow" :selected-id="selectedSupportId"
           @dragstart="onCounterDragStart" @select="onSupportSelect" />
+
+        <!-- cf. lib/useVictoryPoints.js — tenus à la main en mode Libre,
+             par le moteur en mode Assisté. -->
+        <VictoryPoints :sides="victorySides" :scores="victoryScores" :editable="victoryEditable"
+          @change="onVictoryChange" />
       </div>
 
       <div class="controls">
@@ -3560,6 +3702,9 @@ function onMapDragEnd() {
       Le temps accordé pour la phase de Mouvement est écoulé : vous ne pouvez plus déplacer
       d'unité. Passez à la phase suivante.
     </PhaseBlockedModal>
+
+    <!-- cf. lib/useVictoryPoints.js — ce qui vient d'être marqué. -->
+    <VictoryModal :awards="victoryNotice" :title="victoryNoticeTitle" @close="victoryNotice = []" />
 
     <!-- cf. declareBlitzLoss — Blitz : une pendule est tombée à 0, partie perdue. -->
     <PhaseBlockedModal v-if="showGameOver && blitzLoser" title="Temps imparti terminé" @close="showGameOver = false">

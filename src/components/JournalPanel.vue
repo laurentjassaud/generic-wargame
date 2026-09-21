@@ -479,6 +479,12 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
   background: var(--selection-a14);
 }
 
+/* Points de victoire (cf. lib/useVictoryPoints.js) : l'or de la piste de
+   tour, puisque c'est de compte qu'il s'agit. */
+.jn-row.jn-victory {
+  background: var(--gold-a12);
+}
+
 .jn-row.jn-place,
 .jn-row.jn-return {
   background: var(--selection-a14);

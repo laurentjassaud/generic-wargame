@@ -51,6 +51,16 @@ aucune restriction de tour ni de règle, dé libre.
   combat (CRT) avec dé, combats obligatoires, retraites hex par hex (avec
   refoulement d'amis), éliminations, avance après combat ; les unités ayant
   combattu pendant la phase portent un rond rouge en haut à gauche ;
+- points de victoire (cf. `src/lib/useVictoryPoints.js`, `rules.victoryPoints`)
+  : un total par camp, sous la tablette de soutien. En partie Libre, les
+  joueurs le tiennent eux-mêmes (boutons − et +, saisie directe), chaque
+  modification allant au journal ; en partie Assistée le moteur seul marque,
+  et le bloc passe en lecture seule — une unité éliminée rapporte à son
+  adversaire, et chaque Fin de tour paie les positions tenues au-delà d'un
+  fleuve par une unité ravitaillée puis compte les unités coupées de leurs
+  arrières au profit de l'adversaire. Une zone « au-delà d'un fleuve » n'est
+  ni une ligne ni une liste d'hex : c'est la région que le fleuve isole,
+  remplie depuis un hex témoin sans jamais franchir de rivière ;
 - lignes de communication (cf. `src/lib/useSupplyLine.js`,
   `rules.supplyLine`) : chaque unité du camp concerné trace une suite continue
   d'hex jusqu'à ses arrières — une zone de largage de sa division pour les
@@ -190,7 +200,8 @@ src/
 ├── views/        GamesList, CreateGame, LocalGameSetup, DemoPlay (plateau local), RoomLobby (plateau en ligne)
 ├── components/   HexMap (plateau et orchestration), TurnTracker, SupportTracker, Counter,
 │                 ReinforcementsPanel, EliminatedPanel, JournalPanel, SidePanel, CombatModal,
-│                 BridgeModal, PhaseBlockedModal, MoveTimer, RollModal, MovementChartModal,
+│                 BridgeModal, VictoryPoints, VictoryModal, PhaseBlockedModal, MoveTimer,
+│                 RollModal, MovementChartModal,
 │                 CombatChartModal,
 │                 CalibrationPanel, ContextMenu, GameSetupSteps
 └── lib/
@@ -201,6 +212,7 @@ src/
     ├── useRetreat.js    retraites, éliminations, avance après combat
     ├── useBridges.js sort des ponts : démolition, réparation par le génie, ponts détruits ou saufs
     ├── useSupplyLine.js lignes de communication : tracé jusqu'aux arrières, ZOC, cours d'eau
+    ├── useVictoryPoints.js points de victoire : totaux, éliminations, zones au-delà des fleuves
     ├── moduleRules.js   registre des règles particulières par module
     ├── useArnhem.js     règles particulières du module Arnhem (patron pour d'autres modules)
     ├── rules.js         paramètres des règles génériques (module.rules), structure du tour (module.turnStructure)
