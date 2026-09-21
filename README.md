@@ -71,7 +71,8 @@ aucune restriction de tour ni de règle, dé libre.
   artilleries par camp dans un combat).
 
 **Timings** (partie Assistée) : *Limité* accorde N minutes à **chaque** phase
-de Mouvement (compte à rebours, clignote sous 20 s, alerte à zéro) ; *Blitz*
+de Mouvement (compte à rebours, clignote sous 20 s ; à zéro, le mouvement
+s'arrête — il ne reste qu'à passer à la phase suivante) ; *Blitz*
 donne à chaque camp un temps total pour toutes ses phases de Mouvement
 (pendule d'échecs, une par camp, toujours visible) — à zéro, le camp **perd
 la partie**.

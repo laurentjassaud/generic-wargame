@@ -1446,8 +1446,10 @@ const showPhaseBlocked = ref(false)
  *  lib/useAssisted.js::advance. */
 function onPhaseNext() {
   // Rejeu, partie terminée ou, en ligne, pas le tour de ce joueur (le
-  // bouton est déjà désactivé dans ces cas, cf. `inputLocked`).
-  if (inputLocked.value) return
+  // bouton est déjà désactivé dans ces cas, cf. `phaseControlsLocked` — et
+  // NON `inputLocked`, qu'un temps de Mouvement écoulé ferme alors que c'est
+  // précisément ce bouton-là qu'il faut pouvoir cliquer).
+  if (phaseControlsLocked.value) return
   // Retraite en cours (cf. lib/useRetreat.js) : elle doit être terminée
   // avant de pouvoir changer de phase. De même, en ligne, un combat dont le
   // défenseur a déjà choisi son FPF est engagé : il doit être joué.
@@ -2897,8 +2899,30 @@ const actionsLocked = computed(() => replayLocked.value || blitzLoser.value != n
 // Une occasion de démolition ouverte ferme elle aussi la saisie (cf. la
 // section "Démolition des ponts") : la règle veut une décision immédiate, et
 // rien d'autre ne doit pouvoir se faire tant qu'elle n'est pas prise.
-const inputLocked = computed(() => actionsLocked.value || (props.online && !isLocalTurn.value)
+// Temps de la phase de Mouvement écoulé (timing "Limité" seulement, cf.
+// `onMoveTimeUp`) : posé à l'expiration du compte à rebours, levé au
+// changement de phase ou de pas.
+const moveTimeExpired = ref(false)
+
+/** Le mouvement est-il fermé parce que le temps est écoulé ? Seulement
+ *  pendant la phase de Mouvement, bien sûr — et seulement une fois les
+ *  empilements résolus : `onPhaseNext` refuse de quitter la phase tant que
+ *  deux unités amies partagent un hex, si bien qu'un joueur pris par le temps
+ *  au milieu d'une pile ne pourrait NI la défaire NI passer au Combat. Cette
+ *  soupape lui laisse de quoi se dégager ; le verrou retombe dès que c'est
+ *  fait. */
+const moveTimeLocked = computed(() => moveTimeExpired.value && phase.value === 0
+  && stackedHexes.value.length === 0)
+
+// Deux verrous, et non un seul, depuis que le timing "Limité" arrête le
+// mouvement (cf. `moveTimeLocked` juste au-dessus) : celui-là interdit de
+// BOUGER mais doit laisser passer à la phase suivante — c'est même tout ce
+// qu'il reste à faire. `phaseControlsLocked` est donc ce qui ferme AUSSI la
+// piste de tour, et `inputLocked`, qui lui ajoute le temps écoulé, reste la
+// garde de toutes les autres entrées.
+const phaseControlsLocked = computed(() => actionsLocked.value || (props.online && !isLocalTurn.value)
   || demolitionBridge.value != null || repairTarget.value != null)
+const inputLocked = computed(() => phaseControlsLocked.value || moveTimeLocked.value)
 
 // --- Timings "Limité" et "Blitz" (cf. lib/gameSettings.js, MoveTimer.vue).
 // Toutes les phases sont conservées : SEULE la phase Mouvement (phase 0) est
@@ -2950,12 +2974,15 @@ const showTimeUp = ref(false)
 const showGameOver = ref(false)
 const sideLabel = (side) => props.module.turnTrack?.sides?.[side]?.label ?? side
 /** Compteur à zéro (cf. MoveTimer.vue, `expired`). Blitz : le camp `side`
- *  PERD la partie. Limité : simple alerte, au joueur actif uniquement (en
- *  ligne, chaque navigateur a son compteur, mais seul celui dont c'est le
- *  tour est prévenu). */
+ *  PERD la partie. Limité : le MOUVEMENT S'ARRÊTE (cf. `moveTimeLocked`) —
+ *  plus de déplacement, d'entrée de renfort ni de retour arrière, il ne reste
+ *  qu'à passer à la phase suivante. L'alerte, elle, n'est montrée qu'au
+ *  joueur actif : en ligne, chaque navigateur a son compteur, mais seul celui
+ *  dont c'est le tour a quelque chose à en faire. */
 function onMoveTimeUp(side) {
-  if (isBlitz.value) declareBlitzLoss(side)
-  else if (isLocalTurn.value) showTimeUp.value = true
+  if (isBlitz.value) { declareBlitzLoss(side); return }
+  moveTimeExpired.value = true
+  if (isLocalTurn.value) showTimeUp.value = true
 }
 /** Blitz : fin de partie, `loser` a perdu au temps. La modale de fin
  *  s'affiche chez TOUS les joueurs.
@@ -2976,8 +3003,13 @@ function declareBlitzLoss(loser, { remote = false } = {}) {
   }
   showGameOver.value = true
 }
-// Le joueur suivant ne doit pas hériter de la modale du précédent.
-watch(() => turnInfo.value.step, () => { showTimeUp.value = false })
+// Nouvelle phase ou nouveau camp : le compteur repart à plein (cf.
+// `syncMoveTimer`), donc le mouvement se rouvre et la modale du joueur
+// précédent disparaît.
+watch([() => turnInfo.value.step, phase], () => {
+  showTimeUp.value = false
+  moveTimeExpired.value = false
+})
 
 function zoomIn() {
   zoom.value = Math.min(2, +(zoom.value + 0.05).toFixed(2))
@@ -3028,7 +3060,7 @@ function onMapDragEnd() {
 
       <div v-if="module.turnTrack" class="turn-tracker-block">
         <TurnTracker ref="turnTrackerRef" :config="module.turnTrack" :sides="module.sides"
-          :initial-step="initialTurnStep" :disabled="inputLocked" :phase="phase" :phase-index="phaseIndex" :phase-labels="phaseLabels" :next-label="nextLabel"
+          :initial-step="initialTurnStep" :disabled="phaseControlsLocked" :phase="phase" :phase-index="phaseIndex" :phase-labels="phaseLabels" :next-label="nextLabel"
           @turn="onTurnAdvance" @change="onTurnChange" @phase-next="onPhaseNext" />
 
         <!-- cf. MoveTimer.vue — Blitz : une pendule par camp, toujours
@@ -3305,7 +3337,8 @@ function onMapDragEnd() {
 
     <!-- cf. MoveTimer.vue — timing "Limité" : temps de la phase de Mouvement écoulé. -->
     <PhaseBlockedModal v-if="showTimeUp" title="Temps imparti terminé" @close="showTimeUp = false">
-      Le temps accordé pour la phase de Mouvement est écoulé.
+      Le temps accordé pour la phase de Mouvement est écoulé : vous ne pouvez plus déplacer
+      d'unité. Passez à la phase suivante.
     </PhaseBlockedModal>
 
     <!-- cf. declareBlitzLoss — Blitz : une pendule est tombée à 0, partie perdue. -->
