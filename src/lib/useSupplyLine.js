@@ -14,12 +14,18 @@
 //
 //   - unité NON AÉROPORTÉE : elle trace une ligne continue jusqu'à 0105 ou
 //     0106. Tant que la ligne n'a rencontré ni piste ni route, elle passe où
-//     elle veut ; dès qu'elle EMPRUNTE UNE PISTE, tout le reste doit suivre
-//     une piste ou une route ; dès qu'elle EMPRUNTE UNE ROUTE, tout le reste
+//     elle veut ; dès qu'elle EST SUR UNE PISTE, tout le reste doit suivre
+//     une piste ou une route ; dès qu'elle EST SUR UNE ROUTE, tout le reste
 //     doit suivre une route. La contrainte ne se relâche donc jamais — d'où
 //     les "étages" du parcours ci-dessous (cf. `stageOfEdge`), qui ne peuvent
 //     que monter à mesure qu'on s'éloigne de l'unité et se rapproche de
-//     l'arrière ;
+//     l'arrière.
+//
+//     L'hex de l'unité EST le premier hex de la ligne : une unité postée sur
+//     une piste a donc déjà sa ligne "sur la piste" et ne peut plus couper à
+//     travers champs, même au premier pas (cf. `stageOfHex`). Une unité
+//     postée sur une route ne trace, elle, que par la route — c'est la même
+//     règle, prise à son étage le plus haut ;
 //
 //   - unité AÉROPORTÉE : elle trace une ligne continue jusqu'à la ZONE DE
 //     LARGAGE DE SA DIVISION, en sept hex au plus. Ni piste ni route n'y
@@ -123,6 +129,22 @@ export function useSupplyLine({
     return { zoc: enemyZocSet(sample), friendly, enemy, edges: new Map() }
   }
 
+  /** L'étage auquel l'HEX `hex` tient la ligne qui s'y trouve : celui de la
+   *  meilleure voie qui le dessert. Sert au premier hex de la ligne — celui
+   *  de l'unité —, car une unité postée sur une piste y est déjà "sur la
+   *  piste" et n'a pas à l'emprunter pour y être tenue.
+   *
+   *  Les hex suivants n'en ont pas besoin : on y entre forcément PAR une
+   *  arête, dont l'étage dit déjà tout (cf. `stageOfEdge`). */
+  function stageOfHex(hex) {
+    let best = STAGE_FREE
+    for (const neighbor of neighborsOf(hex.col, hex.row)) {
+      const stage = stageOfEdge(edgeKinds({ c: hex.col, r: hex.row }, { c: neighbor.col, r: neighbor.row }))
+      if (stage > best) best = stage
+    }
+    return best
+  }
+
   /** L'hexside `from` -> `to` (`{ col, row }`) laisse-t-il passer une ligne ?
    *  Non s'il porte un cours d'eau (`blockingKinds`) que ne franchit aucun
    *  pont (`bridgeKinds`) — cf. l'en-tête pour les bacs et les ponts démolis. */
@@ -196,8 +218,11 @@ export function useSupplyLine({
     // L'hex de l'unité elle-même ne se discute pas : elle y est.
     if (goal.has(keyOf(start.col, start.row))) return { hexes: [start], source: start }
 
-    const seen = new Set([keyOf(start.col, start.row) + '@' + STAGE_FREE])
-    let frontier = [{ hex: start, stage: STAGE_FREE, path: [start] }]
+    // …mais il compte comme premier hex de la ligne : posée sur une piste,
+    // l'unité y est déjà tenue (cf. `stageOfHex`).
+    const first = staged ? stageOfHex(start) : STAGE_FREE
+    const seen = new Set([keyOf(start.col, start.row) + '@' + first])
+    let frontier = [{ hex: start, stage: first, path: [start] }]
     for (let step = 0; step < limit && frontier.length; step += 1) {
       const next = []
       for (const state of frontier) {
@@ -244,14 +269,24 @@ export function useSupplyLine({
    *
    *  @returns un Set de clés "col,row". */
   function reachFrom(starts, { context, staged, limit = Infinity }) {
+    // Le parcours remonte depuis les arrières : il retient, pour chaque hex,
+    // le plus HAUT étage par lequel une ligne peut en repartir vers la
+    // source. Une unité qui s'y trouve est ravitaillée si l'étage de SON hex
+    // (cf. `stageOfHex`) ne dépasse pas celui-là : c'est exactement la
+    // condition du premier pas à l'aller — l'arête empruntée doit valoir au
+    // moins ce que vaut l'hex de départ —, lue en miroir.
+    const best = new Map()
     const reached = new Set()
     const seen = new Set()
     let frontier = []
     for (const start of starts) {
       if (!hexAllows(context, start)) continue
       const stage = staged ? Infinity : 0
-      reached.add(keyOf(start.col, start.row))
-      seen.add(keyOf(start.col, start.row) + '@' + stage)
+      const key = keyOf(start.col, start.row)
+      reached.add(key)
+      // L'unité posée SUR la source est ravitaillée sans avoir à en partir.
+      best.set(key, Infinity)
+      seen.add(key + '@' + stage)
       frontier.push({ hex: start, stage })
     }
     for (let step = 0; step < limit && frontier.length; step += 1) {
@@ -265,16 +300,20 @@ export function useSupplyLine({
             stage = stageOfEdge(edgeKinds({ c: state.hex.col, r: state.hex.row }, { c: neighbor.col, r: neighbor.row }))
             if (stage > state.stage) continue   // la contrainte ne se relâche qu'en s'éloignant de la source
           }
-          const mark = keyOf(neighbor.col, neighbor.row) + '@' + stage
+          const key = keyOf(neighbor.col, neighbor.row)
+          const mark = key + '@' + stage
           if (seen.has(mark)) continue
           seen.add(mark)
-          reached.add(keyOf(neighbor.col, neighbor.row))
+          reached.add(key)
+          // L'étage offert à celui qui part d'ici : celui de l'arête par
+          // laquelle la ligne le quittera. On garde le plus permissif.
+          if (stage > (best.get(key) ?? -1)) best.set(key, stage)
           next.push({ hex: neighbor, stage })
         }
       }
       frontier = next
     }
-    return reached
+    return { reached, best }
   }
 
   /** Les unités de `units` qui N'ONT PAS de ligne — ids en chaînes.
@@ -295,9 +334,13 @@ export function useSupplyLine({
 
     if (ground.length) {
       const sources = (supply.ground?.sources ?? []).map(parseHexId)
-      const reached = reachFrom(sources, { context, staged: true })
+      const { reached, best } = reachFrom(sources, { context, staged: true })
       for (const unit of ground) {
-        if (!reached.has(keyOf(unit.col, unit.row))) out.add(String(unit.id))
+        const key = keyOf(unit.col, unit.row)
+        // Ravitaillée si la ligne l'atteint ET si l'étage de son propre hex
+        // ne lui interdit pas le premier pas : une unité sur une piste ne
+        // peut pas partir à travers champs (cf. `stageOfHex`).
+        if (!reached.has(key) || stageOfHex(unit) > (best.get(key) ?? -1)) out.add(String(unit.id))
       }
     }
 
@@ -312,7 +355,7 @@ export function useSupplyLine({
       const zones = counters().filter((marker) => !isFighter(marker) && String(marker.code) === division)
         .map((marker) => ({ col: marker.col, row: marker.row }))
       const reached = zones.length
-        ? reachFrom(zones, { context, staged: false, limit: supply.airborne?.range ?? Infinity })
+        ? reachFrom(zones, { context, staged: false, limit: supply.airborne?.range ?? Infinity }).reached
         : new Set()
       for (const unit of members) {
         if (!reached.has(keyOf(unit.col, unit.row))) out.add(String(unit.id))
