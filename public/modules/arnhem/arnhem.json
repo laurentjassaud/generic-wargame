@@ -1447,7 +1447,8 @@
     "engineerCrossing": {
       "unitTypes": ["engineer"],
       "side": "allies",
-      "combatRow": "stream"
+      "combatRow": "stream",
+      "rebuild": { "hexes": "0105-0106", "turnDelay": 1 }
     },
     "mapExit": {
       "side": "german",

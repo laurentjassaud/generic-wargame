@@ -747,6 +747,53 @@ const {
   },
 })
 
+// --- Assaut de rivière : prendre l'hex ou mourir (cf. lib/useArnhem.js) ------
+// « Si l'unité alliée est incapable d'avancer après ce combat à travers la
+// rivière, elle est éliminée. » Un assaut mené sur la passerelle du génie est
+// un tout ou rien : l'unité qui ne tient pas l'hex d'en face une fois le
+// résultat appliqué — parce qu'il n'a pas été vidé, parce qu'elle a renoncé à
+// y avancer, ou parce que le résultat l'a fait reculer — est perdue. (Une
+// retraite À TRAVERS la rivière, elle, reste simplement impossible : le
+// moteur la refuse comme n'importe quel hexside infranchissable, et
+// l'élimination qui s'ensuit est la règle standard.)
+//
+// Les unités concernées sont relevées AU MOMENT du jet, sur la photo du
+// combat (positions d'avant), puis soldées quand l'application du résultat
+// est terminée.
+let riverAssaults = []
+
+/** Relève les attaquants qui viennent de franchir la rivière à l'assaut, et
+ *  l'hex que chacun devait prendre. */
+function noteRiverAssaults() {
+  riverAssaults = combatAttackers.value.flatMap((unit) => {
+    const from = { c: unit.col, r: unit.row }
+    const target = combatTargetHexes.value.find((targetHex) =>
+      moduleRules.engineerAssaultEdge(unit, from, { c: targetHex.col, r: targetHex.row }) != null)
+    return target ? [{ id: unit.id, col: target.col, row: target.row }] : []
+  })
+}
+
+/** Solde les assauts relevés : qui ne tient pas son hex est éliminé. */
+function settleRiverAssaults() {
+  const pending = riverAssaults
+  riverAssaults = []
+  for (const assault of pending) {
+    const unit = counters.value.find((counter) => String(counter.id) === String(assault.id))
+    // Déjà éliminée par le résultat du combat : rien à ajouter.
+    if (!unit) continue
+    if (unit.col === assault.col && unit.row === assault.row) continue
+    eliminateCounter(unit.id, "n'a pas pris l'hex de son assaut de rivière")
+  }
+}
+
+// L'application d'un résultat (retraites, refoulements, avance) vient de se
+// terminer : c'est le moment de solder les assauts. Le cas où il n'y avait
+// rien à appliquer est traité à la fin de `onCombatFight`, qui appelle
+// directement — le watcher ne verrait rien passer.
+watch(retreatActive, (running, wasRunning) => {
+  if (wasRunning && !running) settleRiverAssaults()
+})
+
 /** Clic sur "Combattre" dans la modale : la règle (dé + lecture de la table)
  *  vit dans lib/useCombat.js, on ne fait ici qu'en journaliser le résultat
  *  (hex cibles et unités défenseuses, qui peuvent être plusieurs), puis
@@ -796,12 +843,17 @@ function onCombatFight() {
   // visait que le défenseur, il ne reste rien à appliquer.
   const effect = combatTable?.effects[combatOutcome.result] ?? {}
   const hitsAttackers = effect.eliminate === 'attackers' || (effect.retreat?.attackers ?? 0) > 0
+  // Assauts de rivière de ce combat, relevés sur la photo (positions d'avant
+  // les retraites) — cf. la section "Assaut de rivière" plus haut.
+  noteRiverAssaults()
   if (!combatOutcome.defenderImmune) {
     startRetreat(combatOutcome.result, contactAttackers, [...combatDefenders.value], combatTargetHexes.value)
+    if (!retreatActive.value) settleRiverAssaults()
     return
   }
   log('info', `${combatOutcome.result} sans effet sur le défenseur : attaque faite uniquement d'artillerie et/ou de soutien`)
   if (hitsAttackers) startRetreat(combatOutcome.result, contactAttackers, [], combatTargetHexes.value)
+  if (!retreatActive.value) settleRiverAssaults()
 }
 
 // --- Démolition des ponts (cf. lib/useBridges.js) -------------------------
@@ -1610,14 +1662,44 @@ const placedIds = computed(() => new Set(counters.value.map((counter) => String(
 // de cette règle.
 const exitedUnits = ref(new Map())
 
-/** Le renfort `counter` tel qu'il doit se présenter s'il est sorti de la
- *  carte : même pion, mais avec les hex d'entrée de sa bande de sortie et le
- *  tour suivant celui de sa sortie. Inchangé sinon. */
+// Unités ÉLIMINÉES qu'une règle du module fait revenir en renfort (cf.
+// lib/useArnhem.js::rebuiltReinforcement — le génie d'Arnhem se reconstitue
+// et se représente au tour suivant) : id -> `{ setup, turn }`, où et quand.
+// Elles ne rejoignent PAS les "Unités éliminées" : elles sont attendues dans
+// le panneau des renforts, ce que le journal dit d'ailleurs en toutes
+// lettres au moment de leur perte.
+const rebuiltUnits = ref(new Map())
+
+/** Le renfort `counter` tel qu'il doit se présenter s'il a déjà quitté la
+ *  carte : mêmes pion et facteurs, mais les hex d'entrée et le tour d'arrivée
+ *  de son retour — ceux de sa bande de sortie (cf. `exitedUnits`), ou ceux
+ *  que la règle du module lui donne après élimination (cf. `rebuiltUnits`).
+ *  Inchangé pour tous les autres. */
 function withMapExit(counter) {
+  const rebuilt = rebuiltUnits.value.get(String(counter.id))
+  if (rebuilt) return { ...counter, setup: rebuilt.setup, turn: rebuilt.turn }
   const exit = exitedUnits.value.get(String(counter.id))
   const zone = exit && mapExitZones.value.find((candidate) => candidate.id === exit.zone)
   if (!zone) return counter
   return { ...counter, setup: zone.hexes, turn: exit.turn + 1 }
+}
+
+/** Retire `id` de la carte et le range là où il doit l'être : dans les
+ *  renforts si une règle du module le fait revenir (cf.
+ *  `moduleRules.rebuiltReinforcement`), dans les "Unités éliminées" sinon.
+ *  Commun au jeu (cf. `eliminateCounter`) et au rejeu du journal. */
+function noteElimination(id) {
+  const key = String(id)
+  const counterIndex = counters.value.findIndex((counter) => String(counter.id) === key)
+  const counter = counterIndex !== -1 ? counters.value[counterIndex] : null
+  const rebuilt = moduleRules.rebuiltReinforcement(counter, turnInfo.value.turn)
+  if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
+  if (rebuilt) {
+    rebuiltUnits.value = new Map(rebuiltUnits.value).set(key, rebuilt)
+    return rebuilt
+  }
+  eliminatedIds.value = new Set(eliminatedIds.value).add(key)
+  return null
 }
 
 const reinforcements = computed(() =>
@@ -1704,12 +1786,10 @@ function returnSupportToTray(id) {
 /** Élimine un pion (menu contextuel, ou résultat de combat — cf.
  *  lib/useRetreat.js, qui précise alors pourquoi dans `reason`). */
 function eliminateCounter(id, reason) {
-  const counterIndex = counters.value.findIndex((counter) => String(counter.id) === String(id))
-  if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
-  eliminatedIds.value.add(String(id))
-  eliminatedIds.value = new Set(eliminatedIds.value)
+  const rebuilt = noteElimination(id)
   const counter = allCounters.value.find((counter) => String(counter.id) === String(id))
-  log('eliminate', `${counter?.name ?? id} éliminé${reason ? ` (${reason})` : ''}`, { counterId: id })
+  const comeback = rebuilt ? `, se reconstitue et revient au tour ${rebuilt.turn}` : ''
+  log('eliminate', `${counter?.name ?? id} éliminé${reason ? ` (${reason})` : ''}${comeback}`, { counterId: id })
 }
 function onCounterContextMenu(id, ev) {
   // Pendant une retraite (cf. lib/useRetreat.js), retirer ou replacer un
@@ -2704,6 +2784,9 @@ function resetBoardForReplay() {
   // Sorties de carte (cf. la section du même nom) : rétablies par les entrées
   // `exit` rejouées.
   exitedUnits.value = new Map()
+  // Unités reconstituées (cf. `rebuiltUnits`) : rétablies par les entrées
+  // `eliminate` rejouées.
+  rebuiltUnits.value = new Map()
   selectedCounterId.value = null
   selectedReinforcementId.value = null
   moveHistory.value = []
@@ -2819,10 +2902,9 @@ function applyReplayEntry(entry) {
       counters.value.push({ ...entryData.counter, col: entryData.col, row: entryData.row })
     }
   } else if (entry.kind === 'eliminate') {
-    const counterIndex = counters.value.findIndex((counter) => String(counter.id) === String(entryData.counterId))
-    if (counterIndex !== -1) counters.value.splice(counterIndex, 1)
-    eliminatedIds.value.add(String(entryData.counterId))
-    eliminatedIds.value = new Set(eliminatedIds.value)
+    // Même chemin qu'en jeu (cf. `noteElimination`) : un pion que la règle du
+    // module fait revenir se retrouve dans les renforts, pas chez les morts.
+    noteElimination(entryData.counterId)
   } else if (entry.kind === 'repair') {
     // Pont relevé par le génie (cf. la section "Réparation des ponts") : le
     // journal fait foi, comme pour une démolition.

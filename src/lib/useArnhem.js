@@ -490,6 +490,27 @@ export function useArnhem(moduleId, ctx = {}) {
     return engineerAt(fromHex) || engineerAt(toHex) ? true : null
   }
 
+  /** Règle de RECONSTITUTION DU GÉNIE — « si l'unité d'ingénieur est
+   *  éliminée, elle revient le tour suivant entre 0105-0106 ».
+   *
+   *  Le moteur n'a rien de particulier à apprendre : il sait déjà faire
+   *  revenir en renfort une unité qui a quitté la carte, avec ses propres
+   *  hex d'entrée et son propre tour d'arrivée (c'est ainsi qu'une unité
+   *  sortie par une bande de bord rentre au tour suivant, cf. HexMap.vue,
+   *  section "Sortie de carte"). Cette règle-ci ne fait que lui donner les
+   *  deux valeurs, prises du module (`rules.engineerCrossing.rebuild`).
+   *
+   *  @param unit le pion qu'on vient d'éliminer
+   *  @param turn le tour courant
+   *  @returns `{ setup, turn }` — où et quand il se représente — ou `null`
+   *    si ce pion-là ne revient pas (tous les autres). */
+  function rebuiltReinforcement(unit, turn) {
+    if (!active.value || !unref(ctx.assisted)) return null
+    const rebuild = crossing()?.rebuild
+    if (!rebuild?.hexes || !isEngineer(unit)) return null
+    return { setup: rebuild.hexes, turn: (turn ?? 1) + (rebuild.turnDelay ?? 1) }
+  }
+
   /** Règle d'ASSAUT DE RIVIÈRE — que vaut l'hexside `from` -> `to` (tous deux
    *  `{ c, r }`) AU COMBAT pour l'unité `unit` ?
    *
@@ -629,5 +650,6 @@ export function useArnhem(moduleId, ctx = {}) {
     active, autoPlacesAtLoad, noteAirborneArrival, airborneArrivalSpentMp, clearTurnState,
     supportHexAllowed, maxArtilleryPerCombat, cityRetreatReduction,
     engineerCrossingAllows, engineerAssaultEdge, stackingExempt, engineerAt, isAirborneFoot,
+    rebuiltReinforcement,
   }
 }

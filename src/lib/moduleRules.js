@@ -39,6 +39,8 @@ export const INERT_RULES = Object.freeze({
   stackingExempt: () => null,
   /** Nature d'arête à substituer AU COMBAT pour cette unité, ou `null` (assaut de rivière). */
   engineerAssaultEdge: () => null,
+  /** Ce pion éliminé revient-il en renfort ? `{ setup, turn }` ou `null`. */
+  rebuiltReinforcement: () => null,
   /** Le génie qui tient un passage sur cet hex, ou `null`. */
   engineerAt: () => null,
   /** Cette unité est-elle un aéroporté ou un planeur à pied ? */

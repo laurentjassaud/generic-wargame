@@ -68,7 +68,15 @@ aucune restriction de tour ni de règle, dé libre.
   retraites en ville — refusée à l'artillerie aéroportée et aux unités
   encerclées, aéroportés et planeurs exceptés —, soutien au sol guidé
   seulement à 3 hex d'une unité alliée non aéroportée, au plus deux
-  artilleries par camp dans un combat).
+  artilleries par camp dans un combat, passerelle du génie sur la rivière) ;
+- passerelle du génie (cf. `src/lib/useArnhem.js`, `rules.engineerCrossing`) :
+  un génie posté au bord d'une rivière, hors ZOC ennemie, ouvre un passage
+  aux aéroportés et planeurs de son camp — ils franchissent l'hexside pour le
+  seul coût d'entrée de l'hex, peuvent finir leur phase avec lui (il ne compte
+  pas dans l'empilement) et, de son hex, doivent assaillir l'ennemi d'en face,
+  combat résolu sur la ligne du ruisseau, sans le génie. Qui ne prend pas
+  l'hex est éliminé ; le génie perdu se reconstitue et revient en renfort le
+  tour suivant.
 
 **Timings** (partie Assistée) : *Limité* accorde N minutes à **chaque** phase
 de Mouvement (compte à rebours, clignote sous 20 s ; à zéro, le mouvement
