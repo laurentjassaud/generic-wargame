@@ -94,6 +94,7 @@
   --color-dot-red: #e02b2b;      /* points rouges des pions (a combattu, résultat subi) */
   /* Vert : chemin de retraite et avance après combat. */
   --color-green: #2ea043;
+  --green-a18: rgba(46, 160, 67, 0.18);   /* ligne de communication (debug) */
   --green-a28: rgba(46, 160, 67, 0.28);
   --green-a40: rgba(46, 160, 67, 0.4);
   --green-a60: rgba(46, 160, 67, 0.6);

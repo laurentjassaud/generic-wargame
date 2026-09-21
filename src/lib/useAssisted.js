@@ -622,6 +622,22 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     return edges.movementKind(key)
   }
 
+  /** TOUTES les natures de l'hexside `from` -> `h` (cf. lib/edges.js::
+   *  kindsOf), et non la seule qui fait foi : une règle peut avoir besoin de
+   *  savoir qu'une route franchit un ruisseau, ce que les priorités masquent.
+   *  Un pont DÉMOLI ne laisse que l'obstacle qu'il franchissait (cf.
+   *  `edgeKind`) : ni le pont, ni la route qui l'empruntait. Exportée pour
+   *  lib/useSupplyLine.js. */
+  function edgeKinds(from, hex) {
+    if (!from) return []
+    const key = edgeKeyOf(from, hex)
+    if (isDemolished(key)) {
+      const revealed = edges.revealedKind(key)
+      return revealed ? [revealed] : []
+    }
+    return edges.kindsOf(key)
+  }
+
   /** Nature de l'hexside `from` -> `h` DU POINT DE VUE DU COMBAT (cf.
    *  lib/useCombat.js) et de la ZOC (cf. `edgeBlocksZoc`) : la première de
    *  `terrain.edges.combatPriority` présente sur l'arête, ou `null`. Cet
@@ -1258,5 +1274,5 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   }
 
   return { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, edgeKind, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState }
+    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, edgeKind, edgeKinds, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState }
 }

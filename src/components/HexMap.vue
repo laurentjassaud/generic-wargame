@@ -31,6 +31,7 @@ import { useRetreat } from '../lib/useRetreat.js'
 import { useModuleRules } from '../lib/moduleRules.js'
 import { isUnit, isFighter, isSupport } from '../lib/units.js'
 import { useBridges } from '../lib/useBridges.js'
+import { useSupplyLine } from '../lib/useSupplyLine.js'
 import { parseSetup, isAirborneEntry, deploymentCells, rangeCells, landingCells } from '../lib/setup.js'
 import { resolveRules, resolveTurnStructure } from '../lib/rules.js'
 import { resolveCombatTable } from '../lib/combatTable.js'
@@ -641,6 +642,24 @@ const demolition = useBridges({
   step: computed(() => turnTrackerRef.value?.currentStep ?? 0),
 })
 
+// LIGNES DE COMMUNICATION (cf. lib/useSupplyLine.js, qui porte toute la
+// règle : qui trace, jusqu'où, et ce qui coupe la ligne). Appelé APRÈS
+// useAssisted() — dont il lit la ZOC et les hexsides — et avant tout usage,
+// ci-dessous. Inerte pour un module qui ne déclare pas `rules.supplyLine`.
+// Aucun effet de jeu pour l'instant : la ligne ne fait que s'AFFICHER, en
+// mode debug (cf. `isSupplyLineHex`).
+const supplyLine = useSupplyLine({
+  assisted: toRef(props, 'assisted'),
+  supply: rules.supplyLine,
+  counters: () => counters.value,
+  sideOf: (counter) => sideOfCounter(counter),
+  isFighter,
+  isAirborneEntry,
+  enemyZocSet: (counter) => enemyZocSet(counter),
+  edgeKinds: (from, hex) => edgeKinds(from, hex),
+  hexOnMap,
+})
+
 // cf. lib/useAssisted.js — toute la logique propre au mode "Assisté"
 // (grille, sélection au clic, restriction de tour, phases Mouvement/Combat,
 // MP/terrain/ZOC) y vit. Appelé ICI (et pas plus haut dans le fichier,
@@ -651,7 +670,7 @@ const demolition = useBridges({
 // lib/useAssisted.js::airbornePending), passés en FONCTION car
 // `reinforcements` n'est déclaré que plus bas dans ce fichier.
 const { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, edgeKind, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules, turnStructure, demolition.isDemolished, moduleRules)
+  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, edgeKind, edgeKinds, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules, turnStructure, demolition.isDemolished, moduleRules)
 
 // Table de combat déclarée par le module (`module.combat`, cf.
 // lib/combatTable.js) — `null` : module sans combat.
@@ -1755,6 +1774,40 @@ function reinforcementsForTab(key) {
 const openTab = ref(null)
 const draggedCounterId = ref(null)
 
+// --- Ligne de communication affichée (mode debug) ----------------------------
+// La règle (cf. lib/useSupplyLine.js) ne pénalise personne pour l'instant :
+// elle se REGARDE. Pendant la phase de Fin de tour — celle du dernier camp de
+// l'ordre, l'allemand à Arnhem, le moment où l'on fait ses comptes —, un clic
+// sur une unité en mode debug surligne en vert la ligne qui la relie à ses
+// arrières. Recliquer dessus l'efface, comme un clic sur une autre unité la
+// remplace.
+const supplyLineUnitId = ref(null)
+
+/** Peut-on demander une ligne en ce moment ? */
+const supplyLineOpen = computed(() => debug.value && supplyLine.active.value
+  && phase.value === PHASE_END_OF_TURN)
+
+/** Hex de la ligne actuellement montrée, en clés "col,row". */
+const supplyLineKeys = computed(() => {
+  if (!supplyLineOpen.value || supplyLineUnitId.value == null) return new Set()
+  const unit = counters.value.find((counter) => String(counter.id) === String(supplyLineUnitId.value))
+  return unit ? supplyLine.pathKeys(unit) : new Set()
+})
+const isSupplyLineHex = (hex) => supplyLineKeys.value.has(hex.c + ',' + hex.r)
+
+/** Clic sur l'unité `counter` alors qu'une ligne peut être montrée : c'est
+ *  elle qu'on trace (ou qu'on cesse de tracer). Renvoie `false` si le clic ne
+ *  concerne pas la ligne, pour laisser `onCounterSelect` le traiter. */
+function toggleSupplyLine(counter) {
+  if (!supplyLineOpen.value || !supplyLine.concerns(counter)) return false
+  const id = String(counter.id)
+  supplyLineUnitId.value = String(supplyLineUnitId.value) === id ? null : id
+  return true
+}
+
+// Changement de phase ou de camp : la ligne montrée n'a plus lieu d'être.
+watch([phase, () => turnInfo.value.step], () => { supplyLineUnitId.value = null })
+
 // --- Menu contextuel (clic droit) : "Replacer le pion" / "Éliminé" sur un
 // pion posé sur la carte ; seulement "Replacer le pion" sur un pion déjà
 // éliminé (panneau "Unités éliminées") ou sur un pion de soutien (retour dans
@@ -2350,6 +2403,10 @@ function onCounterSelect(id) {
   if (inputLocked.value) return
   const counter = counters.value.find((counter) => String(counter.id) === String(id))
   if (!counter) return
+  // Mode debug, phase de Fin de tour : le clic sert à REGARDER la ligne de
+  // communication de cette unité (cf. la section du même nom), et rien
+  // d'autre — y compris sur une unité que le camp actif ne contrôle pas.
+  if (toggleSupplyLine(counter)) return
   // Résultat de combat en cours d'application (cf. lib/useRetreat.js) :
   //  - retraite : le seul clic utile est sur un hex rouge — le pion posé sur
   //    un tel hex (unité amie de celle qui retraite) recouvre son polygone,
@@ -3317,6 +3374,14 @@ function onMapDragEnd() {
             :points="hex.pts" vector-effect="non-scaling-stroke" />
         </g>
 
+        <!-- cf. lib/useSupplyLine.js — ligne de communication de l'unité
+             cliquée (mode debug, phase de Fin de tour). Purement informatif :
+             les clics la traversent. -->
+        <g v-if="supplyLineKeys.size">
+          <polygon v-for="hex in hexes.filter(isSupplyLineHex)" :key="'loc' + hex.id" class="hex-supply-line"
+            :points="hex.pts" vector-effect="non-scaling-stroke" />
+        </g>
+
         <!-- cf. lib/useBridges.js — ponts démolissables dont le sort est
              réglé : rond ROUGE sur un pont détruit, VERT sur un pont qui
              tiendra jusqu'à la fin de la partie. Purement informatif : les
@@ -3745,6 +3810,16 @@ polygon.hex.entry:hover {
   stroke: var(--white-a35);
   stroke-width: 2;
   stroke-dasharray: 5 4;
+  pointer-events: none;
+}
+
+/* cf. lib/useSupplyLine.js — hex d'une ligne de communication (mode debug) :
+   un liseré vert franc, qui se suit d'un hex à l'autre sans masquer la carte
+   ni les pions. */
+.hex-supply-line {
+  fill: var(--green-a18);
+  stroke: var(--color-green-light);
+  stroke-width: 3;
   pointer-events: none;
 }
 

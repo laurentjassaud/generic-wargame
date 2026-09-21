@@ -116,6 +116,12 @@ export function resolveEdges(terrain, demolition = null) {
   return {
     /** Propriétés d'une nature (cf. l'en-tête), `null` pour `null`/inconnue. */
     kindOf: (kind) => (kind ? kinds[kind] ?? null : null),
+    /** TOUTES les natures portées par l'arête `edgeKey`, sans priorité — là
+     *  où `movementKind`/`combatKind` n'en retiennent qu'une. Une règle peut
+     *  avoir besoin de savoir qu'une route franchit un ruisseau, ce que la
+     *  priorité masque (cf. lib/useSupplyLine.js : la ligne s'arrête au
+     *  ruisseau même quand une route le traverse). */
+    kindsOf: (edgeKey) => [...edgesByKind].filter(([, set]) => set.has(edgeKey)).map(([kind]) => kind),
     /** L'arête `edgeKey` porte-t-elle un pont DÉMOLISSABLE (cf. l'en-tête) ? */
     demolishable: (edgeKey) => demolishableSet.has(edgeKey),
     /** Les arêtes démolissables, une entrée par arête : `{ key, layer, from, to }`. */

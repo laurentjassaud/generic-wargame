@@ -48,6 +48,11 @@ export const DEFAULT_RULES = Object.freeze({
   // le reste. Un module qui la connaît déclare `{ layers, by, unitTypes,
   // undisturbedSide }` (cf. `resolveBridgeRepair`).
   bridgeRepair: null,
+  // Lignes de communication (cf. lib/useSupplyLine.js) : `null` — le module
+  // n'en a pas. Un module qui les connaît déclare `{ side, excludeFactions,
+  // blockingKinds, bridgeKinds, ground: { sources, stages }, airborne:
+  // { range } }` (cf. `resolveSupplyLine`).
+  supplyLine: null,
 })
 
 export const ENTRY_CONGESTION_MODES = ['multiply', 'none']
@@ -158,6 +163,37 @@ export function resolveBridgeRepair(raw) {
   }
 }
 
+/** `rules.supplyLine` → règle des lignes de communication vérifiée, ou
+ *  `null` (ce module n'en a pas).
+ *
+ *  La règle (cf. lib/useSupplyLine.js) : les unités du camp `side` — sauf
+ *  celles des `excludeFactions` — tracent une suite continue d'hex depuis le
+ *  leur jusqu'à une source. Les unités venues par les airs rejoignent la zone
+ *  de largage de leur division en `airborne.range` hex au plus ; les autres
+ *  rejoignent l'un des hex `ground.sources`, en respectant les `ground.stages`
+ *  — les natures d'arête qui, une fois empruntées, tiennent la ligne au même
+ *  réseau ou mieux pour tout le reste du trajet (piste, puis route).
+ *
+ *  `blockingKinds` sont les natures d'hexside qui coupent la ligne (cours
+ *  d'eau), `bridgeKinds` celles qui la laissent passer malgré elles (ponts).
+ *
+ *  `side` est indispensable : sans lui, on ne sait pas qui trace. */
+export function resolveSupplyLine(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.side !== 'string' || !raw.side) return null
+  const strings = (value) => (Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item) : [])
+  const ground = raw.ground && typeof raw.ground === 'object' ? raw.ground : {}
+  const airborne = raw.airborne && typeof raw.airborne === 'object' ? raw.airborne : {}
+  const range = Number.isInteger(airborne.range) && airborne.range >= 1 ? airborne.range : null
+  return {
+    side: raw.side,
+    excludeFactions: strings(raw.excludeFactions),
+    blockingKinds: strings(raw.blockingKinds),
+    bridgeKinds: strings(raw.bridgeKinds),
+    ground: { sources: strings(ground.sources), stages: strings(ground.stages) },
+    airborne: { range: range ?? Infinity },
+  }
+}
+
 /** `module.rules` (objet libre, éventuellement absent) → règles prêtes à
  *  l'emploi : listes converties en `Set`, entiers vérifiés, défauts
  *  appliqués, clés inconnues conservées. */
@@ -178,5 +214,6 @@ export function resolveRules(raw) {
     mapExit: resolveMapExit(rules.mapExit),
     bridgeDemolition: resolveBridgeDemolition(rules.bridgeDemolition),
     bridgeRepair: resolveBridgeRepair(rules.bridgeRepair),
+    supplyLine: resolveSupplyLine(rules.supplyLine),
   }
 }

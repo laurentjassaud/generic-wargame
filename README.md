@@ -51,6 +51,15 @@ aucune restriction de tour ni de règle, dé libre.
   combat (CRT) avec dé, combats obligatoires, retraites hex par hex (avec
   refoulement d'amis), éliminations, avance après combat ; les unités ayant
   combattu pendant la phase portent un rond rouge en haut à gauche ;
+- lignes de communication (cf. `src/lib/useSupplyLine.js`,
+  `rules.supplyLine`) : chaque unité du camp concerné trace une suite continue
+  d'hex jusqu'à ses arrières — une zone de largage de sa division pour les
+  aéroportés (portée limitée), les hex sources du module pour les autres, la
+  ligne devant alors suivre une piste puis une route une fois qu'elle en a
+  emprunté une. Ni hex ennemi, ni ZOC ennemie (qu'une unité amie annule sur
+  son hex), ni cours d'eau sans pont. Aucun effet de jeu pour l'instant : en
+  mode debug, pendant la phase de Fin de tour, un clic sur une unité surligne
+  sa ligne en vert ;
 - sort des ponts (cf. `src/lib/useBridges.js`) : un pont déclaré démolissable
   peut sauter dès qu'une unité du camp adverse borde l'un de ses deux hex, à
   n'importe quelle phase ; le camp qui le tient décide aussitôt (jet de dé,
@@ -152,7 +161,7 @@ Champs du JSON (cf. `arnhem.json`) :
 | `combat` | Table de combat : `die`, colonnes de différentiel, lignes de terrain (décalage), substitutions par hexside, résultats, libellés et **effets** de chaque résultat (retraite, élimination), avance après combat — cf. `src/lib/combatTable.js` ; sans table, pas de combat |
 | `scenarios` | Scénarios proposés : `id`, `label`, `deployment` (`setup` — seul mode appliqué par le moteur ; `free` : bientôt), `weather` (`required` / `optional`) — cf. `src/lib/gameSettings.js` |
 | `turnStructure` | Phases du tour d'un camp, en plus du Mouvement : `airbornePhase`, `combatPhase`, `endOfTurnPhase` (booléens) — cf. `src/lib/rules.js` |
-| `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, `zoc` (`lockIfStarting`, `stopOnEntry`, `blocksRetreat`), `entryCongestion` (`multiply` / `none`), `mapExit` (sortie de carte : `side` autorisé et `zones` de bord `{ id, label, hexes }`, une unité sortie revenant en renfort par la même bande au tour suivant), `bridgeDemolition` (ponts démolissables : `layers` de la carte, camp `trigger` qui ouvre l'occasion, camp `by` qui décide, `destroyOn` du dé, `reveals`/`fallback` — l'obstacle que laisse un pont détruit), `bridgeRepair` (réparation : `layers` réparables, camp `by` qui répare, `unitTypes` capables de le faire, camp `undisturbedSide` dont le tour doit se passer hors ZOC), et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`, `groundSupportSpotterRange`, `maxArtilleryPerCombat`) — cf. `src/lib/rules.js` |
+| `rules` | Paramètres des règles génériques : `vehicleTypes`, `impassableForVehicles`, `stackingLimit`, `zoc` (`lockIfStarting`, `stopOnEntry`, `blocksRetreat`), `entryCongestion` (`multiply` / `none`), `mapExit` (sortie de carte : `side` autorisé et `zones` de bord `{ id, label, hexes }`, une unité sortie revenant en renfort par la même bande au tour suivant), `bridgeDemolition` (ponts démolissables : `layers` de la carte, camp `trigger` qui ouvre l'occasion, camp `by` qui décide, `destroyOn` du dé, `reveals`/`fallback` — l'obstacle que laisse un pont détruit), `bridgeRepair` (réparation : `layers` réparables, camp `by` qui répare, `unitTypes` capables de le faire, camp `undisturbedSide` dont le tour doit se passer hors ZOC), `supplyLine` (lignes de communication : camp `side`, `excludeFactions`, `blockingKinds`/`bridgeKinds` des hexsides, `ground` (`sources`, `stages`) et `airborne` (`range`)), et les valeurs des règles particulières du module (ex. `airborneArrivalSpentMp`, `groundSupportSpotterRange`, `maxArtilleryPerCombat`) — cf. `src/lib/rules.js` |
 | `sides` | Camps jouables → factions (`{"allies": ["commonwealth","us","pol"], "german": ["german"]}`) |
 | `turnTrack` | `turns`, `order` des camps, libellé et marqueur de chaque camp |
 | `supportTrack` | Tablette de soutien : pions par tour (`byTurn`), camp propriétaire (`side`) et apport au combat d'un pion (`factor`, défaut 1) — cf. `src/components/SupportTracker.vue` et la section "PIONS DE SOUTIEN" de `src/lib/useCombat.js` |
@@ -189,6 +198,7 @@ src/
     ├── combatTable.js   table de combat du module (module.combat) : vérification et lecture
     ├── useRetreat.js    retraites, éliminations, avance après combat
     ├── useBridges.js sort des ponts : démolition, réparation par le génie, ponts détruits ou saufs
+    ├── useSupplyLine.js lignes de communication : tracé jusqu'aux arrières, ZOC, cours d'eau
     ├── moduleRules.js   registre des règles particulières par module
     ├── useArnhem.js     règles particulières du module Arnhem (patron pour d'autres modules)
     ├── rules.js         paramètres des règles génériques (module.rules), structure du tour (module.turnStructure)
