@@ -102,27 +102,49 @@ export function useSupplyLine({
     return STAGE_FREE
   }
 
+  /** Tout ce qu'un parcours a besoin de savoir de la carte, préparé UNE fois
+   *  pour toutes : la ZOC ennemie et l'occupation des hex ne dépendent que du
+   *  CAMP, jamais de l'unité qui trace. Les relire pion par pion à chaque hex
+   *  visité — ce que faisait la première version — revenait à parcourir la
+   *  centaine de pions des dizaines de milliers de fois.
+   *
+   *  `edges` mémorise en plus le verdict de chaque hexside déjà examiné : un
+   *  même hexside est regardé depuis ses deux hex, et souvent par plusieurs
+   *  parcours. */
+  function contextFor(side, sample) {
+    const friendly = new Set()
+    const enemy = new Set()
+    for (const other of counters()) {
+      if (!isFighter(other)) continue
+      const key = keyOf(other.col, other.row)
+      if (sideOf(other) === side) friendly.add(key)
+      else enemy.add(key)
+    }
+    return { zoc: enemyZocSet(sample), friendly, enemy, edges: new Map() }
+  }
+
   /** L'hexside `from` -> `to` (`{ col, row }`) laisse-t-il passer une ligne ?
    *  Non s'il porte un cours d'eau (`blockingKinds`) que ne franchit aucun
    *  pont (`bridgeKinds`) — cf. l'en-tête pour les bacs et les ponts démolis. */
-  function edgeAllows(from, to) {
+  function edgeAllows(context, from, to) {
+    const key = keyOf(from.col, from.row) + '>' + keyOf(to.col, to.row)
+    const known = context.edges.get(key)
+    if (known !== undefined) return known
     const kinds = edgeKinds({ c: from.col, r: from.row }, { c: to.col, r: to.row })
-    if ((supply.bridgeKinds ?? []).some((kind) => kinds.includes(kind))) return true
-    return !(supply.blockingKinds ?? []).some((kind) => kinds.includes(kind))
+    const allowed = (supply.bridgeKinds ?? []).some((kind) => kinds.includes(kind))
+      || !(supply.blockingKinds ?? []).some((kind) => kinds.includes(kind))
+    context.edges.set(key, allowed)
+    return allowed
   }
 
-  /** L'hex `hex` peut-il porter la ligne de `unit` ? Il doit être sur la
-   *  carte, libre d'unité ennemie, et hors ZOC ennemie — à moins qu'une unité
-   *  AMIE ne s'y trouve, auquel cas la ZOC y est annulée. */
-  function hexAllows(unit, hex, zoc) {
+  /** L'hex `hex` peut-il porter la ligne ? Il doit être sur la carte, libre
+   *  d'unité ennemie, et hors ZOC ennemie — à moins qu'une unité AMIE ne s'y
+   *  trouve, auquel cas la ZOC y est annulée. */
+  function hexAllows(context, hex) {
     if (!hexOnMap(hex.col, hex.row)) return false
-    let friendly = false
-    for (const other of counters()) {
-      if (!isFighter(other) || other.col !== hex.col || other.row !== hex.row) continue
-      if (sideOf(other) === sideOf(unit)) friendly = true
-      else return false                      // une unité ennemie coupe la ligne
-    }
-    return friendly || !zoc.has(keyOf(hex.col, hex.row))
+    const key = keyOf(hex.col, hex.row)
+    if (context.enemy.has(key)) return false
+    return context.friendly.has(key) || !context.zoc.has(key)
   }
 
   /** Les hex SOURCES de `unit` : la zone de largage de sa division si elle
@@ -165,8 +187,12 @@ export function useSupplyLine({
     if (!sources.length) return null
     const goal = new Set(sources.map((source) => keyOf(source.col, source.row)))
     const start = { col: unit.col, row: unit.row }
-    const zoc = enemyZocSet(unit)
+    const context = contextFor(sideOf(unit), unit)
     const limit = rangeFor(unit)
+    // Les étages (piste, puis route) ne valent QUE pour les lignes
+    // terrestres : c'est un avion qui ravitaille un aéroporté, et la route
+    // qu'il survole ne l'engage à rien.
+    const staged = !isAirborneEntry(unit)
     // L'hex de l'unité elle-même ne se discute pas : elle y est.
     if (goal.has(keyOf(start.col, start.row))) return { hexes: [start], source: start }
 
@@ -176,12 +202,15 @@ export function useSupplyLine({
       const next = []
       for (const state of frontier) {
         for (const neighbor of neighborsOf(state.hex.col, state.hex.row)) {
-          if (!edgeAllows(state.hex, neighbor)) continue
-          if (!hexAllows(unit, neighbor, zoc)) continue
+          if (!edgeAllows(context, state.hex, neighbor)) continue
+          if (!hexAllows(context, neighbor)) continue
           // L'étage ne peut que monter : une ligne déjà tenue à la route ne
           // repart pas à travers champs (cf. l'en-tête).
-          const stage = stageOfEdge(edgeKinds({ c: state.hex.col, r: state.hex.row }, { c: neighbor.col, r: neighbor.row }))
-          if (stage < state.stage) continue
+          let stage = STAGE_FREE
+          if (staged) {
+            stage = stageOfEdge(edgeKinds({ c: state.hex.col, r: state.hex.row }, { c: neighbor.col, r: neighbor.row }))
+            if (stage < state.stage) continue
+          }
           const path = [...state.path, neighbor]
           if (goal.has(keyOf(neighbor.col, neighbor.row))) return { hexes: path, source: neighbor }
           const mark = keyOf(neighbor.col, neighbor.row) + '@' + stage
@@ -195,9 +224,101 @@ export function useSupplyLine({
     return null
   }
 
-  /** `unit` est-elle reliée à ses arrières ? */
+  /** `unit` est-elle reliée à ses arrières ? Pour UNE unité : `unsuppliedIds`
+   *  est bien plus rapide dès qu'il faut le savoir pour toute une armée. */
   function hasSupply(unit) {
     return pathFor(unit) != null
+  }
+
+  /** Tous les hex qu'une ligne peut atteindre EN PARTANT des `starts`, pour
+   *  le camp `side`.
+   *
+   *  C'est le parcours de `pathFor` pris À L'ENVERS — depuis les arrières
+   *  vers les unités, et non l'inverse —, ce qui permet de le faire UNE FOIS
+   *  pour tout un camp au lieu d'une fois par unité. L'étage s'y lit donc en
+   *  miroir : là où une ligne tracée depuis l'unité ne peut que se durcir
+   *  (libre, puis piste, puis route), le même chemin remonté depuis la source
+   *  ne peut que s'assouplir, d'où un état qui ne fait que DÉCROÎTRE. Sans
+   *  étages (`staged` faux — le ravitaillement aérien), seule la distance
+   *  compte.
+   *
+   *  @returns un Set de clés "col,row". */
+  function reachFrom(starts, { context, staged, limit = Infinity }) {
+    const reached = new Set()
+    const seen = new Set()
+    let frontier = []
+    for (const start of starts) {
+      if (!hexAllows(context, start)) continue
+      const stage = staged ? Infinity : 0
+      reached.add(keyOf(start.col, start.row))
+      seen.add(keyOf(start.col, start.row) + '@' + stage)
+      frontier.push({ hex: start, stage })
+    }
+    for (let step = 0; step < limit && frontier.length; step += 1) {
+      const next = []
+      for (const state of frontier) {
+        for (const neighbor of neighborsOf(state.hex.col, state.hex.row)) {
+          if (!edgeAllows(context, state.hex, neighbor)) continue
+          if (!hexAllows(context, neighbor)) continue
+          let stage = 0
+          if (staged) {
+            stage = stageOfEdge(edgeKinds({ c: state.hex.col, r: state.hex.row }, { c: neighbor.col, r: neighbor.row }))
+            if (stage > state.stage) continue   // la contrainte ne se relâche qu'en s'éloignant de la source
+          }
+          const mark = keyOf(neighbor.col, neighbor.row) + '@' + stage
+          if (seen.has(mark)) continue
+          seen.add(mark)
+          reached.add(keyOf(neighbor.col, neighbor.row))
+          next.push({ hex: neighbor, stage })
+        }
+      }
+      frontier = next
+    }
+    return reached
+  }
+
+  /** Les unités de `units` qui N'ONT PAS de ligne — ids en chaînes.
+   *
+   *  Une seule passe pour toute l'armée : un parcours depuis les arrières
+   *  terrestres, un par zone de largage utile, et la ZOC ennemie calculée une
+   *  fois (elle ne dépend que du camp). Là où interroger chaque unité
+   *  séparément refait la carte autant de fois qu'il y a d'unités, ceci la
+   *  parcourt quatre fois pour Arnhem, quel que soit le nombre de pions. */
+  function unsuppliedIds(units) {
+    const out = new Set()
+    if (!active.value) return out
+    const concerned = (units ?? []).filter(concerns)
+    if (!concerned.length) return out
+    const context = contextFor(supply.side, concerned[0])
+    const ground = concerned.filter((unit) => !isAirborneEntry(unit))
+    const airborne = concerned.filter(isAirborneEntry)
+
+    if (ground.length) {
+      const sources = (supply.ground?.sources ?? []).map(parseHexId)
+      const reached = reachFrom(sources, { context, staged: true })
+      for (const unit of ground) {
+        if (!reached.has(keyOf(unit.col, unit.row))) out.add(String(unit.id))
+      }
+    }
+
+    // Un parcours par division représentée sur la carte, pas par unité.
+    const byDivision = new Map()
+    for (const unit of airborne) {
+      const division = String(unit.division ?? '')
+      if (!byDivision.has(division)) byDivision.set(division, [])
+      byDivision.get(division).push(unit)
+    }
+    for (const [division, members] of byDivision) {
+      const zones = counters().filter((marker) => !isFighter(marker) && String(marker.code) === division)
+        .map((marker) => ({ col: marker.col, row: marker.row }))
+      const reached = zones.length
+        ? reachFrom(zones, { context, staged: false, limit: supply.airborne?.range ?? Infinity })
+        : new Set()
+      for (const unit of members) {
+        if (!reached.has(keyOf(unit.col, unit.row))) out.add(String(unit.id))
+      }
+    }
+    return out
   }
 
   /** Les hex de la ligne de `unit`, en clés "col,row" — pour le surlignage
@@ -215,5 +336,5 @@ export function useSupplyLine({
     return path ? path.hexes.map((hex) => hexId(hex.col + 1, hex.row)) : []
   }
 
-  return { active, concerns, pathFor, hasSupply, pathKeys, pathLabels }
+  return { active, concerns, pathFor, hasSupply, unsuppliedIds, pathKeys, pathLabels }
 }

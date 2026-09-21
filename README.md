@@ -58,8 +58,9 @@ aucune restriction de tour ni de règle, dé libre.
   ligne devant alors suivre une piste puis une route une fois qu'elle en a
   emprunté une. Ni hex ennemi, ni ZOC ennemie (qu'une unité amie annule sur
   son hex), ni cours d'eau sans pont. Aucun effet de jeu pour l'instant : en
-  mode debug, pendant la phase de Fin de tour, un clic sur une unité surligne
-  sa ligne en vert ;
+  pendant la phase de Fin de tour, les unités coupées de leurs arrières sont
+  cerclées de rouge sur la carte, et en mode debug un clic sur une unité
+  surligne sa ligne en vert ;
 - sort des ponts (cf. `src/lib/useBridges.js`) : un pont déclaré démolissable
   peut sauter dès qu'une unité du camp adverse borde l'un de ses deux hex, à
   n'importe quelle phase ; le camp qui le tient décide aussitôt (jet de dé,

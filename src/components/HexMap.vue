@@ -1795,6 +1795,19 @@ const supplyLineKeys = computed(() => {
 })
 const isSupplyLineHex = (hex) => supplyLineKeys.value.has(hex.c + ',' + hex.r)
 
+/** UNITÉS HORS COMMUNICATION, cerclées de rouge sur la carte pendant la phase
+ *  de Fin de tour — le moment où l'on fait ses comptes. Contrairement au
+ *  tracé vert d'une ligne (réservé au debug), cet avertissement-là vaut en
+ *  mode Assisté tout court : savoir qui est coupé fait partie du jeu.
+ *
+ *  Le calcul n'a lieu que pendant cette phase : même en une seule passe (cf.
+ *  lib/useSupplyLine.js::unsuppliedIds), parcourir la carte pour toute une
+ *  armée ne se justifie pas à chaque pas de mouvement. */
+const outOfSupplyIds = computed(() => {
+  if (!props.assisted || !supplyLine.active.value || phase.value !== PHASE_END_OF_TURN) return new Set()
+  return supplyLine.unsuppliedIds(counters.value)
+})
+
 /** Clic sur l'unité `counter` alors qu'une ligne peut être montrée : c'est
  *  elle qu'on trace (ou qu'on cesse de tracer). Renvoie `false` si le clic ne
  *  concerne pas la ligne, pour laisser `onCounterSelect` le traiter. */
@@ -3464,6 +3477,7 @@ function onMapDragEnd() {
             :row="counter.row" :calibration="calibration" :selected="selectedCounterId === counter.id" :selectable="selectable"
             :moved="movedThisTurnIds.has(String(counter.id))" :spent="hasFought(counter)"
             :disrupted="artillery.isDisrupted(counter)" :displaced="artillery.isDisplaced(counter)"
+            :unsupplied="outOfSupplyIds.has(String(counter.id))"
             :offset="stackOffsets.get(counter.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === counter.id ? dragCurrentPx : null"
             @select="onCounterSelect" @dragstart="onCounterDragStart" @contextmenu="onCounterContextMenu"
             @hover="onCounterHover" @unhover="onCounterUnhover" />
