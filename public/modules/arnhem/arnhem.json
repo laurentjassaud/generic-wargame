@@ -1444,6 +1444,11 @@
       "unitTypes": ["engineer"],
       "undisturbedSide": "german"
     },
+    "engineerCrossing": {
+      "unitTypes": ["engineer"],
+      "side": "allies",
+      "combatRow": "stream"
+    },
     "mapExit": {
       "side": "german",
       "zones": [

@@ -561,6 +561,12 @@ const moduleRules = useModuleRules(toRef(props, 'moduleId'), {
   canEnterTerrain: (counter, hex, from) => canEnterTerrain(counter, hex, from),
   enemyZocSet: (counter) => enemyZocSet(counter),
   isEnemyOf: (counterA, counterB) => isEnemyOf(counterA, counterB),
+  // Nature d'un hexside, phase et camp actif : de quoi reconnaître une
+  // rivière et le moment où la passerelle du génie s'ouvre (cf.
+  // lib/useArnhem.js::engineerCrossingAllows).
+  edgeKind: (from, hex) => edgeKind(from, hex),
+  phase: computed(() => phase.value),
+  activeSide: computed(() => turnInfo.value.activeSideKey),
 })
 
 // Marqueurs / pions de soutien / unités combattantes : cf. lib/units.js
@@ -645,7 +651,7 @@ const demolition = useBridges({
 // lib/useAssisted.js::airbornePending), passés en FONCTION car
 // `reinforcements` n'est déclaré que plus bas dans ce fichier.
 const { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules, turnStructure, demolition.isDemolished)
+  PHASE_AIRBORNE, initPhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, edgeKind, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState } = useAssisted(toRef(props, 'assisted'), turnTrackerRef, props.module.terrain, counters, props.module.sides, hexOnMap, () => reinforcements.value, rules, turnStructure, demolition.isDemolished, moduleRules)
 
 // Table de combat déclarée par le module (`module.combat`, cf.
 // lib/combatTable.js) — `null` : module sans combat.

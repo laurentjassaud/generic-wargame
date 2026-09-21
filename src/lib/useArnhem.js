@@ -77,6 +77,14 @@
 //         déclarer ses `counters` (même raison que `reinforcements` dans
 //         lib/useAssisted.js) ; appelée depuis un `computed` ou un rendu,
 //         elle reste parfaitement réactive.
+//       • `edgeKind` : `({ c, r }, { c, r }) => nature d'arête | null` (cf.
+//         lib/useAssisted.js::edgeKind) — pour reconnaître un hexside de
+//         RIVIÈRE, celui que la passerelle du génie fait franchir. Passée en
+//         lambda pour la même raison que les suivantes.
+//       • `phase` : ref/computed de la phase courante (0 Mouvement,
+//         1 Combat, 2 Fin de tour, cf. lib/useAssisted.js) et `activeSide` :
+//         ref/computed du camp qui a la main — la passerelle ne s'ouvre que
+//         pendant le tour de son propre camp.
 //       • `hexOnMap`, `canEnterTerrain`, `enemyZocSet`, `isEnemyOf`,
 //         `isFighter` : les briques du moteur qui disent ce qu'une unité
 //         peut atteindre autour d'elle (cf. HexMap.vue et
@@ -382,12 +390,116 @@ export function useArnhem(moduleId, ctx = {}) {
       .every((neighbor) => zoc.has(neighbor.col + ',' + neighbor.row) || hasEnemyAt(unit, neighbor))
   }
 
-  /** `unit` tient-elle malgré l'encerclement ? Les AÉROPORTÉS et les
-   *  PLANEURS, oui (cf. `AIRBORNE_TYPE`) — combattre encerclé est leur
-   *  métier, c'est même toute l'histoire d'Arnhem —, mais pas leur
-   *  ARTILLERIE, que la règle de la ville écarte de toute façon. */
-  function holdsWhenSurrounded(unit) {
+  /** `unit` est-elle un AÉROPORTÉ ou un PLANEUR À PIED — parachutiste ou
+   *  troupe de planeur, jamais leur ARTILLERIE (cf. `AIRBORNE_TYPE` et
+   *  lib/units.js::isArtillery) ? Deux règles d'Arnhem distinguent ces
+   *  unités-là : elles tiennent encerclées (cf. `cityRetreatReduction`) et
+   *  elles seules franchissent la rivière sur la passerelle du génie (cf.
+   *  `engineerCrossingAllows`). */
+  function isAirborneFoot(unit) {
     return AIRBORNE_TYPE.test(unit?.type ?? '') && !isArtillery(unit)
+  }
+
+  /** `unit` tient-elle malgré l'encerclement ? Les AÉROPORTÉS et les
+   *  PLANEURS, oui — combattre encerclé est leur métier, c'est même toute
+   *  l'histoire d'Arnhem —, mais pas leur ARTILLERIE, que la règle de la
+   *  ville écarte de toute façon. */
+  const holdsWhenSurrounded = isAirborneFoot
+
+  // --- Passerelle du génie (franchissement de rivière) -----------------------
+  //
+  // Énoncé : « Pendant la phase de Mouvement alliée, une unité du génie
+  // adjacente à un hexside de rivière, hors de toute ZOC ennemie, ouvre un
+  // passage : les unités aéroportées et de planeur alliées (jamais leur
+  // artillerie) peuvent franchir la rivière DEPUIS ou VERS l'hex du génie,
+  // par n'importe lequel de ses hexsides de rivière. Elles paient le coût
+  // d'entrée de l'hex, sans surcoût de rivière, et peuvent entrer dans une
+  // ZOC ennemie. »
+  //
+  // Sur le coût, il n'y a rien à faire : une arête de rivière ne déclare ni
+  // `mp` ni `extraMp` (cf. arnhem.json), elle est simplement INFRANCHISSABLE
+  // (`impassable`). Toute la règle tient donc à lever cette interdiction-là
+  // — le coût d'entrée de l'hex, lui, s'applique de lui-même (cf.
+  // lib/useAssisted.js::terrainCost).
+  //
+  // Le génie peut avoir REJOINT sa position ce tour-ci (choix validé) : le
+  // passage s'ouvre dès qu'il est dans l'hex, et se referme s'il repart —
+  // ce qui, en mode Assisté, se lit directement sur la carte, sans mémoire à
+  // tenir.
+
+  /** Paramètres de la règle déclarés par le module (`rules.engineerCrossing`,
+   *  cf. arnhem.json), ou `null` : ce module n'a pas de passerelle. */
+  const crossing = () => ctx.rules?.engineerCrossing ?? null
+
+  /** `unit` est-elle un GÉNIE du camp de la règle ? */
+  function isEngineer(unit) {
+    const declared = crossing()
+    if (!declared || !ctx.isUnit?.(unit)) return false
+    if (!(declared.unitTypes ?? []).includes(unit.type)) return false
+    return sideFactions(declared.side).includes(unit.faction)
+  }
+
+  /** Factions du camp `side` de `ctx.sides` (ex. "allies" → commonwealth, us,
+   *  pol) — `alliedFactions` généralisé à n'importe quel camp. */
+  function sideFactions(side) {
+    return ctx.sides?.[side] ?? []
+  }
+
+  /** L'hexside entre `from` et `to` (`{ col, row }`) est-il une RIVIÈRE ?
+   *  Lu par le moteur (cf. `ctx.edgeKind`), donc un pont démoli qui rend sa
+   *  rivière à l'arête en fait bien partie. */
+  function isRiverEdge(from, to) {
+    return ctx.edgeKind?.({ c: from.col, r: from.row }, { c: to.col, r: to.row }) === 'river'
+  }
+
+  /** Le GÉNIE qui tient un passage sur l'hex `hex` (`{ col, row }`), ou
+   *  `null`. Il lui faut : être sur cet hex, border au moins un hexside de
+   *  rivière, et n'être dans AUCUNE ZOC ennemie (cf. `ctx.enemyZocSet`). */
+  function engineerAt(hex) {
+    const here = (ctx.counters?.() ?? []).filter((unit) => isEngineer(unit)
+      && unit.col === hex.col && unit.row === hex.row)
+    for (const engineer of here) {
+      const zoc = ctx.enemyZocSet?.(engineer) ?? new Set()
+      if (zoc.has(engineer.col + ',' + engineer.row)) continue
+      if (neighborsOf(hex.col, hex.row).some((neighbor) => isRiverEdge(hex, neighbor))) return engineer
+    }
+    return null
+  }
+
+  /** Règle de FRANCHISSEMENT — `unit` peut-elle passer de `from` à `to`
+   *  (tous deux `{ c, r }`, comme le moteur les manipule) alors que la
+   *  rivière l'interdirait ?
+   *
+   *  Il faut que l'arête soit bien une rivière, que l'un des deux hex porte
+   *  un génie en position (cf. `engineerAt`), que `unit` soit un aéroporté ou
+   *  un planeur à pied du camp de la règle (cf. `isAirborneFoot`), et qu'on
+   *  soit dans la phase de Mouvement de ce camp.
+   *
+   *  @returns `true` pour OUVRIR le passage, `null` quand la règle ne se
+   *    prononce pas — elle n'interdit jamais rien que le moteur autorisait. */
+  function engineerCrossingAllows(unit, from, to) {
+    if (!active.value || !unref(ctx.assisted)) return null
+    const declared = crossing()
+    if (!declared || !from || !to) return null
+    // Phase de Mouvement (0) du camp de la règle, et elle seule.
+    if (unref(ctx.phase) !== 0 || unref(ctx.activeSide) !== declared.side) return null
+    if (!isAirborneFoot(unit) || !sideFactions(declared.side).includes(unit.faction)) return null
+    const fromHex = { col: from.c, row: from.r }
+    const toHex = { col: to.c, row: to.r }
+    if (!isRiverEdge(fromHex, toHex)) return null
+    return engineerAt(fromHex) || engineerAt(toHex) ? true : null
+  }
+
+  /** Règle d'EMPILEMENT — « une unité peut terminer sa phase dans un hex
+   *  d'ingénieur » : le génie ne compte pas dans la limite du module (cf.
+   *  lib/useAssisted.js::friendlyCount, `rules.stackingLimit` — une unité par
+   *  hex à Arnhem). Une unité combattante peut donc s'arrêter avec lui, mais
+   *  une seule : c'est ELLE qui occupe l'hex au sens de la limite.
+   *
+   *  @returns `true` pour le pion qui ne compte pas, `null` sinon. */
+  function stackingExempt(unit) {
+    if (!active.value || !unref(ctx.assisted)) return null
+    return isEngineer(unit) ? true : null
   }
 
   /** Type de terrain de l'hex `hex` ({ col, row }, col 0-based comme les
@@ -473,5 +585,6 @@ export function useArnhem(moduleId, ctx = {}) {
   return {
     active, autoPlacesAtLoad, noteAirborneArrival, airborneArrivalSpentMp, clearTurnState,
     supportHexAllowed, maxArtilleryPerCombat, cityRetreatReduction,
+    engineerCrossingAllows, stackingExempt, engineerAt, isAirborneFoot,
   }
 }

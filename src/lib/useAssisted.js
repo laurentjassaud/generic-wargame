@@ -154,6 +154,14 @@ import { resolveEdges } from './edges.js'
 //     resolveTurnStructure — `airbornePhase`, `combatPhase`,
 //     `endOfTurnPhase`), cf. section "Phases" plus bas. À défaut, toutes les
 //     phases.
+//   - `moduleRules` : règles PARTICULIÈRES au module joué (cf.
+//     lib/moduleRules.js et lib/useArnhem.js), dont ce fichier n'utilise que
+//     les deux qui touchent au mouvement — `engineerCrossingAllows` (un
+//     hexside que le terrain fermerait, mais qu'une règle du module ouvre :
+//     la passerelle du génie sur la rivière, à Arnhem) et `stackingExempt`
+//     (un pion qui ne compte pas dans la limite d'empilement). Chacune rend
+//     `null` quand elle ne se prononce pas, y compris pour un module sans
+//     règles particulières : la règle générique s'applique alors telle quelle.
 //   - `isDemolished` : `(clé d'arête "CCRR-CCRR") => bool` — ce pont a-t-il
 //     SAUTÉ (cf. lib/useBridges.js, qui tient la liste) ? Une arête dont
 //     le pont est démoli ne vaut plus que par l'obstacle qu'il franchissait
@@ -161,7 +169,7 @@ import { resolveEdges } from './edges.js'
 //     la route qui l'empruntait, ni le pont lui-même ne comptent plus. À
 //     défaut, aucun pont n'est démoli — un module sans cette règle joue donc
 //     exactement comme avant.
-export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap, getReinforcements, rules = resolveRules(null), structure = resolveTurnStructure(null), isDemolished = () => false) {
+export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, hexOnMap, getReinforcements, rules = resolveRules(null), structure = resolveTurnStructure(null), isDemolished = () => false, moduleRules = {}) {
   // --- Arêtes (hexsides) du module -------------------------------------------
   // Interprète des arêtes, construit UNE SEULE FOIS (cf. lib/edges.js) :
   // `terrain` ne change pas en cours de partie, inutile de reconstruire les
@@ -847,10 +855,14 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
 
   /** Nombre d'unités AMIES de `c` (même camp, cf. `isEnemyOf` — `c` lui-même
    *  exclu) déjà présentes dans `h`. Marqueurs et pions de soutien ignorés,
-   *  ni amis ni ennemis au sens de cette règle. */
+   *  ni amis ni ennemis au sens de cette règle — pas plus que les pions
+   *  qu'une règle du module dispense de la limite (cf.
+   *  `moduleRules.stackingExempt` et lib/useArnhem.js : à Arnhem, une unité
+   *  peut terminer sa phase dans l'hex du génie, qui ne l'encombre pas). */
   function friendlyCount(counter, hex) {
     return counters.value.filter(
       (other) => other.col === hex.c && other.row === hex.r && other.id !== counter?.id && isFighter(other) && !isEnemyOf(counter, other)
+        && moduleRules.stackingExempt?.(other) !== true
     ).length
   }
 
@@ -1017,7 +1029,13 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  ou pas selon le cas, même en passant au travers sans s'y arrêter). */
   function canEnterTerrain(counter, hex, from) {
     const edge = edges.kindOf(edgeKind(from, hex))
-    if (edge?.impassable) return false
+    // Règle particulière du module : un hexside que le terrain ferme, mais
+    // qu'elle ouvre à cette unité-là (cf.
+    // lib/useArnhem.js::engineerCrossingAllows — la passerelle du génie sur
+    // la rivière). Elle n'ouvre jamais que l'arête : le coût d'entrée de
+    // l'hex, lui, se paie normalement (cf. `terrainCost`).
+    const bridged = moduleRules.engineerCrossingAllows?.(counter, from, hex) === true
+    if (edge?.impassable && !bridged) return false
     if (!rules.vehicleTypes.has(counter?.type)) return true
     if (edge?.vehicles === false) return false
     if (rules.impassableForVehicles.has(terrain?.grid?.[hexId(hex.c + 1, hex.r)])) return edge?.vehicles === true
@@ -1240,5 +1258,5 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   }
 
   return { showGrid, selectable, draggable, canControl, phase, phaseLabels, phaseIndex, nextLabel, advance,
-    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState }
+    PHASE_AIRBORNE, initPhase: startSidePhase, canPlaceReinforcementNow, canEnterHex, canEnterTerrain, spendMp, refundMp, resetMp, terrainCost, terrainAreaCost, remainingMp, enemyZocSet, isEnemyOf, entrySurcharge, spendEntryCost, unspendEntryCost, wouldOverstack, canLeaveAfterEntering, canLeaveAfterReinforcementEntry, isOverstacked, stackedHexes, edgeKind, combatEdgeKind, edgeBlocksAttack, isZocFrozen, setPhase, setSpentMp, resetTurnState }
 }
