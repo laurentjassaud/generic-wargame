@@ -864,6 +864,17 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
    *  Un hexside franchi par une route/piste n'est pas un obstacle et renvoie
    *  `null` (cf. useAssisted.js::combatEdgeKind) : il ne déclenche donc
    *  jamais de substitution, la règle retombe sur le terrain de l'hex. */
+  /** Nature de l'hexside que `attacker` franchit pour atteindre `targetHex`,
+   *  du point de vue de la TABLE de combat. C'est `combatEdgeKind`, sauf
+   *  quand une règle du module lui en substitue une autre pour cette unité
+   *  (cf. `moduleRules.engineerAssaultEdge` et lib/useArnhem.js : la
+   *  passerelle du génie fait résoudre l'assaut sur la ligne du ruisseau). */
+  function attackEdgeKind(attacker, targetHex) {
+    const from = { c: attacker.col, r: attacker.row }
+    const to = { c: targetHex.col, r: targetHex.row }
+    return moduleRules.engineerAssaultEdge?.(attacker, from, to) ?? combatEdgeKind(from, to)
+  }
+
   function rowForTargetHex(targetHex) {
     // [8.62] : l'hexside ne tombe que pour une attaque faite UNIQUEMENT
     // d'artillerie et/ou de soutien — et il faut au moins l'un des deux pour
@@ -871,7 +882,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
     const noHexside = artilleryOnlyAttack.value && (attackers.value.length > 0 || supportCounters.value.length > 0)
     const adjacent = attackers.value.filter((attacker) => isAdjacent(attacker, targetHex))
     if (!noHexside && adjacent.length > 0) {
-      const kinds = adjacent.map((attacker) => combatEdgeKind({ c: attacker.col, r: attacker.row }, { c: targetHex.col, r: targetHex.row }))
+      const kinds = adjacent.map((attacker) => attackEdgeKind(attacker, targetHex))
       const first = kinds[0]
       const substitute = first ? table.edgeRows[first] : null
       if (substitute && kinds.every((kind) => kind === first)) {

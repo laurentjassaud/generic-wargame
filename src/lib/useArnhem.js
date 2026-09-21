@@ -490,6 +490,49 @@ export function useArnhem(moduleId, ctx = {}) {
     return engineerAt(fromHex) || engineerAt(toHex) ? true : null
   }
 
+  /** Règle d'ASSAUT DE RIVIÈRE — que vaut l'hexside `from` -> `to` (tous deux
+   *  `{ c, r }`) AU COMBAT pour l'unité `unit` ?
+   *
+   *  Énoncé : « Une unité qui tient l'hex du génie DOIT attaquer l'unité
+   *  adverse qui lui fait face de l'autre côté de la rivière. Le génie n'est
+   *  jamais additionné à ce combat, qui se résout sur la ligne "stream". »
+   *
+   *  Tout tient dans une substitution : pour cette unité-là, à cet instant,
+   *  la rivière VAUT UN RUISSEAU. Le moteur en tire de lui-même les deux
+   *  conséquences, sans rien connaître de la règle :
+   *   - un ruisseau ne bloque pas l'attaque (là où une rivière l'interdit,
+   *     cf. lib/edges.js, `blocksAttack`) — l'assaut devient possible, et
+   *     l'obligation de combat qui va avec s'impose comme partout ailleurs
+   *     (cf. lib/useCombat.js::pendingEngagements) ;
+   *   - la table de combat substitue à cette nature sa propre ligne (cf.
+   *     `module.combat.edgeRows` : "stream" -> "Broken, Town, Woods,
+   *     Stream"), qui est précisément celle que la règle demande.
+   *
+   *  Le GÉNIE, lui, n'est pas un aéroporté à pied : la règle ne se prononce
+   *  pas pour lui, la rivière lui reste fermée, et il ne peut donc ni être
+   *  désigné attaquant ni se voir reprocher de n'avoir pas attaqué.
+   *
+   *  La ZOC n'est PAS concernée (elle se lit sur `combatEdgeKind`, jamais
+   *  par ici) : la rivière continue de la couper. Sans quoi l'ennemi d'en
+   *  face figerait le génie, ce qui refermerait la passerelle, ce qui
+   *  rouvrirait la ZOC — un état qui ne se stabilise jamais.
+   *
+   *  @returns la nature d'arête à substituer (`rules.engineerCrossing
+   *    .combatRow`, "stream"), ou `null` quand la règle ne se prononce pas. */
+  function engineerAssaultEdge(unit, from, to) {
+    if (!active.value || !unref(ctx.assisted)) return null
+    const declared = crossing()
+    if (!declared?.combatRow || !from || !to) return null
+    // Phase de Combat (1) du camp de la règle, et elle seule.
+    if (unref(ctx.phase) !== 1 || unref(ctx.activeSide) !== declared.side) return null
+    if (!isAirborneFoot(unit) || !sideFactions(declared.side).includes(unit.faction)) return null
+    const fromHex = { col: from.c, row: from.r }
+    const toHex = { col: to.c, row: to.r }
+    if (!isRiverEdge(fromHex, toHex)) return null
+    // L'assaut part de l'hex du génie — et de lui seul (choix validé).
+    return engineerAt(fromHex) ? declared.combatRow : null
+  }
+
   /** Règle d'EMPILEMENT — « une unité peut terminer sa phase dans un hex
    *  d'ingénieur » : le génie ne compte pas dans la limite du module (cf.
    *  lib/useAssisted.js::friendlyCount, `rules.stackingLimit` — une unité par
@@ -585,6 +628,6 @@ export function useArnhem(moduleId, ctx = {}) {
   return {
     active, autoPlacesAtLoad, noteAirborneArrival, airborneArrivalSpentMp, clearTurnState,
     supportHexAllowed, maxArtilleryPerCombat, cityRetreatReduction,
-    engineerCrossingAllows, stackingExempt, engineerAt, isAirborneFoot,
+    engineerCrossingAllows, engineerAssaultEdge, stackingExempt, engineerAt, isAirborneFoot,
   }
 }

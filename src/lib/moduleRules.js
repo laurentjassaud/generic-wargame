@@ -37,6 +37,8 @@ export const INERT_RULES = Object.freeze({
   engineerCrossingAllows: () => null,
   /** Ce pion échappe-t-il à la limite d'empilement ? `true` s'il ne compte pas, `null` sinon. */
   stackingExempt: () => null,
+  /** Nature d'arête à substituer AU COMBAT pour cette unité, ou `null` (assaut de rivière). */
+  engineerAssaultEdge: () => null,
   /** Le génie qui tient un passage sur cet hex, ou `null`. */
   engineerAt: () => null,
   /** Cette unité est-elle un aéroporté ou un planeur à pied ? */

@@ -665,6 +665,9 @@ const currentStep = computed(() => turnTrackerRef.value?.currentStep ?? 0)
 const artillery = useArtillery({
   phase, step: currentStep, counters, isEnemyOf, edgeBlocksAttack,
   resultEffect: (code) => combatTable?.effects[code] ?? null,
+  // Règles particulières du module qui ouvrent un hexside au combat (cf.
+  // lib/useArnhem.js::engineerAssaultEdge) — inertes pour les autres modules.
+  moduleRules,
 })
 
 // Combat du mode Assisté (cf. lib/useCombat.js, qui porte toute la règle :

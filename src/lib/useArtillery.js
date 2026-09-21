@@ -70,11 +70,16 @@
 //   - `isEnemyOf`, `edgeBlocksAttack` : cf. useAssisted.js.
 //   - `resultEffect` : `(code) => effet | null` — ce que fait un résultat de
 //     la table (cf. lib/combatTable.js, `module.combat.effects`).
+//   - `moduleRules` : règles PARTICULIÈRES au module joué (cf.
+//     lib/moduleRules.js), dont ce fichier n'utilise que `engineerAssaultEdge`
+//     — un hexside que le combat fermerait, mais qu'une règle du module
+//     ouvre à telle unité (la passerelle du génie d'Arnhem, cf.
+//     `adjacentForCombat`).
 import { ref, watch } from 'vue'
 import { hexDistance, neighborsOf } from './hex.js'
 import { isArtillery, isFighter } from './units.js'
 
-export function useArtillery({ phase, step, counters, isEnemyOf, edgeBlocksAttack, resultEffect = () => null }) {
+export function useArtillery({ phase, step, counters, isEnemyOf, edgeBlocksAttack, resultEffect = () => null, moduleRules = {} }) {
   // Pas (cf. `step`) où chaque artillerie a subi pour la dernière fois un
   // résultat de combat — id (chaîne) -> pas. Jamais vidé en cours de partie :
   // seul l'écart avec le pas courant compte (cf. `isDisrupted`).
@@ -98,10 +103,18 @@ export function useArtillery({ phase, step, counters, isEnemyOf, edgeBlocksAttac
   const at = (unit) => ({ c: unit.col, r: unit.row })
 
   /** `a` et `b` (`{ col, row }`) sont-ils ADJACENTS au sens du combat :
-   *  voisins, et pas séparés par un hexside qui interdit l'attaque ? */
+   *  voisins, et pas séparés par un hexside qui interdit l'attaque ?
+   *
+   *  Une règle du module peut ouvrir cet hexside-là à cette unité-là (cf.
+   *  `moduleRules.engineerAssaultEdge` et lib/useArnhem.js : la passerelle du
+   *  génie change la rivière en ruisseau pour l'aéroporté qui l'emprunte).
+   *  `positionA` est alors l'unité qui attaque — c'est toujours un pion que
+   *  les appelants passent ici, jamais une position nue. */
   function adjacentForCombat(positionA, positionB) {
     const neighbor = neighborsOf(positionA.col, positionA.row).some((hex) => hex.col === positionB.col && hex.row === positionB.row)
-    return neighbor && !edgeBlocksAttack(at(positionA), at(positionB))
+    if (!neighbor) return false
+    if (!edgeBlocksAttack(at(positionA), at(positionB))) return true
+    return moduleRules.engineerAssaultEdge?.(positionA, at(positionA), at(positionB)) != null
   }
 
   /** `unit` est-elle AU CONTACT d'une unité ennemie (cf. l'en-tête) ? */
