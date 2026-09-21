@@ -1493,7 +1493,9 @@ function openBugReport() {
   }
 }
 // Avertissement "changement de phase refusé" (cf. PhaseBlockedModal.vue) —
-// ouvert par onPhaseNext ci-dessous.
+// ouvert par onPhaseNext ci-dessous, qui refuse trois choses : quitter la
+// phase Airborne en laissant une vague à terre, la phase Mouvement avec des
+// unités empilées, la phase Combat avec un combat obligatoire en attente.
 const showPhaseBlocked = ref(false)
 
 /** Clic sur le bouton "suivant" de la ligne des phases (cf. TurnTracker.vue,
@@ -1505,6 +1507,19 @@ const showPhaseBlocked = ref(false)
  *     combats obligatoires en attente (cf. lib/useCombat.js::pendingEngagements).
  *  Sinon, la décision de ce que fait réellement le clic reste à
  *  lib/useAssisted.js::advance. */
+/** Ce que la modale de refus montre, selon ce qui bloque (cf. `onPhaseNext`
+ *  et PhaseBlockedModal.vue, qui affiche une liste d'hex et d'unités). */
+const phaseBlockedView = computed(() => {
+  if (airborneToDrop.value.length) {
+    return {
+      title: 'Largage incomplet',
+      stacks: airborneToDropByZone.value,
+      stackMessage: 'La vague de ce tour doit être larguée avant la fin de la phase Airborne :',
+    }
+  }
+  return { engagements: pendingEngagements.value, stacks: stackedHexes.value }
+})
+
 function onPhaseNext() {
   // Rejeu, partie terminée ou, en ligne, pas le tour de ce joueur (le
   // bouton est déjà désactivé dans ces cas, cf. `phaseControlsLocked` — et
@@ -1515,6 +1530,10 @@ function onPhaseNext() {
   // avant de pouvoir changer de phase. De même, en ligne, un combat dont le
   // défenseur a déjà choisi son FPF est engagé : il doit être joué.
   if (retreatActive.value || fpfStatus.value === 'answered') return
+  if (phase.value === PHASE_AIRBORNE && airborneToDrop.value.length > 0) {
+    showPhaseBlocked.value = true
+    return
+  }
   if (phase.value === 0 && stackedHexes.value.length > 0) {
     showPhaseBlocked.value = true
     return
@@ -2041,6 +2060,38 @@ function airborneLandingBlocked(hex) {
   if (!props.assisted) return false
   return counters.value.some((counter) => counter.col === hex.col && counter.row === hex.row && isFighter(counter))
 }
+
+// --- La vague du tour doit être larguée -------------------------------------
+// Un renfort entre en jeu À PARTIR de son tour d'arrivée, et rien n'oblige
+// son propriétaire à le poser tout de suite (cf. `canEnterThisTurn`) : une
+// colonne peut attendre au bord de la carte. Un LARGAGE, lui, est daté — la
+// vague part ou ne part pas —, si bien que la phase Airborne refuse de se
+// terminer tant qu'il reste une unité à poser, comme la phase de Combat
+// refuse de finir sur un combat obligatoire en attente (cf.
+// lib/useCombat.js::pendingEngagements).
+
+/** Aéroportés du camp actif qu'il faut encore larguer — et qu'on PEUT encore
+ *  larguer : ceux dont aucun hex de largage n'est libre (zone entièrement
+ *  occupée) ne sont pas retenus, sans quoi la phase ne pourrait plus se
+ *  terminer du tout. Liste vide hors phase Airborne. */
+const airborneToDrop = computed(() => {
+  if (!props.assisted || phase.value !== PHASE_AIRBORNE) return []
+  return reinforcements.value.filter((counter) => isAirborneEntry(counter)
+    && canControl(counter) && canEnterThisTurn(counter)
+    && landingCells(parseSetup(counter.setup), hexOnMap).some((hex) => !airborneLandingBlocked(hex)))
+})
+
+/** Ces mêmes unités groupées par zone de largage, au format qu'attend
+ *  PhaseBlockedModal.vue (`{ key, hex, units }`). */
+const airborneToDropByZone = computed(() => {
+  const zones = new Map()
+  for (const counter of airborneToDrop.value) {
+    const zone = String(counter.setup).replace('+adj', '')
+    if (!zones.has(zone)) zones.set(zone, { key: zone, hex: `DZ ${zone}`, units: [] })
+    zones.get(zone).units.push(counter.name)
+  }
+  return [...zones.values()]
+})
 
 // Hex de repli pour un `setup` "ref seule" (cf. `entryHexSet`) dont l'hex de
 // référence `ref` est bloqué (cf. `isEntryHexBlocked`) : parmi les hex de
@@ -3412,8 +3463,7 @@ function onMapDragEnd() {
     <!-- Signaler un bug : cf. `openBugReport`. -->
     <BugReportModal v-if="bugReport" :snapshot="bugReport.snapshot" :context="bugReport.context" @close="bugReport = null" />
 
-    <PhaseBlockedModal v-if="showPhaseBlocked" :engagements="pendingEngagements" :stacks="stackedHexes"
-      @close="showPhaseBlocked = false" />
+    <PhaseBlockedModal v-if="showPhaseBlocked" v-bind="phaseBlockedView" @close="showPhaseBlocked = false" />
 
     <!-- cf. lib/useBridges.js — un pont démolissable est bordé par une
          unité ennemie : au camp qui le tient de décider, tout de suite. -->

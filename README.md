@@ -43,6 +43,10 @@ aucune restriction de tour ni de règle, dé libre.
   rivières, ruisseaux), terrains interdits aux véhicules, zones de contrôle,
   empilement (une unité par hex en fin de mouvement), congestion des hex
   d'entrée des renforts, retour arrière et annulation de mouvement ;
+- renforts : une unité entre en jeu à partir de son tour d'arrivée et peut
+  attendre — sauf un largage, daté : la phase Airborne ne se termine pas tant
+  qu'il reste une unité de la vague du tour à poser (à moins qu'aucune zone de
+  largage ne soit libre) ;
 - combat : désignation des cibles (plusieurs hex) et des attaquants, table de
   combat (CRT) avec dé, combats obligatoires, retraites hex par hex (avec
   refoulement d'amis), éliminations, avance après combat ; les unités ayant
