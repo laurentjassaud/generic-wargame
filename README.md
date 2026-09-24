@@ -166,7 +166,8 @@ mémorisé. Les textes vivent dans `src/i18n/fr.js` et `src/i18n/en.js`
 - Les noms d'**unités** et de **lieux** ne sont pas traduits.
 - Les autres libellés d'un module (camps, scénarios, zones, résultats de
   combat…) sont écrits en français dans son JSON ; leur traduction se donne
-  dans son dictionnaire `i18n` (cf. ci-dessous).
+  dans son dictionnaire `i18n` (cf. ci-dessous). Les onglets de renforts
+  s'y traduisent aussi en entier (`"Renfort alliés": "Allied reinforcements"`).
 
 ## Anatomie d'un module
 

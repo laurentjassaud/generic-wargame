@@ -1774,8 +1774,15 @@ const reinforcements = computed(() =>
 // Libellé de l'onglet d'un camp : "Renfort " + le nom du camp tel que la
 // piste de tour l'affiche (`turnTrack.sides[side].label`, ex. "Renfort
 // alliés") — la clé brute du camp à défaut.
+// Le module peut traduire l'intitulé complet (ex. "Renfort alliés" ->
+// "Allied reinforcements", cf. son dictionnaire `i18n`) ; sinon, il est
+// composé à partir du nom du camp traduit.
 const sideTabLabel = (side) => {
-  const label = mt(props.module.turnTrack?.sides?.[side]?.label) ?? side
+  const frLabel = props.module.turnTrack?.sides?.[side]?.label
+  const frTab = frLabel ? `Renfort ${frLabel.toLowerCase()}` : null
+  const translated = mt(frTab)
+  if (frTab && translated !== frTab) return translated
+  const label = mt(frLabel) ?? side
   return t('tabs.sideReinforcements', { side: label.toLowerCase(), Side: label })
 }
 const sidePanelTabs = computed(() => {
