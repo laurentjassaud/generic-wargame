@@ -11,6 +11,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { ref, computed, watch, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { AUTOSAVE_KEY, normalizeSettings, sameSettings, hasPendingReplay, takePendingReplay } from '../lib/journalStorage.js'
 
 const props = defineProps({
@@ -40,8 +41,8 @@ const props = defineProps({
 // alors rejoué après la relance (cf. `resumePending`).
 const emit = defineEmits(['loaded', 'settings-mismatch'])
 
-const PARTY_LABELS = { libre: 'Libre', assiste: 'Assisté' }
-const partyLabel = (settings) => PARTY_LABELS[settings?.party] ?? null
+const { t, te } = useI18n()
+const partyLabel = (settings) => (te(`settings.party.${settings?.party}`) ? t(`settings.party.${settings.party}`) : null)
 
 const entries = ref([]) // { id, t: "14:32:05", kind, text, data } — plus récent en tête
 let nextId = 1
@@ -217,7 +218,7 @@ function startReplay(list, settings, message) {
     emit('settings-mismatch', {
       settings: normalizeSettings(settings),
       entries: list,
-      message: `${message}${mode ? ` La partie a été relancée en mode ${mode}, celui de la sauvegarde.` : ''}`,
+      message: mode ? `${message} ${t('journal.restartedInMode', { mode })}` : message,
     })
     return
   }
@@ -227,13 +228,13 @@ function startReplay(list, settings, message) {
   loadResult.value = { type: 'success', message }
 }
 
-const countText = (count) => `${count} évènement${count > 1 ? 's' : ''}`
+const countText = (count) => t('journal.events', count)
 
 function resumeAutosave() {
   const save = pendingAutosave.value
   if (!save) return
   pendingAutosave.value = null
-  startReplay(save.entries, save.settings, `Sauvegarde auto reprise : ${countText(save.entries.length)}.`)
+  startReplay(save.entries, save.settings, t('journal.autosaveResumed', { events: countText(save.entries.length) }))
 }
 
 /** Appelé par HexMap.vue une fois la carte montée : rejoue le journal mis de
@@ -245,7 +246,7 @@ function resumePending() {
   entries.value = []
   replayTail = [...pending.entries]
   emit('loaded', pending.entries)
-  loadResult.value = { type: 'success', message: pending.message ?? `Journal chargé : ${countText(pending.entries.length)}.` }
+  loadResult.value = { type: 'success', message: pending.message ?? t('journal.loadedCount', { events: countText(pending.entries.length) }) }
 }
 function dismissAutosave() {
   pendingAutosave.value = null
@@ -284,17 +285,17 @@ async function onFileChosen(ev) {
     // (simple liste d'entrées, sans réglages — rejoué tel quel dans la
     // partie ouverte).
     const list = Array.isArray(parsed) ? parsed : parsed?.entries
-    if (!Array.isArray(list)) throw new Error('le fichier ne contient pas une liste d\'évènements')
+    if (!Array.isArray(list)) throw new Error(t('journal.notAList'))
     if (!Array.isArray(parsed) && parsed.module && parsed.module !== props.moduleId) {
-      throw new Error(`ce journal appartient à un autre module (${parsed.module})`)
+      throw new Error(t('journal.otherModule', { module: parsed.module }))
     }
     const chronological = list.map((entry) => ({
       t: entry.t ?? '', kind: entry.kind ?? 'info', text: entry.text ?? '', data: entry.data ?? null,
     }))
     startReplay(chronological, Array.isArray(parsed) ? null : parsed.settings,
-      `Journal chargé : ${countText(chronological.length)}.`)
+      t('journal.loadedCount', { events: countText(chronological.length) }))
   } catch (err) {
-    loadResult.value = { type: 'error', message: 'Impossible de charger ce journal : ' + err.message }
+    loadResult.value = { type: 'error', message: t('journal.loadError', { reason: err.message }) }
   }
 }
 
@@ -318,39 +319,40 @@ defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendR
   <div class="jn-list">
     <div class="jn-toolbar">
       <div class="jn-order">
-        <button class="jn-btn" :class="{ on: order === 'asc' }" @click="order = 'asc'">Depuis le début</button>
-        <button class="jn-btn" :class="{ on: order === 'desc' }" @click="order = 'desc'">Position courante</button>
+        <button class="jn-btn" :class="{ on: order === 'asc' }" @click="order = 'asc'">{{ t('journal.fromStart') }}</button>
+        <button class="jn-btn" :class="{ on: order === 'desc' }" @click="order = 'desc'">{{ t('journal.latestFirst') }}</button>
       </div>
       <div class="jn-io">
-        <button class="jn-btn" @click="exportJournal" :disabled="!entries.length">Enregistrer (JSON)</button>
-        <button v-if="!shared" class="jn-btn" @click="triggerImport">Charger un journal</button>
+        <button class="jn-btn" @click="exportJournal" :disabled="!entries.length">{{ t('journal.save') }}</button>
+        <button v-if="!shared" class="jn-btn" @click="triggerImport">{{ t('journal.load') }}</button>
         <input v-if="!shared" ref="fileInput" type="file" accept="application/json,.json" class="jn-file-input"
           @change="onFileChosen">
       </div>
-      <p v-if="lastAutosaveLabel" class="jn-autosave">Sauvegarde auto : {{ lastAutosaveLabel }}</p>
-      <p v-if="shared" class="jn-autosave">Journal partagé entre les joueurs, enregistré sur le serveur.</p>
+      <p v-if="lastAutosaveLabel" class="jn-autosave">{{ t('journal.autosave', { label: lastAutosaveLabel }) }}</p>
+      <p v-if="shared" class="jn-autosave">{{ t('journal.shared') }}</p>
     </div>
 
     <div v-if="pendingAutosave" class="jn-resume">
       <p class="jn-resume-msg">
-        Une partie en cours a été trouvée ({{ pendingAutosave.label
-        }}<template v-if="partyLabel(pendingAutosave.settings)">, mode {{ partyLabel(pendingAutosave.settings) }}</template>).
+        {{ partyLabel(pendingAutosave.settings)
+          ? t('journal.foundWithMode', { label: pendingAutosave.label, mode: partyLabel(pendingAutosave.settings) })
+          : t('journal.found', { label: pendingAutosave.label }) }}
       </p>
       <div class="jn-resume-btns">
-        <button class="jn-btn" @click="resumeAutosave">Reprendre</button>
-        <button class="jn-btn" @click="dismissAutosave">Ignorer</button>
+        <button class="jn-btn" @click="resumeAutosave">{{ t('journal.resume') }}</button>
+        <button class="jn-btn" @click="dismissAutosave">{{ t('journal.ignore') }}</button>
       </div>
     </div>
 
-    <p v-if="!entries.length" class="jn-empty">Aucun évènement pour l'instant.</p>
+    <p v-if="!entries.length" class="jn-empty">{{ t('journal.empty') }}</p>
     <div v-for="entry in displayEntries" :key="entry.id" class="jn-row" :class="'jn-' + entry.kind">
       <span class="jn-t">{{ entry.t }}</span><span class="jn-txt">{{ entry.text }}</span>
     </div>
-    <button v-if="entries.length && !shared" class="jn-clear" @click="clear">Vider le journal</button>
+    <button v-if="entries.length && !shared" class="jn-clear" @click="clear">{{ t('journal.clear') }}</button>
 
     <div v-if="loadResult" class="jn-modal-backdrop">
       <div class="jn-modal" :class="'jn-modal-' + loadResult.type" role="alertdialog" aria-modal="true">
-        <p class="jn-modal-title">{{ loadResult.type === 'success' ? 'Journal chargé' : 'Erreur de chargement' }}</p>
+        <p class="jn-modal-title">{{ loadResult.type === 'success' ? t('journal.loaded') : t('journal.loadErrorTitle') }}</p>
         <p class="jn-modal-msg">{{ loadResult.message }}</p>
         <button class="jn-btn jn-modal-ok" @click="dismissLoadResult">OK</button>
       </div>

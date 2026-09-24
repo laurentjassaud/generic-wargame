@@ -5,6 +5,7 @@
 // "Replacer le pion" (retour dans les renforts, cf. onEliminatedContextMenu
 // dans HexMap.vue).
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
   units: { type: Array, required: true }, // pions éliminés (toutes factions)
@@ -12,7 +13,8 @@ const props = defineProps({
 
 const emit = defineEmits(['contextmenu'])
 
-const FACTION_LABELS = { german: 'Allemands', commonwealth: 'Commonwealth', us: 'US', pol: 'Polonais' }
+const { t, te } = useI18n()
+const factionLabel = (faction) => (te(`factions.${faction}`) ? t(`factions.${faction}`) : faction)
 
 /** Groupes { faction, items }, triés par nom de faction affiché. */
 const groups = computed(() => {
@@ -23,14 +25,14 @@ const groups = computed(() => {
     byFaction.get(faction).push(counter)
   }
   return [...byFaction.entries()]
-    .map(([faction, items]) => ({ faction, label: FACTION_LABELS[faction] ?? faction, items }))
+    .map(([faction, items]) => ({ faction, label: factionLabel(faction), items }))
     .sort((counterA, counterB) => counterA.label.localeCompare(counterB.label))
 })
 </script>
 
 <template>
   <div class="el-list">
-    <p v-if="!units.length" class="el-empty">Aucune unité éliminée.</p>
+    <p v-if="!units.length" class="el-empty">{{ t('eliminated.empty') }}</p>
     <section v-for="group in groups" :key="group.faction" class="el-group">
       <h3 class="el-group-title">{{ group.label }}</h3>
       <div class="el-grid">
@@ -40,7 +42,7 @@ const groups = computed(() => {
         </figure>
       </div>
     </section>
-    <p class="el-hint">Clic droit sur un pion pour le replacer dans les renforts.</p>
+    <p class="el-hint">{{ t('eliminated.hint') }}</p>
   </div>
 </template>
 

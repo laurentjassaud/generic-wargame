@@ -10,6 +10,10 @@
 // déplaçable pour la même raison : elle ne doit jamais masquer
 // définitivement l'hex qu'on veut cliquer.
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { mt } from '../i18n/index.js'
+
+const { t } = useI18n()
 
 const props = defineProps({
   // Numéros des hex cibles ("0512"...) — cf. useCombat.js::targetHexLabels.
@@ -102,16 +106,16 @@ const composing = computed(() => !props.combatResult && !['waiting', 'answered',
 
 const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
 
-const RANGED_TITLE = "Tir d'artillerie à distance : jamais affectée par le résultat"
+const RANGED_TITLE = computed(() => t('combat.rangedTitle'))
 
 // [8.45] : ni FPF ni soutien contre une attaque faite uniquement
 // d'artillerie et/ou de soutien (cf. prop `support`, champ `barred`).
-const SUPPORT_BARRED_TITLE = "Soutien sans effet : l'attaque est faite uniquement d'artillerie et/ou de soutien"
+const SUPPORT_BARRED_TITLE = computed(() => t('combat.supportBarred'))
 
 // Plafond d'artilleries atteint (cf. prop `artilleryCap`) : le clic sur une
 // artillerie de plus reste sans effet, autant le dire.
 const artilleryCapNote = computed(() => (props.artilleryCap
-  ? `Au plus ${props.artilleryCap.max} artilleries par combat : aucune autre ne peut s'y joindre.`
+  ? t('combat.artilleryCap', { max: props.artilleryCap.max })
   : null))
 
 // Animation du dé : purement décorative. La VALEUR retenue est celle tirée
@@ -194,12 +198,12 @@ onUnmounted(() => {
   <div class="combat-modal" :class="{ dragging }" :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
     @pointerdown="onDragStart">
     <header class="cm-head">
-      <span class="cm-title">{{ fpfMode === 'defender' ? 'Combat adverse — FPF' : 'Combat' }}</span>
+      <span class="cm-title">{{ fpfMode === 'defender' ? t('combat.enemyTitle') : t('combat.title') }}</span>
       <!-- Pas de fermeture pendant une retraite ou une avance : elles doivent
            aller à leur terme (l'avance se termine par son propre bouton) — ni
            une fois que le défenseur a répondu au FPF : l'attaque est engagée.
            Le défenseur, lui, doit répondre (éventuellement sans FPF). -->
-      <button v-if="fpfMode !== 'defender'" class="cm-close" title="Annuler le combat"
+      <button v-if="fpfMode !== 'defender'" class="cm-close" :title="t('combat.cancel')"
         :disabled="!!retreat || !!advance || fpfMode === 'answered'" @click="$emit('close')">&times;</button>
     </header>
 
@@ -208,18 +212,18 @@ onUnmounted(() => {
            retirés en cliquant sur la carte), chacune avec son facteur de
            défense — le total est leur somme. -->
       <section class="cm-side cm-defender">
-        <h4>Défenseurs <span class="cm-hexes">{{ targetHexes.join(', ') }}</span></h4>
+        <h4>{{ t('combat.defenders') }} <span class="cm-hexes">{{ targetHexes.join(', ') }}</span></h4>
         <div class="cm-units">
           <figure v-for="defender in defenders" :key="defender.id" class="cm-unit">
             <img :src="defender.src" :alt="defender.name" />
-            <span class="cm-factor" title="Facteur de défense">{{ defender.def ?? 0 }}</span>
+            <span class="cm-factor" :title="t('combat.defenseFactor')">{{ defender.def ?? 0 }}</span>
             <figcaption>{{ defender.name }}</figcaption>
           </figure>
           <!-- Artilleries dont le FPF s'ajoute à la défense (cf. prop `fpf`). -->
           <figure v-for="unit in fpf?.units ?? []" :key="'fpf' + unit.id" class="cm-unit cm-fpf-unit"
-            title="Final protective fire : jamais affectée par le résultat">
+            :title="t('combat.fpfTitle')">
             <img :src="unit.src" :alt="unit.name" />
-            <span class="cm-factor" title="Facteur de FPF">{{ unit.fpf ?? 0 }}</span>
+            <span class="cm-factor" :title="t('combat.fpfFactor')">{{ unit.fpf ?? 0 }}</span>
             <figcaption>FPF {{ unit.name }}</figcaption>
           </figure>
           <!-- Pions de soutien engagés en DÉFENSE (cf. prop `support`) —
@@ -227,16 +231,16 @@ onUnmounted(() => {
                et/ou de soutien ([8.45], cf. champ `barred`). -->
           <figure v-for="counter in (support && !support.attacking ? support.counters : [])" :key="'sup' + counter.id"
             class="cm-unit cm-fpf-unit" :class="{ 'cm-unit-barred': support.barred }"
-            :title="support.barred ? SUPPORT_BARRED_TITLE : 'Pion de soutien : jamais affecté par le résultat'">
+            :title="support.barred ? SUPPORT_BARRED_TITLE : t('combat.supportTitle')">
             <img :src="counter.src" :alt="counter.name" />
-            <span class="cm-factor" title="Apport du pion de soutien">{{ support.barred ? 0 : support.factor }}</span>
+            <span class="cm-factor" :title="t('combat.supportFactor')">{{ support.barred ? 0 : support.factor }}</span>
             <figcaption>{{ counter.name }}</figcaption>
           </figure>
         </div>
         <p class="cm-total">
-          Défense <b>{{ defenseStrength }}</b>
-          <span v-if="fpf?.strength" class="cm-fpf-note">dont FPF +{{ fpf.strength }}</span>
-          <span v-if="support && !support.attacking && support.strength" class="cm-fpf-note">dont soutien +{{ support.strength }}</span>
+          {{ t('combat.defense') }} <b>{{ defenseStrength }}</b>
+          <span v-if="fpf?.strength" class="cm-fpf-note">{{ t('combat.ofWhichFpf', { n: fpf.strength }) }}</span>
+          <span v-if="support && !support.attacking && support.strength" class="cm-fpf-note">{{ t('combat.ofWhichSupport', { n: support.strength }) }}</span>
         </p>
         <p v-if="support?.barred && support.counters.length" class="cm-hint">{{ SUPPORT_BARRED_TITLE }}</p>
       </section>
@@ -245,57 +249,54 @@ onUnmounted(() => {
            passe en jaune), jamais depuis cette modale. Une artillerie qui
            tire à distance est signalée : elle ne subira pas le résultat. -->
       <section class="cm-side cm-attackers">
-        <h4>Attaquants</h4>
+        <h4>{{ t('combat.attackers') }}</h4>
         <div class="cm-units">
           <figure v-for="detail in attackerDetails" :key="detail.unit.id" class="cm-unit"
             :title="detail.ranged ? RANGED_TITLE : null">
             <img :src="detail.unit.src" :alt="detail.unit.name" />
-            <span class="cm-factor" title="Facteur d'attaque (barrage pour une artillerie)">{{ detail.factor }}</span>
+            <span class="cm-factor" :title="t('combat.attackFactor')">{{ detail.factor }}</span>
             <figcaption>{{ detail.unit.name }}</figcaption>
-            <span v-if="detail.ranged" class="cm-ranged-tag">à distance</span>
+            <span v-if="detail.ranged" class="cm-ranged-tag">{{ t('combat.ranged') }}</span>
           </figure>
           <!-- Pions de soutien engagés en ATTAQUE (cf. prop `support`) : une
                unité attaquante de plus, qui ne subit pas le résultat. -->
           <figure v-for="counter in (support?.attacking ? support.counters : [])" :key="'sup' + counter.id"
-            class="cm-unit cm-support-unit" title="Pion de soutien : jamais affecté par le résultat">
+            class="cm-unit cm-support-unit" :title="t('combat.supportTitle')">
             <img :src="counter.src" :alt="counter.name" />
-            <span class="cm-factor" title="Apport du pion de soutien">{{ support.factor }}</span>
+            <span class="cm-factor" :title="t('combat.supportFactor')">{{ support.factor }}</span>
             <figcaption>{{ counter.name }}</figcaption>
           </figure>
           <p v-if="attackerDetails.length === 0 && !support?.attacking" class="cm-hint">
-            Cliquez sur vos unités adjacentes à toutes les cibles, ou sur une artillerie qui les a toutes à portée.
+            {{ t('combat.pickAttackers') }}
           </p>
           <!-- [9.13] Le soutien peut frapper n'importe quel hex ennemi, donc
                attaquer seul : ce combat-là est résoluble sans attaquant. -->
           <p v-else-if="attackerDetails.length === 0" class="cm-hint">
-            Attaque faite uniquement par le soutien : le défenseur ne peut reculer que de 2 hex ou plus, ou être éliminé.
+            {{ t('combat.supportOnly') }}
           </p>
           <!-- Plafond d'artilleries du module (cf. prop `artilleryCap`). -->
           <p v-if="composing && artilleryCap?.attackFull" class="cm-hint">{{ artilleryCapNote }}</p>
         </div>
         <p class="cm-total">
-          Attaque <b>{{ attackStrength }}</b>
-          <span v-if="support?.attacking && support.strength" class="cm-support-note">dont soutien +{{ support.strength }}</span>
+          {{ t('combat.attack') }} <b>{{ attackStrength }}</b>
+          <span v-if="support?.attacking && support.strength" class="cm-support-note">{{ t('combat.ofWhichSupport', { n: support.strength }) }}</span>
         </p>
       </section>
     </div>
 
-    <p v-if="composing" class="cm-hint cm-tip">
-      Cliquez sur une autre unité ennemie pour ajouter son hex au combat (chaque attaquant doit
-      toucher tous les hex cibles), ou sur un hex cible pour le retirer.
-    </p>
+    <p v-if="composing" class="cm-hint cm-tip">{{ t('combat.addTargets') }}</p>
 
     <!-- Règle de participation (cf. useCombat.js::strandedUnits) : ce combat
          laisserait ces unités sans adversaire — "Combattre" reste grisé. -->
     <div v-if="strandedUnits.length && fpfMode !== 'defender'" class="cm-stranded">
-      <p>Combat impossible, il laisserait sans adversaire :</p>
+      <p>{{ t('combat.stranded') }}</p>
       <ul>
         <li v-for="unit in strandedUnits" :key="unit.id">
           <b>{{ unit.name }}</b> ({{ unit.hex }}) —
-          {{ unit.side === 'friendly' ? 'ne pourrait plus attaquer personne' : 'ne pourrait plus être attaqué par personne' }}
+          {{ unit.side === 'friendly' ? t('combat.strandedFriendly') : t('combat.strandedEnemy') }}
         </li>
       </ul>
-      <p>Modifiez les attaquants ou les cibles.</p>
+      <p>{{ t('combat.changeForces') }}</p>
     </div>
 
     <!-- FPF du défenseur (cf. prop `fpf`) : choix sur cet écran (partie
@@ -303,10 +304,7 @@ onUnmounted(() => {
          faite au défenseur en ligne. -->
     <section v-if="fpf && fpfMode !== 'done'" class="cm-fpf">
       <template v-if="fpfMode === 'local' || fpfMode === 'defender'">
-        <p>
-          Tir de protection (FPF) —
-          {{ fpfMode === 'local' ? 'au défenseur de choisir ses artilleries :' : 'choisissez vos artilleries, puis validez :' }}
-        </p>
+        <p>{{ fpfMode === 'local' ? t('combat.fpfLocal') : t('combat.fpfDefender') }}</p>
         <div class="cm-fpf-list">
           <!-- Plafond atteint (cf. prop `artilleryCap`) : les artilleries non
                retenues sont éteintes, pas retirées — le défenseur voit ce
@@ -319,12 +317,12 @@ onUnmounted(() => {
           </button>
         </div>
         <p v-if="artilleryCap?.fpfFull" class="cm-hint">{{ artilleryCapNote }}</p>
-        <p v-if="fpfMode === 'local'" class="cm-hint">Ou cliquez sur l'artillerie sur la carte.</p>
-        <p v-if="!fpf.candidates.length" class="cm-hint">Aucune de vos artilleries ne peut tirer sur ce combat.</p>
+        <p v-if="fpfMode === 'local'" class="cm-hint">{{ t('combat.fpfClickMap') }}</p>
+        <p v-if="!fpf.candidates.length" class="cm-hint">{{ t('combat.fpfNone') }}</p>
         <!-- Pions de soutien du défenseur (en ligne) : il ne peut pas les
              poser sur la carte pendant le tour adverse, il les coche ici. -->
         <template v-if="support?.choices?.length">
-          <p>Pions de soutien à engager en défense :</p>
+          <p>{{ t('combat.supportDefense') }}</p>
           <div class="cm-fpf-list">
             <button v-for="token in support.choices" :key="token.id" type="button" class="cm-fpf-choice cm-support-choice"
               :class="{ on: support.selectedIds.includes(String(token.id)) }" @click="$emit('toggle-support', token.id)">
@@ -334,25 +332,22 @@ onUnmounted(() => {
           </div>
         </template>
       </template>
-      <p v-else-if="fpfMode === 'request'">
-        Le défenseur peut répondre par un tir de protection (FPF) ou par ses pions de soutien :
-        soumettez-lui le combat avant de lancer le dé.
-      </p>
+      <p v-else-if="fpfMode === 'request'">{{ t('combat.fpfRequest') }}</p>
       <template v-else-if="fpfMode === 'waiting'">
-        <p>En attente du choix du défenseur (FPF)…</p>
-        <button type="button" class="cm-end-advance" @click="$emit('cancel-fpf-request')">Annuler la demande</button>
+        <p>{{ t('combat.fpfWaiting') }}</p>
+        <button type="button" class="cm-end-advance" @click="$emit('cancel-fpf-request')">{{ t('combat.cancelRequest') }}</button>
       </template>
       <p v-else-if="fpfMode === 'answered'">
-        <template v-if="fpf.units.length">FPF du défenseur : {{ fpf.units.map((unit) => unit.name).join(', ') }}.</template>
-        <template v-else>Le défenseur n'utilise pas de FPF.</template>
-        Vous pouvez lancer le dé.
+        <template v-if="fpf.units.length">{{ t('combat.fpfAnswered', { units: fpf.units.map((unit) => unit.name).join(', ') }) }}</template>
+        <template v-else>{{ t('combat.fpfDeclined') }}</template>
+        {{ t('combat.youMayRoll') }}
       </p>
     </section>
 
     <p class="cm-diff">
-      Différentiel <b>{{ differential > 0 ? '+' + differential : differential }}</b>
+      {{ t('combat.differential') }} <b>{{ differential > 0 ? '+' + differential : differential }}</b>
       <span v-if="terrainRow" class="cm-reason">
-        — {{ terrainRow.row.label }} ({{ terrainRow.reason }}), colonne {{ column }}
+        — {{ mt(terrainRow.row.label) }} ({{ mt(terrainRow.reason) }}), {{ t('combat.column', { n: column }) }}
       </span>
     </p>
 
@@ -362,11 +357,11 @@ onUnmounted(() => {
     <table class="crt">
       <tbody>
         <tr v-for="row in crtRows" :key="row.key" :class="{ 'row-on': terrainRow && row.key === terrainRow.row.key }">
-          <th>{{ row.label }}</th>
+          <th>{{ mt(row.label) }}</th>
           <td v-for="columnNumber in (crtResults[0]?.length ?? 0)" :key="columnNumber" :class="{ 'col-on': columnNumber === column }">{{ row.cells[columnNumber - 1] ?? '' }}</td>
         </tr>
         <tr v-for="(line, dieIndex) in crtResults" :key="'d' + dieIndex" class="crt-die">
-          <th>Dé {{ dieIndex + 1 }}</th>
+          <th>{{ t('combat.die', { n: dieIndex + 1 }) }}</th>
           <td v-for="(cell, columnIndex) in line" :key="columnIndex"
             :class="{ 'col-on': columnIndex + 1 === column, hit: combatResult && combatResult.die === dieIndex + 1 && combatResult.column === columnIndex + 1 }">
             {{ cell }}
@@ -381,18 +376,18 @@ onUnmounted(() => {
           {{ FACES[(rolling ? spinFace : combatResult?.die ?? 1) - 1] }}
         </span>
         <span v-if="combatResult && !rolling" class="cm-result">
-          <b>{{ combatResult.result }}</b> — {{ combatResult.resultLabel }}
+          <b>{{ combatResult.result }}</b> — {{ mt(combatResult.resultLabel) }}
         </span>
       </div>
       <!-- Bouton principal : lancer le dé — sauf, en ligne, soumettre d'abord
            le combat au défenseur (FPF possible), ou, sur son écran, valider
            son choix de FPF. -->
-      <button v-if="fpfMode === 'defender'" class="cm-fight" @click="$emit('send-fpf')">Valider le FPF</button>
+      <button v-if="fpfMode === 'defender'" class="cm-fight" @click="$emit('send-fpf')">{{ t('combat.sendFpf') }}</button>
       <button v-else-if="fpfMode === 'request'" class="cm-fight" :disabled="!canResolve" @click="$emit('request-fpf')">
-        Soumettre au défenseur
+        {{ t('combat.submitToDefender') }}
       </button>
       <button v-else class="cm-fight" :disabled="rolling || !canResolve || !!combatResult" @click="fight">
-        {{ combatResult && !rolling ? 'Combat résolu' : 'Combattre' }}
+        {{ combatResult && !rolling ? t('combat.resolved') : t('combat.fight') }}
       </button>
     </footer>
 
@@ -400,27 +395,33 @@ onUnmounted(() => {
          maintenant, et ce qui s'est déjà passé. -->
     <section v-if="combatResult && !rolling && (retreat || advance || retreatNotes.length)" class="cm-retreat">
       <!-- Refoulement d'un ami en attente de choix (cf. useRetreat.js::pending). -->
-      <p v-if="retreat?.pushing" class="cm-retreat-now">
-        Pour laisser passer <b>{{ retreat.name }}</b>, choisissez où refouler <b>{{ retreat.pushing }}</b> :
-        cliquez sur un hex <span class="cm-red">rouge</span>.
-      </p>
+      <i18n-t v-if="retreat?.pushing" keypath="combat.pushChoice" tag="p" class="cm-retreat-now">
+        <template #unit><b>{{ retreat.name }}</b></template>
+        <template #pushed><b>{{ retreat.pushing }}</b></template>
+        <template #red><span class="cm-red">{{ t('combat.red') }}</span></template>
+      </i18n-t>
       <button v-if="retreat?.pushing" class="cm-end-advance" @click="$emit('cancel-push')">
-        Choisir un autre hex de retraite
+        {{ t('combat.otherRetreatHex') }}
       </button>
       <p v-else-if="retreat" class="cm-retreat-now">
-        Retraite de <b>{{ retreat.name }}</b> ({{ retreat.side === 'defender' ? 'défenseur' : 'attaquant' }}) —
-        hex {{ retreat.step }}/{{ retreat.total }} : cliquez sur un hex <span class="cm-red">rouge</span>.
+        <i18n-t keypath="combat.retreatOf" tag="span">
+          <template #unit><b>{{ retreat.name }}</b></template>
+          <template #role>{{ retreat.side === 'defender' ? t('combat.defender') : t('combat.attacker') }}</template>
+          <template #step>{{ retreat.step }}</template>
+          <template #total>{{ retreat.total }}</template>
+          <template #red><span class="cm-red">{{ t('combat.red') }}</span></template>
+        </i18n-t>
         <span v-if="retreat.pushes" class="cm-retreat-wait">
-          Seuls des hex amis sont accessibles : leur occupant sera refoulé d'un hex pour laisser la place.
+          {{ t('combat.pushesOnly') }}
         </span>
         <span v-if="retreat.waiting" class="cm-retreat-wait">
-          Ensuite : {{ retreat.waiting }} autre{{ retreat.waiting > 1 ? 's' : '' }} unité{{ retreat.waiting > 1 ? 's' : '' }}.
+          {{ t('combat.thenOthers', retreat.waiting) }}
         </span>
       </p>
       <!-- Réduction facultative offerte par le module dans l'hex actuel
            (ex. hex City à Arnhem, cf. useArnhem.js::cityRetreatReduction). -->
       <button v-if="retreat?.reduction" class="cm-end-advance" @click="$emit('reduce-retreat')">
-        {{ retreat.reduction.total < retreat.step ? `S'arrêter ici` : `Réduire la retraite à ${retreat.reduction.total} hex` }}
+        {{ retreat.reduction.total < retreat.step ? t('combat.stopHere') : t('combat.reduceRetreat', { n: retreat.reduction.total }) }}
         ({{ retreat.reduction.reason }})
       </button>
       <ul v-if="retreatNotes.length">
@@ -429,15 +430,14 @@ onUnmounted(() => {
       <!-- Avance après combat (cf. useRetreat.js) : le chemin de retraite est
            en vert sur la carte. -->
       <div v-if="advance" class="cm-advance">
-        <p v-if="advance.name">
-          Avance de <b>{{ advance.name }}</b> : cliquez sur un hex <span class="cm-green">vert vif</span>,
-          ou sur une autre unité victorieuse pour terminer la sienne.
-        </p>
-        <p v-else>
-          Avance après combat : cliquez sur une unité victorieuse (contour <span class="cm-green">vert</span>),
-          puis sur un hex du chemin de retraite.
-        </p>
-        <button class="cm-end-advance" @click="$emit('end-advance')">Terminer l'avance</button>
+        <i18n-t v-if="advance.name" keypath="combat.advanceOf" tag="p">
+          <template #unit><b>{{ advance.name }}</b></template>
+          <template #green><span class="cm-green">{{ t('combat.brightGreen') }}</span></template>
+        </i18n-t>
+        <i18n-t v-else keypath="combat.advancePick" tag="p">
+          <template #green><span class="cm-green">{{ t('combat.green') }}</span></template>
+        </i18n-t>
+        <button class="cm-end-advance" @click="$emit('end-advance')">{{ t('combat.endAdvance') }}</button>
       </div>
     </section>
   </div>

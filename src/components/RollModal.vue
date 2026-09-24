@@ -84,12 +84,12 @@ onUnmounted(() => {
     </div>
 
     <div class="dice-result">
-      <template v-if="phase === 'done'">Résultat : <b>{{ value }}</b></template>
+      <template v-if="phase === 'done'">{{ $t('dice.result') }} <b>{{ value }}</b></template>
       <template v-else>&nbsp;</template>
     </div>
 
     <button class="dice-roll-btn" :disabled="phase === 'rolling' || disabled" @click="roll">
-      {{ phase === 'idle' ? 'Lancer le dé' : phase === 'rolling' ? '...' : 'Relancer' }}
+      {{ phase === 'idle' ? $t('dice.roll') : phase === 'rolling' ? '...' : $t('dice.reroll') }}
     </button>
   </div>
 </template>

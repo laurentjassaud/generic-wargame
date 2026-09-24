@@ -8,6 +8,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps({
   id: { type: [String, Number], required: true },
@@ -90,9 +93,9 @@ const dots = computed(() => {
   return list
 })
 const dotTitle = computed(() => [
-  props.spent ? 'A combattu pendant cette phase' : null,
-  props.disrupted ? 'A subi un résultat de combat (cette phase de Combat ou la précédente) : pas de FPF' : null,
-  props.displaced ? 'Refoulée par une retraite amie : ne peut plus tirer pendant cette phase' : null,
+  props.spent ? t('counter.fought') : null,
+  props.disrupted ? t('counter.disrupted') : null,
+  props.displaced ? t('counter.displaced') : null,
 ].filter(Boolean).join(' — '))
 
 function onClick() {

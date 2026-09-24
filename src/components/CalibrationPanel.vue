@@ -31,42 +31,36 @@ function copyCfg() {
 
 <template>
   <div class="calib">
-    <h3>Calibration de la grille</h3>
+    <h3>{{ $t('calibration.title') }}</h3>
     <div class="calib-grid">
-      <div class="ctl"><label>origine X (centre du 1er hex) <b>{{ calibration.x0 }}</b></label>
+      <div class="ctl"><label>{{ $t('calibration.originX') }} <b>{{ calibration.x0 }}</b></label>
         <input type="range" min="0" max="300" step="0.5" v-model.number="calibration.x0"></div>
-      <div class="ctl"><label>origine Y (centre du 1er hex) <b>{{ calibration.y0 }}</b></label>
+      <div class="ctl"><label>{{ $t('calibration.originY') }} <b>{{ calibration.y0 }}</b></label>
         <input type="range" min="0" max="300" step="0.5" v-model.number="calibration.y0"></div>
-      <div class="ctl"><label>pas colonne <b>{{ calibration.colStep }}</b></label>
+      <div class="ctl"><label>{{ $t('calibration.colStep') }} <b>{{ calibration.colStep }}</b></label>
         <input type="range" min="30" max="200" step="0.25" v-model.number="calibration.colStep"></div>
-      <div class="ctl"><label>rayon horizontal a <b>{{ calibration.a }}</b></label>
+      <div class="ctl"><label>{{ $t('calibration.radius') }} <b>{{ calibration.a }}</b></label>
         <input type="range" min="15" max="130" step="0.25" v-model.number="calibration.a"></div>
-      <div class="ctl"><label>pas ligne (2·b) <b>{{ calibration.rowStep }}</b></label>
+      <div class="ctl"><label>{{ $t('calibration.rowStep') }} <b>{{ calibration.rowStep }}</b></label>
         <input type="range" min="30" max="200" step="0.25" v-model.number="calibration.rowStep"></div>
-      <div class="ctl"><label>colonnes <b>{{ mapConfig.cols }}</b></label>
+      <div class="ctl"><label>{{ $t('calibration.cols') }} <b>{{ mapConfig.cols }}</b></label>
         <input type="number" min="1" max="80" v-model.number="mapConfig.cols"></div>
-      <div class="ctl"><label>lignes <b>{{ mapConfig.rows }}</b></label>
+      <div class="ctl"><label>{{ $t('calibration.rows') }} <b>{{ mapConfig.rows }}</b></label>
         <input type="number" min="1" max="80" v-model.number="mapConfig.rows"></div>
-      <div class="ctl"><label>trait — épaisseur <b>{{ gridStyle.width }}px</b></label>
+      <div class="ctl"><label>{{ $t('calibration.strokeWidth') }} <b>{{ gridStyle.width }}px</b></label>
         <input type="range" min="0.5" max="4" step="0.5" v-model.number="gridStyle.width"></div>
-      <div class="ctl"><label>trait — opacité <b>{{ gridStyle.opacity }}</b></label>
+      <div class="ctl"><label>{{ $t('calibration.strokeOpacity') }} <b>{{ gridStyle.opacity }}</b></label>
         <input type="range" min="0" max="1" step="0.05" v-model.number="gridStyle.opacity"></div>
-      <div class="ctl"><label>couleur trait</label>
+      <div class="ctl"><label>{{ $t('calibration.strokeColor') }}</label>
         <div class="swatchrow"><input type="color" v-model="gridStyle.stroke">
           <span>{{ gridStyle.stroke }}</span></div></div>
     </div>
     <div class="calib-actions">
-      <button @click="reset">réinitialiser défauts</button>
-      <button @click="copyCfg">copier la config JSON</button>
-      <span class="copied">{{ copied ? 'copié ✓' : '' }}</span>
+      <button @click="reset">{{ $t('calibration.reset') }}</button>
+      <button @click="copyCfg">{{ $t('calibration.copy') }}</button>
+      <span class="copied">{{ copied ? $t('calibration.copied') : '' }}</span>
     </div>
-    <p class="hint">
-      Repère SVG = pixels natifs de l'image ({{ imageWidth }}×{{ imageHeight }}), ces valeurs
-      sont directement réutilisables dans le JSON du module une fois l'alignement satisfaisant.
-      Zoomez sur un coin de la carte (ex. le premier hex "0101" en haut à gauche) et ajustez
-      x0/y0/colStep/a/rowStep jusqu'à ce que les polygones tracés collent aux hexagones imprimés.
-      Décalage des colonnes impaires (2e, 4e…) = +pas_ligne/2, déjà appliqué.
-    </p>
+    <p class="hint">{{ $t('calibration.hint', { width: imageWidth, height: imageHeight }) }}</p>
   </div>
 </template>
 

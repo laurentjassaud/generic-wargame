@@ -106,7 +106,7 @@ function rowVars(tab, tabIndex) {
           <div class="dc-content-slot">
             <slot :name="tab.key" />
           </div>
-          <button class="dc-close-btn" @click.stop="close">Fermer</button>
+          <button class="dc-close-btn" @click.stop="close">{{ $t('common.close') }}</button>
         </div>
       </div>
     </div>

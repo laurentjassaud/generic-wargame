@@ -49,8 +49,8 @@ onUnmounted(() => {
 <template>
   <div class="chart-modal" :class="{ dragging }" :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
     @pointerdown="onDragStart">
-    <div class="chart-header">Table des mouvements</div>
-    <img class="chart-image" :src="src" alt="Table des coûts de mouvement par terrain" draggable="false" />
+    <div class="chart-header">{{ $t('toolbar.movementChart') }}</div>
+    <img class="chart-image" :src="src" :alt="$t('charts.movementAlt')" draggable="false" />
   </div>
 </template>
 

@@ -21,6 +21,10 @@
 // celle que lib/useBridges.js::attempt a tirée, reçue ensuite par la prop
 // `result` (même principe que CombatModal.vue).
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { mt } from '../i18n/index.js'
+
+const { t } = useI18n()
 
 const props = defineProps({
   // Laquelle des deux décisions cette modale présente (cf. l'en-tête).
@@ -74,7 +78,7 @@ function attempt() {
 const destroyOnLabel = computed(() => {
   const faces = props.destroyOn
   if (faces.length <= 1) return faces.join('')
-  return faces.slice(0, -1).join(', ') + ' ou ' + faces[faces.length - 1]
+  return t('bridge.facesList', { list: faces.slice(0, -1).join(', '), last: faces[faces.length - 1] })
 })
 
 /** Les deux hex que le pont relie, tels qu'imprimés sur la carte. */
@@ -84,34 +88,28 @@ const hexesLabel = computed(() => (props.bridge?.hexes ?? []).join(' – '))
 <template>
   <div v-if="bridge" class="dm-overlay">
     <div class="dm-modal" :class="{ repair: repairing }" role="alertdialog" aria-labelledby="dm-title">
-      <h3 id="dm-title">{{ repairing ? 'Réparation' : 'Démolition' }}</h3>
+      <h3 id="dm-title">{{ repairing ? t('bridge.repairTitle') : t('bridge.demolitionTitle') }}</h3>
 
-      <p v-if="repairing">
-        <b>{{ bridge.unit?.name }}</b> a passé le tour adverse au calme et peut relever le
-        <b>{{ bridge.label }}</b><span class="dm-hex">{{ hexesLabel }}</span>.
-      </p>
-      <p v-else>
-        Une unité ennemie borde le <b>{{ bridge.label }}</b>
-        <span class="dm-hex">{{ hexesLabel }}</span>.
-      </p>
+      <i18n-t v-if="repairing" keypath="bridge.repairIntro" tag="p">
+        <template #unit><b>{{ bridge.unit?.name }}</b></template>
+        <template #bridge><b>{{ mt(bridge.label) }}</b><span class="dm-hex">{{ hexesLabel }}</span></template>
+      </i18n-t>
+      <i18n-t v-else keypath="bridge.demolitionIntro" tag="p">
+        <template #bridge><b>{{ mt(bridge.label) }}</b> <span class="dm-hex">{{ hexesLabel }}</span></template>
+      </i18n-t>
 
       <!-- En ligne, l'écran de celui qui n'a pas la décision : il attend. -->
       <p v-if="waiting && !result" class="dm-hint">
-        {{ repairing ? 'En attente de la décision du joueur dont le génie tient ce pont…'
-                     : 'En attente de la décision du joueur qui tient ce pont…' }}
+        {{ repairing ? t('bridge.waitingRepair') : t('bridge.waitingDemolition') }}
       </p>
 
       <template v-else-if="!result">
-        <p v-if="repairing" class="dm-hint">
-          Le pont redeviendra franchissable et ne pourra plus être détruit. Refuser n'engage que ce
-          tour-ci : il restera réparable.
-        </p>
+        <p v-if="repairing" class="dm-hint">{{ t('bridge.repairHint') }}</p>
         <template v-else>
-          <p class="dm-hint">
-            C'est la seule occasion de le faire sauter : si le jet échoue, ou si vous y renoncez,
-            le pont tiendra jusqu'à la fin de la partie.
-          </p>
-          <p class="dm-odds">Le pont est détruit sur un jet de <b>{{ destroyOnLabel }}</b>.</p>
+          <p class="dm-hint">{{ t('bridge.demolitionHint') }}</p>
+          <i18n-t keypath="bridge.odds" tag="p" class="dm-odds">
+            <template #faces><b>{{ destroyOnLabel }}</b></template>
+          </i18n-t>
         </template>
       </template>
 
@@ -121,17 +119,17 @@ const hexesLabel = computed(() => (props.bridge?.hexes ?? []).join(' – '))
         {{ FACES[(result && !rolling ? result.die : spinFace) - 1] }}
       </div>
       <p v-if="result && !rolling" class="dm-result" :class="result.destroyed ? 'gone' : 'held'">
-        <template v-if="repairing">Le pont est relevé. Il ne pourra plus être détruit.</template>
-        <template v-else-if="result.destroyed">Le pont saute — l'obstacle est de nouveau à franchir.</template>
-        <template v-else>Le pont tient. Il ne pourra plus être détruit.</template>
+        <template v-if="repairing">{{ t('bridge.repaired') }}</template>
+        <template v-else-if="result.destroyed">{{ t('bridge.destroyed') }}</template>
+        <template v-else>{{ t('bridge.held') }}</template>
       </p>
 
       <footer v-if="!waiting && !result" class="dm-foot">
         <button type="button" class="dm-decline" :disabled="rolling" @click="emit('decline')">
-          {{ repairing ? 'Laisser détruit' : 'Laisser intact' }}
+          {{ repairing ? t('bridge.leaveDestroyed') : t('bridge.leaveIntact') }}
         </button>
         <button type="button" class="dm-attempt" :disabled="rolling" @click="attempt">
-          {{ repairing ? 'Réparer le pont' : 'Faire sauter le pont' }}
+          {{ repairing ? t('bridge.repair') : t('bridge.blow') }}
         </button>
       </footer>
     </div>

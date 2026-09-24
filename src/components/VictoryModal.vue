@@ -16,7 +16,7 @@ const props = defineProps({
   // Lignes à annoncer : `[{ side, label, points, total, reason }]` —
   // `label` est le nom du camp tel que la piste de tour l'affiche.
   awards: { type: Array, default: () => [] },
-  title: { type: String, default: 'Points de victoire' },
+  title: { type: String, default: null },
 })
 
 const emit = defineEmits(['close'])
@@ -39,7 +39,7 @@ const totals = computed(() => {
 <template>
   <div v-if="awards.length" class="vm-overlay" @click.self="emit('close')">
     <div class="vm-modal" role="alertdialog" aria-labelledby="vm-title">
-      <h3 id="vm-title">{{ title }}</h3>
+      <h3 id="vm-title">{{ title ?? $t('victory.title') }}</h3>
       <ul class="vm-list">
         <li v-for="(award, index) in awards" :key="index">
           <b>{{ award.label }}</b>
@@ -48,10 +48,10 @@ const totals = computed(() => {
         </li>
       </ul>
       <p class="vm-totals">
-        <span v-for="total in totals" :key="total.label">{{ total.label }} : <b>{{ total.total }}</b></span>
+        <span v-for="total in totals" :key="total.label">{{ $t('victory.total', { side: total.label }) }} <b>{{ total.total }}</b></span>
       </p>
       <footer class="vm-foot">
-        <button type="button" class="vm-ok" @click="emit('close')">Compris</button>
+        <button type="button" class="vm-ok" @click="emit('close')">{{ $t('common.gotIt') }}</button>
       </footer>
     </div>
   </div>

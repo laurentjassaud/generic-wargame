@@ -28,12 +28,9 @@ defineProps({
   engagements: { type: Array, default: () => [] },
   // `[{ key, hex, units }]` — cf. useAssisted.js::stackedHexes.
   stacks: { type: Array, default: () => [] },
-  title: { type: String, default: 'Impossible de changer de phase' },
+  title: { type: String, default: null },
   // Phrase affichée au-dessus de la liste `stacks`.
-  stackMessage: {
-    type: String,
-    default: 'Plusieurs unités amies occupent le même hex. Déplacez-en une avant de terminer la phase Mouvement :',
-  },
+  stackMessage: { type: String, default: null },
 })
 
 const emit = defineEmits(['close'])
@@ -48,10 +45,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 <template>
   <div class="pb-overlay" @click.self="emit('close')">
     <div class="pb-modal" role="alertdialog" aria-labelledby="pb-title">
-      <h3 id="pb-title">{{ title }}</h3>
+      <h3 id="pb-title">{{ title ?? $t('phaseBlocked.title') }}</h3>
       <p v-if="$slots.default"><slot /></p>
       <template v-if="stacks.length">
-        <p>{{ stackMessage }}</p>
+        <p>{{ stackMessage ?? $t('phaseBlocked.stacks') }}</p>
         <ul class="pb-list">
           <li v-for="stack in stacks" :key="stack.key">
             <span class="pb-hex">{{ stack.hex }}</span>
@@ -60,10 +57,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           </li>
         </ul>
       </template>
-      <p v-if="engagements.length">
-        Des unités adjacentes de camps opposés n'ont pas encore combattu. Résolvez ces combats
-        avant de terminer la phase Combat :
-      </p>
+      <p v-if="engagements.length">{{ $t('phaseBlocked.engagements') }}</p>
       <ul v-if="engagements.length" class="pb-list">
         <li v-for="engagement in engagements" :key="engagement.key">
           <b>{{ engagement.friendly }}</b> <span class="pb-hex">{{ engagement.friendlyHex }}</span>
@@ -72,7 +66,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         </li>
       </ul>
       <footer class="pb-foot">
-        <button type="button" class="pb-ok" @click="emit('close')">Compris</button>
+        <button type="button" class="pb-ok" @click="emit('close')">{{ $t('common.gotIt') }}</button>
       </footer>
     </div>
   </div>

@@ -29,6 +29,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { computed } from 'vue'
+import { mt } from '../i18n/index.js'
 
 const props = defineProps({
   // module.supportTrack — { label, side, factor, marker, byTurn: [count par
@@ -55,7 +56,7 @@ const turnTokens = computed(() => {
   const track = props.config
   if (!track) return []
   return Array.from({ length: count.value }, (_, tokenIndex) => ({
-    id: `support-t${props.turn}-${tokenIndex}`, type: 'marker', kind: 'support', faction: null, name: track.label, src: track.marker,
+    id: `support-t${props.turn}-${tokenIndex}`, type: 'marker', kind: 'support', faction: null, name: mt(track.label), src: track.marker,
   }))
 })
 // ...et ceux qui restent dans la tablette.
@@ -86,11 +87,11 @@ defineExpose({ findToken, isTurnToken, trayTokens })
 
 <template>
   <div v-if="config" class="support-tracker">
-    <span class="st-label">{{ config.label }} ({{ count }})</span>
+    <span class="st-label">{{ mt(config.label) }} ({{ count }})</span>
     <div class="st-tray">
       <img v-for="token in tokens" :key="token.id" :src="token.src" :alt="token.name" class="st-token"
         :class="{ clickable: selectable && placeable, idle: selectable && !placeable, on: String(selectedId) === token.id }"
-        :title="selectable && !placeable ? 'Utilisable pendant une phase de Combat' : null"
+        :title="selectable && !placeable ? $t('supportTracker.combatOnly') : null"
         :draggable="!selectable" @dragstart="emit('dragstart', token.id, $event)"
         @click="selectable && placeable && emit('select', token.id)" />
     </div>

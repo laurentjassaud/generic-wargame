@@ -77,32 +77,24 @@ function onSubmit(event) {
   <div class="br-overlay">
     <div class="br-modal" role="dialog" aria-labelledby="br-title">
       <header class="br-head">
-        <h3 id="br-title">Signaler un bug</h3>
-        <button type="button" class="br-close" title="Fermer" @click="emit('close')">&minus;</button>
+        <h3 id="br-title">{{ $t('toolbar.bugReport') }}</h3>
+        <button type="button" class="br-close" :title="$t('common.close')" @click="emit('close')">&minus;</button>
       </header>
-      <p class="br-text">
-        Un export du jeu sera réalisé, et placé dans un rapport de bug GitHub. Il vous faut un compte GitHub pour
-        poursuivre.
-      </p>
-      <p class="br-note br-orange">
-        Cela ne vous prendra qu'un instant de signaler le bug et vous pourrez reprendre votre partie ensuite.
-      </p>
-      <p class="br-note br-red">
-        L'export ne contiendra que les {{ REPORT_ENTRIES }} derniers coups, donc assurez-vous que votre problème s'y
-        trouve, ou bien détaillez la marche à suivre pour le reproduire.
-      </p>
-      <input v-model="title" class="br-field" type="text" maxlength="120" placeholder="Un titre concis" />
-      <textarea v-model="description" class="br-field" rows="3" placeholder="Ce qu'il s'est passé" />
+      <p class="br-text">{{ $t('bugReport.intro') }}</p>
+      <p class="br-note br-orange">{{ $t('bugReport.quick') }}</p>
+      <p class="br-note br-red">{{ $t('bugReport.lastMoves', { count: REPORT_ENTRIES }) }}</p>
+      <input v-model="title" class="br-field" type="text" maxlength="120" :placeholder="$t('bugReport.titlePlaceholder')" />
+      <textarea v-model="description" class="br-field" rows="3" :placeholder="$t('bugReport.descriptionPlaceholder')" />
       <!-- Ce que l'export a dû laisser de côté pour tenir dans l'URL GitHub. -->
-      <p v-if="failed" class="br-warn">L'export du jeu n'a pas pu être préparé : décrivez le problème en détail.</p>
+      <p v-if="failed" class="br-warn">{{ $t('bugReport.exportFailed') }}</p>
       <p v-else-if="exported && exported.count < (snapshot.entries?.length ?? 0)" class="br-warn">
-        Pour tenir dans le rapport, l'export ne contient que les {{ exported.count }} derniers coups.
+        {{ $t('bugReport.exportTrimmed', { count: exported.count }) }}
       </p>
-      <p v-if="issue?.descriptionCut" class="br-warn">Description trop longue : elle sera tronquée dans le rapport.</p>
+      <p v-if="issue?.descriptionCut" class="br-warn">{{ $t('bugReport.descriptionCut') }}</p>
       <footer class="br-foot">
         <a class="br-btn" :class="{ disabled: !issue }" :href="issue?.url" target="_blank" rel="noopener noreferrer"
-          :aria-disabled="!issue" @click="onSubmit">Soumettre</a>
-        <button type="button" class="br-btn" @click="emit('close')">Annuler</button>
+          :aria-disabled="!issue" @click="onSubmit">{{ $t('bugReport.submit') }}</a>
+        <button type="button" class="br-btn" @click="emit('close')">{{ $t('common.cancel') }}</button>
       </footer>
     </div>
   </div>

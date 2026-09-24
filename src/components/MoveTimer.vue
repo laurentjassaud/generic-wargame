@@ -28,7 +28,7 @@ const props = defineProps({
   durationSeconds: { type: Number, required: true },
   startedAt: { type: Number, default: null },
   usedMs: { type: Number, default: 0 },
-  label: { type: String, default: 'Mouvement' },
+  label: { type: String, default: null },
   alwaysVisible: { type: Boolean, default: false },
 })
 
@@ -85,8 +85,8 @@ const warning = computed(() => running.value && remaining.value > 0 && low.value
 
 <template>
   <div v-if="running || alwaysVisible" class="move-timer" :class="{ warning, low, paused: !running }"
-    title="Temps restant pour la phase de Mouvement">
-    <span class="mt-label">{{ label }}</span>
+    :title="$t('moveTimer.title')">
+    <span class="mt-label">{{ label ?? $t('moveTimer.label') }}</span>
     <span class="mt-value">{{ display }}</span>
   </div>
 </template>

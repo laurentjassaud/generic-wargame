@@ -15,6 +15,9 @@
 //     HexMap.vue::onCounterDragStart qui refuserait de toute façon un
 //     glisser qui aurait quand même démarré).
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps({
   reinforcements: { type: Array, required: true }, // pions avec `setup` non encore posés
@@ -39,8 +42,8 @@ function isAvailable(counter) {
 }
 /** Info-bulle d'un renfort grisé : pourquoi il ne peut pas entrer en jeu. */
 function unavailableReason(counter) {
-  if ((counter.turn ?? 1) > props.currentTurn) return `Arrive au tour ${counter.turn}`
-  if (props.canPlace && !props.canPlace(counter)) return 'Ne peut pas entrer en jeu pendant cette phase'
+  if ((counter.turn ?? 1) > props.currentTurn) return t('reinforcements.arrivesOnTurn', { turn: counter.turn })
+  if (props.canPlace && !props.canPlace(counter)) return t('reinforcements.notThisPhase')
   return ''
 }
 function onDragStart(counter, ev) {
@@ -66,9 +69,9 @@ const groups = computed(() => {
 
 <template>
   <div class="rf-list">
-    <p v-if="!reinforcements.length" class="rf-empty">Tous les renforts sont sur la carte.</p>
+    <p v-if="!reinforcements.length" class="rf-empty">{{ t('reinforcements.empty') }}</p>
     <section v-for="group in groups" :key="group.turn" class="rf-turn">
-      <h3 class="rf-turn-title">Tour {{ group.turn }}</h3>
+      <h3 class="rf-turn-title">{{ t('reinforcements.turn', { turn: group.turn }) }}</h3>
       <div class="rf-grid">
         <figure v-for="counter in group.items" :key="counter.id" class="rf-piece">
           <img :src="counter.src" :alt="counter.name" width="48" height="48" :draggable="draggable && isAvailable(counter)"
@@ -82,13 +85,7 @@ const groups = computed(() => {
       </div>
     </section>
     <p class="rf-hint">
-      <template v-if="draggable">
-        Glisser un pion sur la carte pour le poser librement, ou cliquer dessus puis cliquer un des
-        hex d'entrée surlignés en orange.
-      </template>
-      <template v-else>
-        Cliquer un pion puis cliquer un des hex d'entrée surlignés en orange sur la carte.
-      </template>
+      {{ draggable ? t('reinforcements.hintDrag') : t('reinforcements.hintClick') }}
     </p>
   </div>
 </template>

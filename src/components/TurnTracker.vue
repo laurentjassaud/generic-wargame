@@ -37,6 +37,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { ref, computed, watch } from 'vue'
+import { mt } from '../i18n/index.js'
 
 const props = defineProps({
   config: { type: Object, default: null },
@@ -152,11 +153,11 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
           {{ turnNumber }}
         </span>
       </div>
-      <img v-if="activeSideInfo" :src="activeSideInfo.marker" :alt="activeSideInfo.label" class="tt-marker" />
-      <span class="tt-side-label">{{ activeSideInfo?.label }}</span>
+      <img v-if="activeSideInfo" :src="activeSideInfo.marker" :alt="mt(activeSideInfo.label)" class="tt-marker" />
+      <span class="tt-side-label">{{ mt(activeSideInfo?.label) }}</span>
       <!-- Hors mode phases (phase === null, cf. props ci-dessus) : comportement
            historique inchangé, ce bouton avance lui-même le pas courant. -->
-      <button v-if="phase === null" class="tt-next" :disabled="isLastStep || disabled" title="Tour suivant" @click="nextTurn">&rarr;</button>
+      <button v-if="phase === null" class="tt-next" :disabled="isLastStep || disabled" :title="$t('turnTracker.nextTurn')" @click="nextTurn">&rarr;</button>
     </div>
 
     <!-- Ligne "phases" (mode Assisté uniquement, cf. props `phase` ci-dessus) :
@@ -170,7 +171,7 @@ defineExpose({ applyRemoteTurn, canControl, nextTurn, currentStep, isLastSideOfT
       </div>
       <!-- Pas de `nextTurn()` direct ici : on émet `phase-next` et on laisse
            useAssisted.js (via HexMap.vue) décider de l'effet réel du clic. -->
-      <button class="tt-next" :disabled="disabled" :title="nextLabel || 'Tour suivant'" @click="$emit('phase-next')">
+      <button class="tt-next" :disabled="disabled" :title="nextLabel || $t('turnTracker.nextTurn')" @click="$emit('phase-next')">
         <span aria-hidden="true">&rarr;</span>
         <span v-if="nextLabel" class="tt-next-label">{{ nextLabel }}</span>
       </button>

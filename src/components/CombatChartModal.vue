@@ -48,8 +48,8 @@ onUnmounted(() => {
 <template>
   <div class="chart-modal" :class="{ dragging }" :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
     @pointerdown="onDragStart">
-    <div class="chart-header">Table de combat</div>
-    <img class="chart-image" :src="src" alt="Table de combat" draggable="false" />
+    <div class="chart-header">{{ $t('toolbar.combatChart') }}</div>
+    <img class="chart-image" :src="src" :alt="$t('toolbar.combatChart')" draggable="false" />
   </div>
 </template>
 

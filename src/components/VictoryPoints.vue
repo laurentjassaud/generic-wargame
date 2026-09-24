@@ -15,6 +15,9 @@
 // l'intention "change" (`{ side, value }` — la valeur VOULUE, au parent d'en
 // faire ce qu'il veut).
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 
 const props = defineProps({
   // Camps à afficher, dans l'ordre : `[{ key, label }]` (cf.
@@ -48,20 +51,18 @@ function onInput(key, event) {
   emit('change', { side: key, value: Math.max(0, value) })
 }
 
-const title = computed(() => (props.editable
-  ? 'Points de victoire — à tenir à la main'
-  : 'Points de victoire — tenus par le moteur'))
+const title = computed(() => (props.editable ? t('victory.manualTitle') : t('victory.engineTitle')))
 </script>
 
 <template>
   <div v-if="sides.length" class="victory-points" :title="title">
-    <span class="vp-label">Points de victoire</span>
+    <span class="vp-label">{{ t('victory.title') }}</span>
     <div v-for="side in sides" :key="side.key" class="vp-row">
       <span class="vp-side">{{ side.label }}</span>
-      <button v-if="editable" type="button" class="vp-step" @click="step(side.key, -1)" aria-label="Retirer un point">−</button>
+      <button v-if="editable" type="button" class="vp-step" @click="step(side.key, -1)" :aria-label="t('victory.removePoint')">−</button>
       <input class="vp-value" type="number" min="0" :value="scoreOf(side.key)" :readonly="!editable"
         :tabindex="editable ? 0 : -1" @change="onInput(side.key, $event)" />
-      <button v-if="editable" type="button" class="vp-step" @click="step(side.key, 1)" aria-label="Ajouter un point">+</button>
+      <button v-if="editable" type="button" class="vp-step" @click="step(side.key, 1)" :aria-label="t('victory.addPoint')">+</button>
     </div>
   </div>
 </template>
