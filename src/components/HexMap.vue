@@ -57,6 +57,7 @@ import PhaseBlockedModal from './PhaseBlockedModal.vue'
 import BugReportModal from './BugReportModal.vue'
 import { APP_VERSION, REPORT_ENTRIES } from '../lib/bugReport.js'
 import MoveTimer from './MoveTimer.vue'
+import LanguageSwitcher from './LanguageSwitcher.vue'
 
 const props = defineProps({
   module: { type: Object, required: true }, // cf. src/modules/*.json — { boardGame, name, map: {...} }
@@ -3419,7 +3420,7 @@ function onMapDragEnd() {
             <MoveTimer v-for="side in turnOrder" :key="side" :duration-seconds="moveTimerSeconds"
               :started-at="moveTimerSide === side ? moveTimerStartedAt : null" :used-ms="blitzUsedMs[side] ?? 0"
               :label="sideLabel(side)" always-visible @expired="onMoveTimeUp(side)" />
-            <span v-if="blitzLoser" class="game-over-tag">Partie terminée — {{ sideLabel(blitzLoser) }} perd au temps</span>
+            <span v-if="blitzLoser" class="game-over-tag">{{ $t('toolbar.gameOverTag', { side: sideLabel(blitzLoser) }) }}</span>
           </template>
           <MoveTimer v-else :duration-seconds="moveTimerSeconds" :started-at="moveTimerStartedAt"
             @expired="onMoveTimeUp" />
@@ -3436,41 +3437,42 @@ function onMapDragEnd() {
       </div>
 
       <div class="controls">
-        <label :title="!assisted ? 'Grille désactivée en partie libre' : ''">
-          <input type="checkbox" v-model="showGrid" :disabled="!assisted"> grille
+        <label :title="!assisted ? $t('toolbar.gridDisabled') : ''">
+          <input type="checkbox" v-model="showGrid" :disabled="!assisted"> {{ $t('toolbar.grid') }}
         </label>
-        <label><input type="checkbox" v-model="showLabels"> coordonnées</label>
-        <label><input type="checkbox" v-model="showCalib"> calibration</label>
-        <label><input type="checkbox" v-model="debug"> debug</label>
+        <label><input type="checkbox" v-model="showLabels"> {{ $t('toolbar.coordinates') }}</label>
+        <label><input type="checkbox" v-model="showCalib"> {{ $t('toolbar.calibration') }}</label>
+        <label><input type="checkbox" v-model="debug"> {{ $t('toolbar.debug') }}</label>
         <button type="button" class="toggle-btn" :class="{ active: !showCounters }"
           @click="showCounters = !showCounters">
-          {{ showCounters ? 'Cacher les pions' : 'Afficher les pions' }}
+          {{ showCounters ? $t('toolbar.hideCounters') : $t('toolbar.showCounters') }}
         </button>
         <button v-if="assisted" type="button" class="toggle-btn" :disabled="!moveHistory.length || inputLocked || phase !== 0"
           @click="undoLastMove">
-          ↩ Retour arrière
+          {{ $t('toolbar.undo') }}
         </button>
         <button v-if="!assisted" type="button" class="toggle-btn" :class="{ active: !showRollModal }"
           @click="showRollModal = !showRollModal">
-          {{ showRollModal ? 'Cacher le dé' : 'Afficher le dé' }}
+          {{ showRollModal ? $t('toolbar.hideDie') : $t('toolbar.showDie') }}
         </button>
         <button v-if="movementChartSrc" type="button" class="toggle-btn" :class="{ active: showMovementChart }"
           @click="showMovementChart = !showMovementChart">
-          Table des mouvements
+          {{ $t('toolbar.movementChart') }}
         </button>
         <button v-if="combatChartSrc" type="button" class="toggle-btn" :class="{ active: showCombatChart }"
           @click="showCombatChart = !showCombatChart">
-          Table de combat
+          {{ $t('toolbar.combatChart') }}
         </button>
-        <button type="button" class="toggle-btn" title="Ouvrir un rapport de bug sur GitHub, avec un export de la partie"
+        <button type="button" class="toggle-btn"
+          :title="$t('toolbar.bugReportTitle')"
           @click="openBugReport">
-          Signaler un bug
+          {{ $t('toolbar.bugReport') }}
         </button>
         <div v-if="replayEntries.length" class="replay-ctl">
           <span class="replay-pos">{{ replayIndex }} / {{ replayEntries.length }}</span>
-          <button type="button" class="toggle-btn replay-btn" title="Lecture : avancer d'une ligne"
+          <button type="button" class="toggle-btn replay-btn" :title="$t('toolbar.replayStep')"
             :disabled="replayIndex >= replayEntries.length" @click="stepReplay">▶</button>
-          <button type="button" class="toggle-btn replay-btn" title="Avance rapide : aller à la fin"
+          <button type="button" class="toggle-btn replay-btn" :title="$t('toolbar.replayEnd')"
             :disabled="replayIndex >= replayEntries.length" @click="fastForwardReplay">⏭</button>
         </div>
         <div class="zoom-ctl">
@@ -3478,6 +3480,7 @@ function onMapDragEnd() {
           <span>{{ Math.round(zoom * 100) }}%</span>
           <button @click="zoomIn">+</button>
         </div>
+        <LanguageSwitcher />
       </div>
     </header>
 
