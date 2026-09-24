@@ -147,6 +147,7 @@
 import { computed, ref, watch } from 'vue'
 import { hexDistance, neighborsOf } from './hex.js'
 import { isArtillery, isFighter } from './units.js'
+import { t } from '../i18n/index.js'
 
 // Seules les vraies unités comptent (occupation d'un hex, ennemis...) — ni
 // les marqueurs (DZ...), ni les pions de soutien : cf. lib/units.js::isFighter.
@@ -468,7 +469,7 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
     if (!red) return false
     queue.value = [{ ...task, total: red.total }, ...queue.value.slice(1)]
     notes.value = [...notes.value,
-      `${unit.name} : retraite réduite de ${task.total} à ${red.total} hex (${red.reason}${auto ? ', faute de retraite possible' : ''})`]
+      t('retreatNotes.reduced', { unit: unit.name, from: task.total, to: red.total, reason: red.reason + (auto ? `, ${t('retreatNotes.noOtherWay')}` : '') })]
     return true
   }
 
@@ -495,13 +496,13 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
         // Mieux vaut une retraite raccourcie qu'une élimination : le joueur
         // prendrait forcément la réduction — on l'applique et on réévalue.
         if (applyReduction(true)) continue
-        notes.value = [...notes.value, `${unit.name} ne peut pas retraiter : éliminé`]
+        notes.value = [...notes.value, t('retreatNotes.cannotRetreat', { unit: unit.name })]
         addPor(unit) // l'hex qu'elle occupait est libéré
-        eliminateUnit(unit, 'retraite impossible')
+        eliminateUnit(unit, t('retreatNotes.noRetreat'))
       } else if (unit) {
         notes.value = [...notes.value, task.total === 0
-          ? `${unit.name} reste en place (retraite annulée)`
-          : `${unit.name} a retraité de ${task.total} hex`]
+          ? t('retreatNotes.stays', { unit: unit.name })
+          : t('retreatNotes.retreated', { unit: unit.name, n: task.total })]
       }
       queue.value = queue.value.slice(1)
     }
@@ -540,9 +541,9 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
     }))
     const eliminated = effect.eliminate === 'defenders' ? defenders : effect.eliminate === 'attackers' ? attackers : []
     for (const unit of eliminated) {
-      notes.value = [...notes.value, `${unit.name} éliminé`]
+      notes.value = [...notes.value, t('log.eliminated', { unit: unit.name })]
       addPor(unit) // l'hex qu'elle occupait est libéré
-      eliminateUnit(unit, `résultat ${code}`)
+      eliminateUnit(unit, t('retreatNotes.result', { code }))
     }
     queue.value = [...(defenderHexes > 0 ? defTasks(defenderHexes) : []), ...(attackerHexes > 0 ? atkTasks(attackerHexes) : [])]
     settle()
@@ -619,7 +620,7 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
         if (!friend) continue
         const silenced = isArtillery(friend)
         notes.value = [...notes.value,
-          `${friend.name} refoulé d'un hex pour laisser passer ${unit.name}${silenced ? ' (ne pourra plus tirer pendant cette phase)' : ''}`]
+          t('retreatNotes.pushed', { unit: friend.name, by: unit.name }) + (silenced ? ` ${t('log.noFire')}` : '')]
         displaceUnit(friend, push.to, { by: unit, noFire: silenced })
       }
     }
@@ -719,7 +720,7 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
     const moved = [...visited.value.entries()].filter(([, visitedHexes]) => visitedHexes.size > 1)
     for (const [id, visitedHexes] of moved) {
       const unit = unitOf(id)
-      if (unit) notes.value = [...notes.value, `${unit.name} a avancé de ${visitedHexes.size - 1} hex`]
+      if (unit) notes.value = [...notes.value, t('retreatNotes.advanced', { unit: unit.name, n: visitedHexes.size - 1 })]
     }
     advancing.value = false
     advancerId.value = null

@@ -4,6 +4,32 @@
   "favicon": "/modules/arnhem/favicon.ico",
   "movementChart": "/modules/arnhem/images/movement-chart.png",
   "combatChart": "/modules/arnhem/images/combat-chart.png",
+  "i18n": {
+    "en": {
+      "Alliés": "Allies",
+      "Allemands": "Germans",
+      "Soutien allié": "Allied support",
+      "Historique": "Historical",
+      "Placement libre": "Free setup",
+      "pont de canal": "canal bridge",
+      "pont de chemin de fer": "railroad bridge",
+      "au-dela de la Waal": "beyond the Waal",
+      "au-dela du Neder Rijn": "beyond the Neder Rijn",
+      "lisière nord": "north edge",
+      "lisière sud": "south edge",
+      "hexside de pont": "bridge hexside",
+      "hexside de ruisseau": "stream hexside",
+      "Attaquant éliminé": "Attacker eliminated",
+      "L'attaquant recule d'1 hex": "Attacker retreats 1 hex",
+      "L'attaquant recule de 2 hex": "Attacker retreats 2 hexes",
+      "Attaquant et défenseur reculent d'1 hex (défenseur en premier)": "Attacker and defender retreat 1 hex (defender first)",
+      "Le défenseur recule d'1 hex": "Defender retreats 1 hex",
+      "Le défenseur recule de 2 hex": "Defender retreats 2 hexes",
+      "Le défenseur recule de 3 hex": "Defender retreats 3 hexes",
+      "Le défenseur recule de 4 hex": "Defender retreats 4 hexes",
+      "Défenseur éliminé": "Defender eliminated"
+    }
+  },
   "map": {
     "url": "/modules/arnhem/images/arnhem-map.jpg",
     "imageWidth": 3300,

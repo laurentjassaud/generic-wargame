@@ -134,6 +134,7 @@ import { isFighter } from './units.js'
 import { isAirborneEntry } from './setup.js'
 import { resolveRules, resolveTurnStructure } from './rules.js'
 import { resolveEdges } from './edges.js'
+import { t } from '../i18n/index.js'
 
 // Les types d'unité motorisées/blindées, les terrains qui leur sont
 // interdits et la limite d'empilement ne sont plus codés ici : ils viennent
@@ -412,25 +413,31 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // Arnhem), qui seul voit sa phase Combat suivie d'une "Fin de tour" (cf.
   // section ci-dessus pour le détail des 4 transitions). Une phase que le
   // module ne déclare pas (cf. `structure`) n'a pas de marqueur.
-  const PHASE_LABEL = { [PHASE_AIRBORNE]: 'Airborne', 0: 'Mouvement', 1: 'Combat', 2: 'Fin de tour' }
-  const phaseLabels = computed(() => {
+  //
+  // La liste est d'abord construite en CLÉS de phase (`phaseKeys`, stables),
+  // puis traduite dans la langue de l'interface (`phaseLabels`, cf.
+  // src/i18n, section `phases`) : le marqueur allumé se retrouve par sa clé
+  // (cf. `phaseIndex`), jamais par son libellé, qui change avec la langue.
+  const PHASE_KEY = { [PHASE_AIRBORNE]: 'airborne', 0: 'movement', 1: 'combat', 2: 'endOfTurn' }
+  const phaseKeys = computed(() => {
     if (!assisted.value) return []
-    const labels = ['Mouvement']
-    if (structure.combatPhase) labels.push('Combat')
-    if (structure.endOfTurnPhase && turnTrackerRef.value?.isLastSideOfTurn) labels.push('Fin de tour')
+    const keys = ['movement']
+    if (structure.combatPhase) keys.push('combat')
+    if (structure.endOfTurnPhase && turnTrackerRef.value?.isLastSideOfTurn) keys.push('endOfTurn')
     // Tour commencé par une phase Airborne : son marqueur en tête.
-    if (airborneThisStep.value) labels.unshift('Airborne')
-    return labels
+    if (airborneThisStep.value) keys.unshift('airborne')
+    return keys
   })
+  const phaseLabels = computed(() => phaseKeys.value.map((key) => t(`phases.${key}`)))
 
   // Index du marqueur ALLUMÉ dans `phaseLabels` (cf. TurnTracker.vue, prop
-  // `phaseIndex`) : la position du libellé de la phase en cours dans cette
-  // liste — qui dépend des marqueurs présents (Airborne en tête décale tout
+  // `phaseIndex`) : la position de la phase en cours dans cette liste (par
+  // sa clé, cf. `phaseKeys`) — qui dépend des marqueurs présents (Airborne en tête décale tout
   // d'un cran ; une phase Combat absente fait remonter la Fin de tour).
   // `null` hors mode Assisté.
   const phaseIndex = computed(() => {
     if (!assisted.value) return null
-    return phaseLabels.value.indexOf(PHASE_LABEL[phaseStep.value])
+    return phaseKeys.value.indexOf(PHASE_KEY[phaseStep.value])
   })
 
   // Dès que le camp/tour actif change — que ce soit via NOTRE propre appel
@@ -493,17 +500,20 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // l'utilisateur sache toujours à l'avance ce que le prochain clic va
   // déclencher (cf. les 3 cas listés plus haut). `null` hors mode Assisté :
   // TurnTracker.vue retombe alors sur son titre par défaut ("Tour suivant").
+  // Libellés traduits dans la langue de l'interface (cf. src/i18n, section
+  // `phaseButton`) : "Nouvelle phase", "Autre joueur", "Fin de tour",
+  // "Nouveau tour".
   const nextLabel = computed(() => {
     if (!assisted.value) return null
     // Airborne -> Mouvement, ou Mouvement -> Combat : même camp, même tour.
-    if (phaseStep.value === PHASE_AIRBORNE) return 'Nouvelle phase'
-    if (phaseStep.value === 0) return structure.combatPhase ? 'Nouvelle phase' : sideEndLabel()
+    if (phaseStep.value === PHASE_AIRBORNE) return t('phaseButton.newPhase')
+    if (phaseStep.value === 0) return structure.combatPhase ? t('phaseButton.newPhase') : sideEndLabel()
     // Fin de la dernière phase du camp (Combat) : cf. `sideEndLabel`.
     if (phaseStep.value === 1) return sideEndLabel()
     // phaseStep === 2 : Fin de tour, uniquement atteignable pour le dernier
     // camp de l'ordre (cf. `advance` ci-dessous) — le clic suivant boucle
     // forcément sur le 1er camp de l'ordre, donc sur un nouveau tour.
-    return 'Nouveau tour'
+    return t('phaseButton.newTurn')
   })
 
   /** Libellé du bouton quand le camp actif termine SA DERNIÈRE PHASE (le
@@ -512,8 +522,8 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  en a une (cas 3 ci-dessus), sinon il fait directement commencer le tour
    *  suivant ; les autres camps rendent la main au camp suivant (cas 2). */
   function sideEndLabel() {
-    if (!turnTrackerRef.value?.isLastSideOfTurn) return 'Autre joueur'
-    return structure.endOfTurnPhase ? 'Fin de tour' : 'Nouveau tour'
+    if (!turnTrackerRef.value?.isLastSideOfTurn) return t('phaseButton.otherPlayer')
+    return structure.endOfTurnPhase ? t('phases.endOfTurn') : t('phaseButton.newTurn')
   }
 
   /** Ce que fait le bouton quand le camp actif termine SA DERNIÈRE PHASE (cf.

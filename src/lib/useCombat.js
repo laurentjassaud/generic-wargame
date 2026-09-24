@@ -168,6 +168,7 @@ import { hexId } from './calibration.js'
 import { neighborsOf } from './hex.js'
 import { isArtillery, isFighter, isSupport } from './units.js'
 import { referenceColumn, rowCells } from './combatTable.js'
+import { t, mt } from '../i18n/index.js'
 
 // --- Table de combat (CRT) -----------------------------------------------------
 //
@@ -886,12 +887,12 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
       const first = kinds[0]
       const substitute = first ? table.edgeRows[first] : null
       if (substitute && kinds.every((kind) => kind === first)) {
-        return { row: rowByKey(substitute.row), reason: substitute.reason ?? `hexside (${first})` }
+        return { row: rowByKey(substitute.row), reason: mt(substitute.reason) ?? `hexside (${first})` }
       }
     }
     const type = terrain?.grid?.[hexId(targetHex.col + 1, targetHex.row)]
-    const label = terrain?.types?.[type]?.label ?? type ?? 'non déclaré'
-    return { row: rowForTerrain(type), reason: `terrain de l'hex (${label})${noHexside ? ", attaque d'artillerie et/ou de soutien seuls" : ''}` }
+    const label = mt(terrain?.types?.[type]?.label) ?? type ?? t('combatRow.undeclared')
+    return { row: rowForTerrain(type), reason: t('combatRow.hexTerrain', { label }) + (noHexside ? `, ${t('combatRow.rangedOnly')}` : '') }
   }
 
   /** Ligne de la table applicable au combat, et pourquoi (affiché dans la
@@ -911,7 +912,7 @@ export function useCombat(assisted, phase, counters, canControl, terrain, combat
       if (!best || targetRow.row.shift > best.row.shift) best = { ...targetRow, hex: hexId(targetHex.col + 1, targetHex.row) }
     }
     if (list.length === 1) return { row: best.row, reason: best.reason }
-    return { row: best.row, reason: `${best.hex}, ${best.reason} — la plus favorable au défenseur` }
+    return { row: best.row, reason: t('combatRow.best', { hex: best.hex, reason: best.reason }) }
   })
 
   function rowByKey(key) {

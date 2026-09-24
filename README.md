@@ -154,6 +154,20 @@ renoncer tant que la réponse n'est pas arrivée (`game:fpf-cancel`). Le
 serveur garde la négociation en cours (`fpfRequest`) pour qu'une page
 rechargée la retrouve.
 
+## Langue de l'interface
+
+Sélecteur **FR / EN** dans la barre d'outils du plateau et en haut des autres
+écrans (`LanguageSwitcher.vue`). Par défaut, la langue du navigateur
+(français s'il le demande, anglais sinon) ; le choix du joueur est ensuite
+mémorisé. Les textes vivent dans `src/i18n/fr.js` et `src/i18n/en.js`
+(vue-i18n), avec les mêmes clés.
+- Le **journal** reste dans la langue où il a été écrit : chaque ligne est
+  rédigée dans la langue en cours au moment de l'évènement.
+- Les noms d'**unités** et de **lieux** ne sont pas traduits.
+- Les autres libellés d'un module (camps, scénarios, zones, résultats de
+  combat…) sont écrits en français dans son JSON ; leur traduction se donne
+  dans son dictionnaire `i18n` (cf. ci-dessous).
+
 ## Anatomie d'un module
 
 ```
@@ -168,6 +182,7 @@ Champs du JSON (cf. `arnhem.json`) :
 | Champ | Contenu |
 |---|---|
 | `boardGame`, `name`, `favicon` | Identité (titre de page, icône d'onglet) |
+| `i18n` | Traductions des libellés du module, par langue et indexées par le texte français : `{"en": {"Alliés": "Allies"}}` — un libellé absent reste en français (cf. `src/i18n/index.js::mt`) |
 | `movementChart`, `combatChart` | Images des tables, affichables en jeu |
 | `map` | `url`, `imageWidth/Height`, `cols`, `rows`, `evenColMinus` (colonnes décalées amputées d'une ligne), `removedHexes`, `calibration` (x0/y0/colStep/a/rowStep, en pixels de l'image) |
 | `combat` | Table de combat : `die`, colonnes de différentiel, lignes de terrain (décalage), substitutions par hexside, résultats, libellés et **effets** de chaque résultat (retraite, élimination), avance après combat — cf. `src/lib/combatTable.js` ; sans table, pas de combat |
@@ -198,12 +213,13 @@ exprimer) vivent dans un composable dédié inscrit dans le registre
 ```
 src/
 ├── views/        GamesList, CreateGame, LocalGameSetup, DemoPlay (plateau local), RoomLobby (plateau en ligne)
+├── i18n/         textes de l'interface (fr.js, en.js), langue courante, libellés des modules
 ├── components/   HexMap (plateau et orchestration), TurnTracker, SupportTracker, Counter,
 │                 ReinforcementsPanel, EliminatedPanel, JournalPanel, SidePanel, CombatModal,
 │                 BridgeModal, VictoryPoints, VictoryModal, PhaseBlockedModal, MoveTimer,
 │                 RollModal, MovementChartModal,
 │                 CombatChartModal,
-│                 CalibrationPanel, ContextMenu, GameSetupSteps
+│                 CalibrationPanel, ContextMenu, GameSetupSteps, LanguageSwitcher
 └── lib/
     ├── useAssisted.js   mode Assisté : phases, MP/terrain, ZOC, empilement, congestion
     ├── useCombat.js     cibles/attaquants, lecture de la table, combats obligatoires, FPF

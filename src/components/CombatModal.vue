@@ -347,7 +347,7 @@ onUnmounted(() => {
     <p class="cm-diff">
       {{ t('combat.differential') }} <b>{{ differential > 0 ? '+' + differential : differential }}</b>
       <span v-if="terrainRow" class="cm-reason">
-        — {{ mt(terrainRow.row.label) }} ({{ mt(terrainRow.reason) }}), {{ t('combat.column', { n: column }) }}
+        — {{ mt(terrainRow.row.label) }} ({{ terrainRow.reason }}), {{ t('combat.column', { n: column }) }}
       </span>
     </p>
 

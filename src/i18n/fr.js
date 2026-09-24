@@ -399,6 +399,32 @@ export default {
     timeUp: 'Temps écoulé — {side} perd la partie',
   },
 
+  phaseButton: {
+    newPhase: 'Nouvelle phase',
+    newTurn: 'Nouveau tour',
+    otherPlayer: 'Autre joueur',
+  },
+
+  combatRow: {
+    undeclared: 'non déclaré',
+    hexTerrain: "terrain de l'hex ({label})",
+    rangedOnly: "attaque d'artillerie et/ou de soutien seuls",
+    best: '{hex}, {reason} — la plus favorable au défenseur',
+  },
+
+  retreatNotes: {
+    cityRule: 'hex City (règle Arnhem)',
+    reduced: '{unit} : retraite réduite de {from} à {to} hex ({reason})',
+    noOtherWay: 'faute de retraite possible',
+    cannotRetreat: '{unit} ne peut pas retraiter : éliminé',
+    noRetreat: 'retraite impossible',
+    stays: '{unit} reste en place (retraite annulée)',
+    retreated: '{unit} a retraité de {n} hex',
+    result: 'résultat {code}',
+    pushed: "{unit} refoulé d'un hex pour laisser passer {by}",
+    advanced: '{unit} a avancé de {n} hex',
+  },
+
   toolbar: {
     gameOverTag: 'Partie terminée — {side} perd au temps',
     gridDisabled: 'Grille désactivée en partie libre',

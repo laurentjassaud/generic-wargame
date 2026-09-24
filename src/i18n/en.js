@@ -397,6 +397,32 @@ export default {
     timeUp: 'Time is up — {side} loses the game',
   },
 
+  phaseButton: {
+    newPhase: 'Next phase',
+    newTurn: 'New turn',
+    otherPlayer: 'Other player',
+  },
+
+  combatRow: {
+    undeclared: 'undeclared',
+    hexTerrain: 'hex terrain ({label})',
+    rangedOnly: 'artillery and/or support attack only',
+    best: '{hex}, {reason} — the most favorable to the defender',
+  },
+
+  retreatNotes: {
+    cityRule: 'City hex (Arnhem rule)',
+    reduced: '{unit}: retreat reduced from {from} to {to} hex(es) ({reason})',
+    noOtherWay: 'no retreat possible otherwise',
+    cannotRetreat: '{unit} cannot retreat: eliminated',
+    noRetreat: 'no retreat possible',
+    stays: '{unit} stays in place (retreat cancelled)',
+    retreated: '{unit} retreated {n} hex(es)',
+    result: 'result {code}',
+    pushed: '{unit} pushed one hex to let {by} through',
+    advanced: '{unit} advanced {n} hex(es)',
+  },
+
   toolbar: {
     gameOverTag: 'Game over — {side} loses on time',
     gridDisabled: 'Grid disabled in free play',

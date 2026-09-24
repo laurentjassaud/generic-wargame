@@ -103,6 +103,7 @@ import { hexId } from './calibration.js'
 import { hexDistance, neighborsOf } from './hex.js'
 import { isAirborneEntry } from './setup.js'
 import { isArtillery } from './units.js'
+import { t } from '../i18n/index.js'
 
 // Identifiant du module concerné, tel qu'il figure dans
 // public/modules/index.json. Exporté pour que l'appelant puisse, s'il le
@@ -643,7 +644,7 @@ export function useArnhem(moduleId, ctx = {}) {
     // RESTANT, au plus 2 hex.
     const total = Math.max(task.done, minimum, task.total - 2)
     if (total >= task.total) return null // rien à gagner
-    return { total, reason: 'hex City (règle Arnhem)' }
+    return { total, reason: t('retreatNotes.cityRule') }
   }
 
   return {
