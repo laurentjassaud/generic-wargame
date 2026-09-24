@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import GameSetupSteps from '../components/GameSetupSteps.vue'
+import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import { defaultSettings, timingNeedsValue } from '../lib/gameSettings.js'
 
 const router = useRouter()
@@ -35,15 +36,18 @@ function start() {
 
 <template>
   <div class="wizard">
-    <h1>Partie en local</h1>
-    <p class="step-indicator">Étape {{ step }} / {{ totalSteps }}</p>
+    <div class="page-head">
+      <h1>{{ $t('localGame.title') }}</h1>
+      <LanguageSwitcher />
+    </div>
+    <p class="step-indicator">{{ $t('setup.stepOf', { step, total: totalSteps }) }}</p>
 
     <GameSetupSteps v-model:module-id="selectedModuleId" v-model:settings="settings" :step="step" />
 
     <div class="actions">
-      <button type="button" :disabled="step === 1" @click="back">Retour</button>
-      <button v-if="step < totalSteps" type="button" :disabled="!canNext" @click="next">Suivant</button>
-      <button v-else type="button" :disabled="!canNext" @click="start">Lancer la partie</button>
+      <button type="button" :disabled="step === 1" @click="back">{{ $t('common.back') }}</button>
+      <button v-if="step < totalSteps" type="button" :disabled="!canNext" @click="next">{{ $t('common.next') }}</button>
+      <button v-else type="button" :disabled="!canNext" @click="start">{{ $t('localGame.start') }}</button>
     </div>
   </div>
 </template>
@@ -53,6 +57,12 @@ function start() {
   max-width: 480px;
   margin: 0 auto;
   padding: 24px 16px;
+}
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .step-indicator {
   color: var(--light-text-muted);

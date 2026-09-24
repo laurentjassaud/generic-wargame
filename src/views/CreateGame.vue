@@ -3,6 +3,8 @@ import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { createGame } from '../lib/api.js'
 import GameSetupSteps from '../components/GameSetupSteps.vue'
+import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import { t, errorMessage, registerModuleTexts } from '../i18n/index.js'
 import { defaultSettings, timingNeedsValue } from '../lib/gameSettings.js'
 
 const router = useRouter()
@@ -34,9 +36,10 @@ watch(selectedModuleId, async (id) => {
     const index = await fetch('/modules/index.json', { cache: 'no-store' }).then((res) => res.json())
     const entry = index.find((moduleEntry) => moduleEntry.id === id)
     selectedModule.value = await fetch(entry.path, { cache: 'no-store' }).then((res) => res.json())
+    registerModuleTexts(selectedModule.value)
     maxPlayers.value = playerRange.value.min
   } catch {
-    error.value = "Impossible de charger ce module."
+    error.value = t('setup.moduleLoadError')
   } finally {
     loadingModule.value = false
   }
@@ -73,7 +76,7 @@ async function submit() {
     })
     router.push({ name: 'games-list', query: { created: game.id, passcode: game.passcode } })
   } catch (requestError) {
-    error.value = requestError.message
+    error.value = errorMessage(requestError.message)
   } finally {
     submitting.value = false
   }
@@ -82,33 +85,36 @@ async function submit() {
 
 <template>
   <div class="wizard">
-    <h1>Créer une partie en ligne</h1>
-    <p class="step-indicator">Étape {{ step }} / {{ totalSteps }}</p>
+    <div class="page-head">
+      <h1>{{ $t('createGame.title') }}</h1>
+      <LanguageSwitcher />
+    </div>
+    <p class="step-indicator">{{ $t('setup.stepOf', { step, total: totalSteps }) }}</p>
 
     <GameSetupSteps v-model:module-id="selectedModuleId" v-model:settings="settings" :step="step">
       <template #module-status>
-        <p v-if="loadingModule">Chargement du module…</p>
+        <p v-if="loadingModule">{{ $t('setup.loadingModule') }}</p>
       </template>
     </GameSetupSteps>
 
     <section v-if="step === 5">
-      <h2>5. Nombre de joueurs</h2>
+      <h2>{{ $t('createGame.playerCount') }}</h2>
       <input
         type="number"
         v-model.number="maxPlayers"
         :min="playerRange.min"
         :max="playerRange.max"
       />
-      <p class="hint">Entre {{ playerRange.min }} et {{ playerRange.max }} joueurs pour ce module.</p>
+      <p class="hint">{{ $t('createGame.playerRange', playerRange) }}</p>
     </section>
 
     <p v-if="error" class="error">{{ error }}</p>
 
     <div class="actions">
-      <button type="button" :disabled="step === 1" @click="back">Retour</button>
-      <button v-if="step < totalSteps" type="button" :disabled="!canNext" @click="next">Suivant</button>
+      <button type="button" :disabled="step === 1" @click="back">{{ $t('common.back') }}</button>
+      <button v-if="step < totalSteps" type="button" :disabled="!canNext" @click="next">{{ $t('common.next') }}</button>
       <button v-else type="button" :disabled="!canNext || submitting" @click="submit">
-        {{ submitting ? 'Création…' : 'Créer la partie' }}
+        {{ submitting ? $t('createGame.creating') : $t('createGame.create') }}
       </button>
     </div>
   </div>
@@ -119,6 +125,12 @@ async function submit() {
   max-width: 480px;
   margin: 0 auto;
   padding: 24px 16px;
+}
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .step-indicator {
   color: var(--light-text-muted);

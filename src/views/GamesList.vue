@@ -3,6 +3,8 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { listGames } from '../lib/api.js'
 import { resolveSettings, describeSettings } from '../lib/gameSettings.js'
+import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import { errorMessage } from '../i18n/index.js'
 
 const infoOf = (game) => describeSettings(resolveSettings(game.settings ?? { scenario: game.scenarioId }))
 
@@ -24,7 +26,7 @@ async function refresh() {
   try {
     games.value = await listGames()
   } catch (requestError) {
-    error.value = requestError.message
+    error.value = errorMessage(requestError.message)
   } finally {
     loading.value = false
   }
@@ -36,19 +38,20 @@ onMounted(refresh)
 <template>
   <div class="games-list">
     <header>
-      <h1>Parties en cours</h1>
+      <h1>{{ $t('gamesList.title') }}</h1>
       <div class="header-links">
-        <router-link to="/local" class="button-link secondary">Partie en local</router-link>
-        <router-link to="/create" class="button-link">Créer une partie</router-link>
+        <router-link to="/local" class="button-link secondary">{{ $t('gamesList.localGame') }}</router-link>
+        <router-link to="/create" class="button-link">{{ $t('gamesList.createGame') }}</router-link>
+        <LanguageSwitcher />
       </div>
     </header>
 
-    <p v-if="justCreated" class="passcode-banner">
-      Partie créée ! Code d'accès pour la room <strong>{{ justCreated.id }}</strong> :
-      <strong>{{ justCreated.passcode }}</strong> — transmets-le aux autres joueurs.
-    </p>
+    <i18n-t v-if="justCreated" keypath="gamesList.created" tag="p" class="passcode-banner">
+      <template #room><strong>{{ justCreated.id }}</strong></template>
+      <template #passcode><strong>{{ justCreated.passcode }}</strong></template>
+    </i18n-t>
 
-    <p v-if="loading">Chargement…</p>
+    <p v-if="loading">{{ $t('common.loading') }}</p>
     <p v-if="error" class="error">{{ error }}</p>
 
     <ul v-if="!loading && games.length" class="cards">
@@ -56,20 +59,20 @@ onMounted(refresh)
         <router-link :to="{ name: 'room-lobby', params: { id: game.id } }" class="card">
           <div class="card-title">{{ game.moduleId }} — {{ infoOf(game).scenario }}</div>
           <div class="card-meta">
-            {{ game.playerCount }} / {{ game.maxPlayers }} joueurs · {{ game.status }}
+            {{ $t('gamesList.players', { count: game.playerCount, max: game.maxPlayers }) }} · {{ $te(`gamesList.status.${game.status}`) ? $t(`gamesList.status.${game.status}`) : game.status }}
           </div>
           <div class="card-variants">
-            Partie {{ infoOf(game).party }} · Timing {{ infoOf(game).timing
+            {{ $t('summary.party', { name: infoOf(game).party }) }} · {{ $t('summary.timing', { name: infoOf(game).timing })
             }}<template v-if="infoOf(game).timingValue"> ({{ infoOf(game).timingValue }} min)</template><template
-              v-if="infoOf(game).weather"> · Météo</template>
+              v-if="infoOf(game).weather"> · {{ $t('setup.weather') }}</template>
           </div>
           <div v-if="game.variants.length" class="card-variants">
-            Variantes : {{ game.variants.join(', ') }}
+            {{ $t('gamesList.variants', { list: game.variants.join(', ') }) }}
           </div>
         </router-link>
       </li>
     </ul>
-    <p v-else-if="!loading">Aucune partie en cours. Crée-en une !</p>
+    <p v-else-if="!loading">{{ $t('gamesList.empty') }}</p>
   </div>
 </template>
 

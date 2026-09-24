@@ -2,6 +2,10 @@
 // communs à la partie en local (LocalGameSetup.vue -> DemoPlay.vue) et à la
 // partie en ligne (CreateGame.vue -> serveur -> RoomLobby.vue). Mêmes clés que
 // lib/journalStorage.js::SETTING_KEYS, toutes en chaînes (format de l'URL).
+// Les libellés sont des getters : lus au moment de l'affichage, ils suivent
+// la langue choisie (cf. src/i18n).
+
+import { t, mt } from '../i18n/index.js'
 
 // --- Scénarios ---------------------------------------------------------------
 // Chaque module déclare ses scénarios (`module.scenarios`, cf. arnhem.json) :
@@ -16,7 +20,7 @@
 //   - 'free'  : placement au choix des joueurs — pas encore implémenté.
 export const SUPPORTED_DEPLOYMENTS = ['setup']
 // Scénario d'un module qui n'en déclare aucun : le déploiement du module.
-export const DEFAULT_SCENARIOS = [{ id: 'historique', label: 'Historique', deployment: 'setup' }]
+export const DEFAULT_SCENARIOS = [{ id: 'historique', get label() { return t('settings.scenarioHistorical') }, deployment: 'setup' }]
 
 /** Scénarios proposés pour `module` (JSON du module, ou `null` s'il n'est pas
  *  encore connu) — `DEFAULT_SCENARIOS` à défaut —, chacun complété :
@@ -31,7 +35,7 @@ export function scenarioOptions(module) {
       const deployment = scenario.deployment ?? 'setup'
       return {
         id: scenario.id,
-        label: scenario.label ?? scenario.id,
+        get label() { return mt(scenario.label) ?? scenario.id },
         deployment,
         weather: scenario.weather === 'required' ? 'required' : 'optional',
         available: scenario.available !== false && SUPPORTED_DEPLOYMENTS.includes(deployment),
@@ -42,22 +46,22 @@ export function scenarioOptions(module) {
 // Météo : aucune règle du moteur ne la lit encore — proposée grisée.
 export const WEATHER_AVAILABLE = false
 export const PARTY_OPTIONS = [
-  { id: 'libre', label: 'Libre' },
-  { id: 'assiste', label: 'Assisté' },
+  { id: 'libre', get label() { return t('settings.party.libre') } },
+  { id: 'assiste', get label() { return t('settings.party.assiste') } },
 ]
 export const TIMING_OPTIONS = [
-  { id: 'libre', label: 'Libre' },
-  { id: 'limite', label: 'Limité' },
-  { id: 'blitz', label: 'Blitz' },
+  { id: 'libre', get label() { return t('settings.timing.libre') } },
+  { id: 'limite', get label() { return t('settings.timing.limite') } },
+  { id: 'blitz', get label() { return t('settings.timing.blitz') } },
 ]
 export const TIMING_HINTS = {
-  limite: 'Conseillé : 4 à 8 minutes / tour',
-  blitz: 'Conseillé : 40 à 60 minutes',
+  get limite() { return t('settings.timingHint.limite') },
+  get blitz() { return t('settings.timingHint.blitz') },
 }
 // Le chronomètre (Limité, Blitz) porte sur la phase de MOUVEMENT (cf.
 // MoveTimer.vue), qui n'existe qu'en partie Assistée : en partie Libre, il
-// n'y a pas de phases, donc pas de chronomètre possible.
-export const TIMING_LOCKED_HINT = 'Le chronomètre porte sur la phase de Mouvement : disponible en partie Assistée uniquement.'
+// n'y a pas de phases, donc pas de chronomètre possible (cf. le message
+// `settings.timingLocked`).
 export function timingAllowed(party) {
   return party === 'assiste'
 }

@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { PARTY_OPTIONS, TIMING_OPTIONS, TIMING_HINTS, TIMING_LOCKED_HINT, WEATHER_AVAILABLE, timingNeedsValue, timingAllowed, scenarioOptions } from '../lib/gameSettings.js'
+import { PARTY_OPTIONS, TIMING_OPTIONS, TIMING_HINTS, WEATHER_AVAILABLE, timingNeedsValue, timingAllowed, scenarioOptions } from '../lib/gameSettings.js'
+import { registerModuleTexts } from '../i18n/index.js'
 
 // Étapes 1 à 4 de la création d'une partie, communes au local
 // (LocalGameSetup.vue) et à l'en ligne (CreateGame.vue) : module, scénario,
@@ -30,6 +31,7 @@ watch([moduleId, modules], async ([id, list]) => {
   if (!entry) { moduleData.value = null; return }
   try {
     const data = await fetch(entry.path, { cache: 'no-store' }).then((res) => res.json())
+    registerModuleTexts(data)
     if (moduleId.value === id) moduleData.value = data
   } catch {
     moduleData.value = null
@@ -89,7 +91,7 @@ function chooseModule(mod) {
 
 <template>
   <section v-if="step === 1">
-    <h2>1. Choisir le module</h2>
+    <h2>{{ $t('setup.chooseModule') }}</h2>
     <ul class="choice-list">
       <li v-for="mod in modules" :key="mod.id">
         <button
@@ -99,7 +101,7 @@ function chooseModule(mod) {
           @click="chooseModule(mod)"
         >
           {{ mod.name }}
-          <span v-if="mod.active === false" class="badge">Bientôt disponible</span>
+          <span v-if="mod.active === false" class="badge">{{ $t('common.comingSoon') }}</span>
         </button>
       </li>
     </ul>
@@ -107,33 +109,33 @@ function chooseModule(mod) {
   </section>
 
   <section v-else-if="step === 2">
-    <h2>2. Choisir le scénario</h2>
+    <h2>{{ $t('setup.chooseScenario') }}</h2>
     <ul class="choice-list">
       <li v-for="opt in scenarios" :key="opt.id">
         <button type="button" :class="{ selected: scenario === opt.id }" :disabled="opt.available === false"
           @click="scenario = opt.id">
           {{ opt.label }}
-          <span v-if="opt.available === false" class="badge">Bientôt disponible</span>
+          <span v-if="opt.available === false" class="badge">{{ $t('common.comingSoon') }}</span>
         </button>
       </li>
     </ul>
   </section>
 
   <section v-else-if="step === 3">
-    <h2>3. Options</h2>
+    <h2>{{ $t('setup.options') }}</h2>
     <label class="checkbox-choice" :class="{ disabled: !WEATHER_AVAILABLE || weatherRequired }">
       <input type="checkbox" v-model="weather" :disabled="!WEATHER_AVAILABLE || weatherRequired" />
-      Météo
-      <span v-if="!WEATHER_AVAILABLE" class="badge">Bientôt disponible</span>
+      {{ $t('setup.weather') }}
+      <span v-if="!WEATHER_AVAILABLE" class="badge">{{ $t('common.comingSoon') }}</span>
     </label>
-    <p v-if="!WEATHER_AVAILABLE" class="hint">Les règles de météo ne sont pas encore appliquées par le moteur.</p>
-    <p v-else-if="weatherRequired" class="hint">Obligatoire pour ce scénario.</p>
+    <p v-if="!WEATHER_AVAILABLE" class="hint">{{ $t('setup.weatherNotYet') }}</p>
+    <p v-else-if="weatherRequired" class="hint">{{ $t('setup.weatherRequired') }}</p>
   </section>
 
   <section v-else-if="step === 4">
-    <h2>4. Mode de jeu</h2>
+    <h2>{{ $t('setup.gameMode') }}</h2>
 
-    <h3>Partie</h3>
+    <h3>{{ $t('setup.party') }}</h3>
     <ul class="choice-list">
       <li v-for="opt in PARTY_OPTIONS" :key="opt.id">
         <label class="checkbox-choice">
@@ -143,7 +145,7 @@ function chooseModule(mod) {
       </li>
     </ul>
 
-    <h3>Timing</h3>
+    <h3>{{ $t('setup.timing') }}</h3>
     <ul class="choice-list">
       <li v-for="opt in TIMING_OPTIONS" :key="opt.id">
         <label class="checkbox-choice" :class="{ disabled: opt.id !== 'libre' && !timingAllowed(party) }">
@@ -152,10 +154,10 @@ function chooseModule(mod) {
         </label>
       </li>
     </ul>
-    <p v-if="!timingAllowed(party)" class="hint">{{ TIMING_LOCKED_HINT }}</p>
+    <p v-if="!timingAllowed(party)" class="hint">{{ $t('settings.timingLocked') }}</p>
     <div v-if="timingNeedsValue(timing)" class="timing-value">
       <label>
-        {{ timing === 'limite' ? 'Durée de la phase de mouvement (minutes)' : 'Temps total de mouvement par joueur (minutes)' }}
+        {{ timing === 'limite' ? $t('setup.limitedDuration') : $t('setup.blitzDuration') }}
         <input type="number" min="1" v-model.number="timingValue" />
       </label>
       <p class="hint">{{ TIMING_HINTS[timing] }}</p>

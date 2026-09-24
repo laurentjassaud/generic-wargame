@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import HexMap from '../components/HexMap.vue'
 import { stashPendingReplay } from '../lib/journalStorage.js'
 import { resolveSettings, describeSettings, scenarioOptions } from '../lib/gameSettings.js'
+import { registerModuleTexts } from '../i18n/index.js'
 
 // Chargement direct d'un module en local, sans passer par le lobby
 // multijoueur — pratique pour tester le moteur de jeu (HexMap) seul.
@@ -47,7 +48,9 @@ onMounted(async () => {
   const index = await fetch('/modules/index.json', { cache: 'no-store' }).then((response) => response.json())
   const entry = index.find((moduleEntry) => moduleEntry.id === moduleId.value) ?? index.find((moduleEntry) => moduleEntry.id === 'arnhem')
   const res = await fetch(entry.path, { cache: 'no-store' })
-  module.value = await res.json()
+  const data = await res.json()
+  registerModuleTexts(data)
+  module.value = data
   document.title = module.value.name
   if (module.value.favicon) {
     let link = document.querySelector('link[rel="icon"]')
@@ -64,8 +67,8 @@ onMounted(async () => {
 <template>
   <div class="app">
     <p v-if="module" class="setup-banner">
-      Scénario : {{ settingsInfo.scenario }}<span v-if="settingsInfo.weather"> · Météo activée</span>
-      · Partie {{ settingsInfo.party }} · Timing {{ settingsInfo.timing
+      {{ $t('summary.scenario', { name: settingsInfo.scenario }) }}<span v-if="settingsInfo.weather"> · {{ $t('summary.weatherOn') }}</span>
+      · {{ $t('summary.party', { name: settingsInfo.party }) }} · {{ $t('summary.timing', { name: settingsInfo.timing })
       }}<span v-if="settingsInfo.timingValue"> ({{ settingsInfo.timingValue }} min)</span>
     </p>
     <HexMap v-if="module" :key="mapKey" :module="module" :module-id="moduleId" :assisted="isAssistedParty"

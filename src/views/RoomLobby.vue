@@ -4,6 +4,8 @@ import { getGame } from '../lib/api.js'
 import { getSocket } from '../lib/socket.js'
 import HexMap from '../components/HexMap.vue'
 import { resolveSettings, describeSettings, scenarioOptions } from '../lib/gameSettings.js'
+import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import { t, mt, errorMessage, registerModuleTexts } from '../i18n/index.js'
 
 const props = defineProps({ id: { type: String, required: true } })
 
@@ -40,25 +42,15 @@ const isAssistedParty = computed(() => settings.value.party === 'assiste')
 // réglages d'une partie en ligne sont fixés pour tous les joueurs.
 const replayWarning = ref('')
 function onRestartWith() {
-  replayWarning.value = "Cette sauvegarde a été jouée avec d'autres réglages que cette partie en ligne : impossible de la reprendre ici."
+  replayWarning.value = t('lobby.replayWarning')
 }
 
 // Libellé lisible d'un camp (ex. "german" -> "Allemands", cf. module
 // turnTrack.sides) ; à défaut, la clé du camp telle quelle.
-const sideLabel = (side) => moduleData.value?.turnTrack?.sides?.[side]?.label ?? side
+const sideLabel = (side) => mt(moduleData.value?.turnTrack?.sides?.[side]?.label) ?? side
 
 const takenSides = computed(() => new Set((room.value?.players ?? gameSummary.value?.players ?? []).map((player) => player.side)))
 const availableSides = computed(() => sides.value.filter((side) => !takenSides.value.has(side)))
-
-const ERROR_MESSAGES = {
-  'not-found': "Cette partie n'existe pas (ou plus).",
-  'bad-passcode': "Code d'accès incorrect.",
-  'room-full': 'Cette room est déjà complète.',
-  'side-taken': 'Ce camp est déjà pris par un autre joueur.',
-  'already-started': 'Cette partie a déjà commencé.',
-  'bad-name': 'Pseudo invalide (1 à 40 caractères).',
-  'bad-side': 'Camp invalide.',
-}
 
 async function loadGame() {
   loadingGame.value = true
@@ -71,6 +63,7 @@ async function loadGame() {
     if (modEntry) {
       const modRes = await fetch(modEntry.path, { cache: 'no-store' })
       const mod = await modRes.json()
+      registerModuleTexts(mod)
       moduleData.value = mod
       // Un module regroupe ses factions (ex: commonwealth/us/pol) sous des
       // camps jouables via `sides` (ex: {"german":["german"],"allies":[...]})
@@ -80,11 +73,11 @@ async function loadGame() {
       const factions = Object.keys(mod.counters ?? {})
       const campNames = mod.sides ? Object.keys(mod.sides) : factions
       const missing = Math.max(0, gameSummary.value.maxPlayers - campNames.length)
-      sides.value = [...campNames, ...Array.from({ length: missing }, (_, campIndex) => `Camp ${campNames.length + campIndex + 1}`)]
+      sides.value = [...campNames, ...Array.from({ length: missing }, (_, campIndex) => t('lobby.genericSide', { n: campNames.length + campIndex + 1 }))]
     }
     form.value.side = availableSides.value[0] ?? ''
   } catch (error) {
-    loadError.value = error.message
+    loadError.value = errorMessage(error.message)
   } finally {
     loadingGame.value = false
   }
@@ -163,7 +156,7 @@ function doJoin({ passcode, name, side, playerId }, silent = false) {
         else sharedJournal.value = ack.journal ?? []
         localStorage.setItem(storageKey, JSON.stringify({ passcode, name, side, playerId: ack.playerId }))
       } else if (!silent) {
-        joinError.value = ERROR_MESSAGES[ack.error] ?? ack.error
+        joinError.value = errorMessage(ack.error)
       }
       resolve(ack)
     })
@@ -270,55 +263,58 @@ onUnmounted(() => {
 <template>
   <div class="room-lobby">
     <div class="panel">
-      <router-link to="/" class="back-link">&larr; Retour aux parties</router-link>
+      <div class="page-head">
+        <router-link to="/" class="back-link">&larr; {{ $t('lobby.backToGames') }}</router-link>
+        <LanguageSwitcher />
+      </div>
 
-      <p v-if="loadingGame">Chargement de la partie…</p>
+      <p v-if="loadingGame">{{ $t('lobby.loadingGame') }}</p>
       <p v-else-if="loadError" class="error">{{ loadError }}</p>
 
       <template v-else>
         <h1>{{ gameSummary.moduleId }} — {{ settingsInfo.scenario }}</h1>
         <p class="setup-summary">
-          Scénario : {{ settingsInfo.scenario }}<span v-if="settingsInfo.weather"> · Météo activée</span>
-          · Partie {{ settingsInfo.party }} · Timing {{ settingsInfo.timing
+          {{ $t('summary.scenario', { name: settingsInfo.scenario }) }}<span v-if="settingsInfo.weather"> · {{ $t('summary.weatherOn') }}</span>
+          · {{ $t('summary.party', { name: settingsInfo.party }) }} · {{ $t('summary.timing', { name: settingsInfo.timing })
           }}<span v-if="settingsInfo.timingValue"> ({{ settingsInfo.timingValue }} min)</span>
         </p>
         <p v-if="replayWarning" class="error">{{ replayWarning }}</p>
 
         <form v-if="!joined" class="join-form" @submit.prevent="submitJoin">
           <label>
-            Pseudo
+            {{ $t('lobby.nickname') }}
             <input v-model.trim="form.name" required />
           </label>
           <label>
-            Camp
+            {{ $t('lobby.side') }}
             <select v-model="form.side" required>
               <option v-for="side in sides" :key="side" :value="side" :disabled="takenSides.has(side)">
-                {{ sideLabel(side) }}{{ takenSides.has(side) ? ' (pris)' : '' }}
+                {{ sideLabel(side) }}{{ takenSides.has(side) ? ` (${$t('lobby.taken')})` : '' }}
               </option>
             </select>
           </label>
           <label>
-            Code d'accès
+            {{ $t('lobby.passcode') }}
             <input v-model.trim="form.passcode" required maxlength="6" style="text-transform: uppercase" />
           </label>
           <p v-if="joinError" class="error">{{ joinError }}</p>
-          <button type="submit" :disabled="joining">{{ joining ? 'Connexion…' : 'Rejoindre la room' }}</button>
+          <button type="submit" :disabled="joining">{{ joining ? $t('lobby.joining') : $t('lobby.join') }}</button>
         </form>
 
         <div v-else class="lobby">
           <p v-if="room.status === 'lobby'" class="status waiting">
-            En attente des autres joueurs… ({{ room.players.length }} / {{ gameSummary.maxPlayers }})
+            {{ $t('lobby.waiting', { count: room.players.length, max: gameSummary.maxPlayers }) }}
           </p>
-          <p v-else class="status started">La partie est lancée !</p>
+          <p v-else class="status started">{{ $t('lobby.started') }}</p>
 
           <ul class="players">
             <li v-for="player in room.players" :key="player.id" :class="{ me: player.side === mySide }">
               <strong>{{ player.name }}</strong>
               <span class="side">{{ sideLabel(player.side) }}</span>
-              <span v-if="player.side === mySide" class="you">(vous)</span>
+              <span v-if="player.side === mySide" class="you">({{ $t('lobby.you') }})</span>
               <span class="presence" :class="player.connected ? 'online' : 'offline'">
                 <span class="dot" />
-                {{ player.connected ? 'en ligne' : 'hors ligne' }}
+                {{ player.connected ? $t('lobby.online') : $t('lobby.offline') }}
               </span>
             </li>
           </ul>
@@ -377,6 +373,12 @@ onUnmounted(() => {
 .setup-summary {
   color: var(--light-text-soft);
   font-size: var(--font-size-em-090);
+}
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .back-link {
   color: var(--light-accent);
