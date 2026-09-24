@@ -20,6 +20,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { reactive, ref, computed, toRef, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { t, mt } from '../i18n/index.js'
 import { hexId, DEFAULT_CALIBRATION } from '../lib/calibration.js'
 import { neighborsOf, hexDistance } from '../lib/hex.js'
 import { hexExists, removedHexSet } from '../lib/mapShape.js'
@@ -175,7 +176,7 @@ let deploymentLogged = props.online
 function logDeploymentOnce() {
   if (deploymentLogged || isReplaying.value || !journalRef.value) return
   deploymentLogged = true
-  journalRef.value.log('setup', 'Déploiement initial', { positions: initialDeployment })
+  journalRef.value.log('setup', t('log.deployment'), { positions: initialDeployment })
   // Puis le tour de départ (cf. `initialTurnEntry`) : TurnTracker.vue
   // l'annonce (évènement `change`) pendant son propre montage, AVANT que le
   // journal ne soit monté — onTurnChange ne peut donc pas l'inscrire, on le
@@ -186,8 +187,7 @@ function logDeploymentOnce() {
 /** Entrée de journal d'un changement de tour (cf. onTurnChange) — factorisée
  *  pour l'entrée du tour de DÉPART de la partie (cf. `initialTurnEntry`). */
 function turnEntryOf(info) {
-  const label = props.module.turnTrack?.sides?.[info.activeSideKey]?.label ?? info.activeSideKey
-  return { kind: 'turn', text: `Tour ${info.turn} — ${label}`, data: { step: info.step } }
+  return { kind: 'turn', text: t('log.turn', { turn: info.turn, side: sideLabel(info.activeSideKey) }), data: { step: info.step } }
 }
 // Tour en cours au lancement de la partie, figé au montage (cf. onMounted —
 // `turnInfo` est alors déjà renseigné par TurnTracker.vue), pour être inscrit
@@ -316,7 +316,7 @@ function cancelMovement(id) {
     if (arrivalMp !== null) setSpentMp(counter.id, arrivalMp)
     counter.col = start.col; counter.row = start.row
     emit('move', { counterId: counter.id, col: counter.col, row: counter.row })
-    log('move', `${counter.name} : mouvement annulé, retour en ${hexId(counter.col + 1, counter.row)}${mpText(counter)}`,
+    log('move', t('log.moveCancelled', { unit: counter.name, hex: hexId(counter.col + 1, counter.row) }) + mpText(counter),
       { counterId: counter.id, col: counter.col, row: counter.row, mp: spentMpOf(counter) })
   }
   clearMoved(id)
@@ -369,7 +369,7 @@ function undoLastMove() {
 // Assisté, cf. template) : en mode Assisté, les jets sont faits par l'appli
 // elle-même là où la règle en demande un (cf. CombatModal.vue).
 const showRollModal = ref(true)
-function onDiceRoll(value) { log('dice', `Lancer de dé : ${value}`) }
+function onDiceRoll(value) { log('dice', t('log.dice', { value })) }
 
 // --- Table des mouvements : widget flottant du même genre (cf.
 // MovementChartModal.vue), affiché uniquement si le module déclare l'image
@@ -747,7 +747,7 @@ const {
     // Entrée `retreat` (et non `move`) : une retraite n'est ni un mouvement
     // de la phase (pas de liseré, pas d'annulation possible), ni une
     // dépense de MP — cf. applyReplayEntry.
-    log('retreat', `${unit.name} retraite en ${hexId(unit.col + 1, unit.row)} (${done}/${total})`,
+    log('retreat', t('log.retreat', { unit: unit.name, hex: hexId(unit.col + 1, unit.row), done, total }),
       { counterId: unit.id, col: unit.col, row: unit.row })
   },
   // Ami REFOULÉ d'un hex par une unité qui retraite : même traitement qu'un
@@ -758,8 +758,8 @@ const {
     if (noFire) artillery.markDisplaced(unit.id)
     unit.col = hex.col; unit.row = hex.row
     emit('move', { counterId: unit.id, col: unit.col, row: unit.row })
-    log('retreat', `${unit.name} refoulé en ${hexId(unit.col + 1, unit.row)} pour laisser passer ${by.name}`
-      + (noFire ? ' (ne pourra plus tirer pendant cette phase)' : ''),
+    log('retreat', t('log.displaced', { unit: unit.name, hex: hexId(unit.col + 1, unit.row), by: by.name })
+      + (noFire ? ` ${t('log.noFire')}` : ''),
       { counterId: unit.id, col: unit.col, row: unit.row, displaced: true, ...(noFire ? { noFire: true } : {}) })
   },
   eliminateUnit: (unit, reason) => eliminateCounter(unit.id, reason),
@@ -775,7 +775,7 @@ const {
   advanceUnit: (unit, hex) => {
     unit.col = hex.col; unit.row = hex.row
     emit('move', { counterId: unit.id, col: unit.col, row: unit.row })
-    log('advance', `${unit.name} avance en ${hexId(unit.col + 1, unit.row)} (après combat)`,
+    log('advance', t('log.advance', { unit: unit.name, hex: hexId(unit.col + 1, unit.row) }),
       { counterId: unit.id, col: unit.col, row: unit.row })
   },
 })
@@ -815,7 +815,7 @@ function settleRiverAssaults() {
     // Déjà éliminée par le résultat du combat : rien à ajouter.
     if (!unit) continue
     if (unit.col === assault.col && unit.row === assault.row) continue
-    eliminateCounter(unit.id, "n'a pas pris l'hex de son assaut de rivière")
+    eliminateCounter(unit.id, t('log.riverAssaultFailed'))
   }
 }
 
@@ -856,11 +856,15 @@ function onCombatFight() {
     diff: combatOutcome.diff, row: combatOutcome.rowKey, die: combatOutcome.die, result: combatOutcome.result,
   }
   const supportText = supportCounters.value.length
-    ? ` ; soutien ${supportAttacking.value ? 'en attaque' : 'en défense'} `
-      + (supportBarred.value ? 'sans effet' : `+${supportStrength.value}`)
+    ? ` ; ${t(supportAttacking.value ? 'log.supportAttacking' : 'log.supportDefending')} `
+      + (supportBarred.value ? t('log.supportNoEffect') : `+${supportStrength.value}`)
     : ''
-  log('combat', `Combat sur ${combatTargetHexLabels.value.join(', ')} (${names}${fpf ? ` ; FPF ${fpf}` : ''}${supportText}) : `
-    + `différentiel ${diff}, ${combatOutcome.rowLabel}, dé ${combatOutcome.die} → ${combatOutcome.result} (${combatOutcome.resultLabel})`, data)
+  log('combat', t('log.combat', {
+    hexes: combatTargetHexLabels.value.join(', '),
+    forces: `${names}${fpf ? ` ; FPF ${fpf}` : ''}${supportText}`,
+    diff, row: mt(combatOutcome.rowLabel), die: combatOutcome.die, result: combatOutcome.result,
+    label: mt(combatOutcome.resultLabel),
+  }), data)
   artillery.applyCombat(data)
   // APRÈS le journal du combat : les éliminations/retraites qui suivent s'y
   // inscrivent donc bien après lui. Une artillerie qui a tiré à distance
@@ -884,7 +888,7 @@ function onCombatFight() {
     if (!retreatActive.value) settleRiverAssaults()
     return
   }
-  log('info', `${combatOutcome.result} sans effet sur le défenseur : attaque faite uniquement d'artillerie et/ou de soutien`)
+  log('info', t('log.defenderImmune', { result: combatOutcome.result }))
   if (hitsAttackers) startRetreat(combatOutcome.result, contactAttackers, [], combatTargetHexes.value)
   if (!retreatActive.value) settleRiverAssaults()
 }
@@ -1049,12 +1053,12 @@ const demolitionMarks = computed(() => demolition.marks.value.map((mark) => {
  *  applyReplayEntry) et par l'autre joueur en ligne. `die` vaut `null` quand
  *  le camp décideur a renoncé sans lancer le dé. */
 function logDemolition(bridge, { die = null, destroyed }) {
-  const where = bridge.hexes.join('-')
+  const params = { bridge: mt(bridge.label), where: bridge.hexes.join('-'), die }
   const what = destroyed
-    ? `${bridge.label} ${where} détruit (dé ${die})`
+    ? t('log.bridgeDestroyed', params)
     : die != null
-      ? `${bridge.label} ${where} : la destruction échoue (dé ${die}), il tiendra jusqu'à la fin de la partie`
-      : `${bridge.label} ${where} laissé intact : il ne pourra plus être détruit`
+      ? t('log.bridgeFailed', params)
+      : t('log.bridgeSpared', params)
   log('demolition', what, { edge: bridge.key, die, destroyed })
 }
 
@@ -1159,7 +1163,7 @@ const repairWaiting = computed(() => !!repairAsked.value && !repairShown.value)
 /** Journalise une réparation — entrée `repair`, relue au rejeu (cf.
  *  applyReplayEntry) et par l'autre joueur en ligne. */
 function logRepair(bridge) {
-  log('repair', `${bridge.label} ${bridge.hexes.join('-')} réparé par ${bridge.unit?.name ?? 'le génie'}`,
+  log('repair', t('log.bridgeRepaired', { bridge: mt(bridge.label), where: bridge.hexes.join('-'), unit: bridge.unit?.name ?? t('log.engineers') }),
     { edge: bridge.key, unitId: bridge.unit?.id ?? null })
 }
 
@@ -1434,7 +1438,7 @@ function placeDefenderSupports(ids) {
     const placed = { ...token, col: target.col, row: target.row }
     counters.value.push(placed)
     emit('move', { counterId: placed.id, col: placed.col, row: placed.row })
-    log('support', `${placed.name} engagé en défense en ${hexId(placed.col + 1, placed.row)}`,
+    log('support', t('log.supportDefense', { unit: placed.name, hex: hexId(placed.col + 1, placed.row) }),
       { counterId: placed.id, col: placed.col, row: placed.row, counter: placed })
   }
 }
@@ -1476,7 +1480,8 @@ function mpText(counter) {
   return spent == null ? '' : ` (MP ${spent}/${counter.mov})`
 }
 
-const PHASE_NAMES = ['Mouvement', 'Combat', 'Fin de tour']
+// Nom de la phase 0, 1 ou 2 dans la langue courante (cf. src/i18n, `phases`).
+const phaseName = (index) => t(`phases.${['movement', 'combat', 'endOfTurn'][index]}`)
 
 // --- Signaler un bug (cf. BugReportModal.vue, lib/bugReport.js) : état du
 // jeu capturé au clic sur le bouton — `{ snapshot, context }` — ou `null`
@@ -1512,14 +1517,14 @@ function openBugReport() {
   const settings = Object.entries(props.settings ?? {})
     .filter(([, value]) => value !== '' && value != null)
     .map(([key, value]) => `${key} ${value}`).join(' · ')
-  const phaseName = phase.value == null ? '—' : phase.value === PHASE_AIRBORNE ? 'Airborne' : PHASE_NAMES[phase.value]
+  const currentPhaseName = phase.value == null ? '—' : phase.value === PHASE_AIRBORNE ? 'Airborne' : phaseName(phase.value)
   const side = turnInfo.value.activeSideKey
   bugReport.value = {
     snapshot: bugReportSnapshot(),
     context: [
       ['Module', `${props.module.name} (${props.moduleId || '?'})`],
       ['Réglages', settings || 'inconnus'],
-      ['Situation', `tour ${turnInfo.value.turn}${side ? ` — ${sideLabel(side)}` : ''}, phase ${phaseName}`],
+      ['Situation', `tour ${turnInfo.value.turn}${side ? ` — ${sideLabel(side)}` : ''}, phase ${currentPhaseName}`],
       ['Partie', props.online ? `en ligne${props.localSide ? `, camp ${sideLabel(props.localSide)}` : ''}` : 'locale'],
       ['Page', `${location.pathname}${location.search}`],
     ],
@@ -1545,9 +1550,9 @@ const showPhaseBlocked = ref(false)
 const phaseBlockedView = computed(() => {
   if (airborneToDrop.value.length) {
     return {
-      title: 'Largage incomplet',
+      title: t('airborne.incompleteTitle'),
       stacks: airborneToDropByZone.value,
-      stackMessage: 'La vague de ce tour doit être larguée avant la fin de la phase Airborne :',
+      stackMessage: t('airborne.incompleteMessage'),
     }
   }
   return { engagements: pendingEngagements.value, stacks: stackedHexes.value }
@@ -1591,7 +1596,7 @@ function onPhaseNext() {
     // `advance()` (fin de phase Mouvement, cf. syncMoveTimer, synchrone) —
     // rétablies au rejeu du journal et transmises aux autres joueurs.
     const blitzUsed = isBlitz.value ? { ...blitzUsedMs.value } : undefined
-    log('phase', `Phase : ${PHASE_NAMES[phase.value]}`, { phase: phase.value, step: turnInfo.value.step, blitzUsed })
+    log('phase', t('log.phase', { name: phaseName(phase.value) }), { phase: phase.value, step: turnInfo.value.step, blitzUsed })
     // Multijoueur : les autres joueurs suivent la phase (cf. applyRemotePhase).
     emit('phase', { phase: phase.value, step: turnInfo.value.step, blitzUsed })
   }
@@ -1677,10 +1682,10 @@ function startSharedJournal(list) {
   } else {
     // Déploiement ET tour de départ (cf. `initialTurnEntry`), retenus ou
     // rejetés ensemble par le serveur (premier arrivé).
-    const t = new Date().toLocaleTimeString('fr-FR')
+    const time = new Date().toLocaleTimeString('fr-FR')
     emit('deploy', {
-      setup: { uid: newUid(), t, kind: 'setup', text: 'Déploiement initial', data: { positions: initialDeployment } },
-      turn: initialTurnEntry ? { uid: newUid(), t, ...initialTurnEntry } : null,
+      setup: { uid: newUid(), t: time, kind: 'setup', text: t('log.deployment'), data: { positions: initialDeployment } },
+      turn: initialTurnEntry ? { uid: newUid(), t: time, ...initialTurnEntry } : null,
     })
   }
 }
@@ -1770,15 +1775,15 @@ const reinforcements = computed(() =>
 // piste de tour l'affiche (`turnTrack.sides[side].label`, ex. "Renfort
 // alliés") — la clé brute du camp à défaut.
 const sideTabLabel = (side) => {
-  const label = props.module.turnTrack?.sides?.[side]?.label
-  return `Renfort ${label ? label.toLowerCase() : side}`
+  const label = mt(props.module.turnTrack?.sides?.[side]?.label) ?? side
+  return t('tabs.sideReinforcements', { side: label.toLowerCase(), Side: label })
 }
 const sidePanelTabs = computed(() => {
   const sides = props.module.sides
   const base = !sides
-    ? [{ key: 'reinforcements', label: 'Renforts' }]
+    ? [{ key: 'reinforcements', label: t('tabs.reinforcements') }]
     : Object.keys(sides).map((side) => ({ key: side, label: sideTabLabel(side) }))
-  return [...base, { key: 'eliminated', label: 'Unités éliminées' }, { key: 'journal', label: 'Journal' }]
+  return [...base, { key: 'eliminated', label: t('tabs.eliminated') }, { key: 'journal', label: t('tabs.journal') }]
 })
 function reinforcementsForTab(key) {
   const sides = props.module.sides
@@ -1813,14 +1818,15 @@ const victoryEditable = computed(() => victory.editable.value)
 
 // Attributions à annoncer (cf. VictoryModal.vue), vidées à l'acquittement.
 const victoryNotice = ref([])
-const victoryNoticeTitle = ref('Points de victoire')
+// Clé du titre de la modale (cf. src/i18n), traduite à l'affichage.
+const victoryNoticeTitle = ref('victory.title')
 
 /** Inscrit `points` au camp `side` et le journalise. `reason` paraît dans le
  *  journal et dans la modale. Renvoie la ligne à annoncer, ou `null`. */
 function awardVictory(side, points, reason) {
   const result = victory.award(side, points)
   if (!result) return null
-  log('victory', `${sideLabel(side)} : +${points} point${points > 1 ? 's' : ''} (${reason}) — total ${result.total}`,
+  log('victory', t('log.victoryAward', { side: sideLabel(side), n: points, reason, total: result.total }, points),
     { side, points, total: result.total, reason })
   return { side, label: sideLabel(side), points, total: result.total, reason }
 }
@@ -1831,7 +1837,7 @@ function onVictoryChange({ side, value }) {
   const result = victory.set(side, value)
   if (!result) return
   const sign = result.delta > 0 ? `+${result.delta}` : String(result.delta)
-  log('victory', `${sideLabel(side)} : ${sign} point${Math.abs(result.delta) > 1 ? 's' : ''} — total ${result.total}`,
+  log('victory', t('log.victorySet', { side: sideLabel(side), n: sign, total: result.total }, Math.abs(result.delta)),
     { side, points: result.delta, total: result.total, reason: 'saisie' })
 }
 
@@ -1841,8 +1847,8 @@ function scoreElimination(counter) {
   if (!props.assisted || !victory.active.value || actionsLocked.value) return
   const award = victory.eliminationAward(sideOfCounter(counter))
   if (!award) return
-  const line = awardVictory(award.side, award.points, `${counter?.name ?? 'unité'} éliminé`)
-  if (line) { victoryNoticeTitle.value = 'Points de victoire'; victoryNotice.value = [line] }
+  const line = awardVictory(award.side, award.points, t('log.unitEliminated', { unit: counter?.name ?? t('log.aUnit') }))
+  if (line) { victoryNoticeTitle.value = 'victory.title'; victoryNotice.value = [line] }
 }
 
 /** Mode Assisté, Fin de tour : positions tenues au-delà des fleuves, et
@@ -1869,7 +1875,7 @@ function scoreEndOfTurn() {
   }
   for (const { zone, count } of held.values()) {
     const line = awardVictory(zone.to, zone.points * count,
-      `${count} unité${count > 1 ? 's' : ''} ${zone.label}`)
+      t('log.unitsInZone', { n: count, zone: mt(zone.label) }, count))
     if (line) lines.push(line)
   }
 
@@ -1879,13 +1885,13 @@ function scoreEndOfTurn() {
     const count = counters.value.filter((counter) => supplyLine.concerns(counter) && cut.has(String(counter.id))).length
     if (count) {
       const line = awardVictory(unsupplied.to, unsupplied.points * count,
-        `${count} unité${count > 1 ? 's' : ''} sans ligne de communication`)
+        t('log.unitsUnsupplied', { n: count }, count))
       if (line) lines.push(line)
     }
   }
 
   if (lines.length) {
-    victoryNoticeTitle.value = 'Fin de tour — points de victoire'
+    victoryNoticeTitle.value = 'victory.endOfTurnTitle'
     victoryNotice.value = lines
   }
 }
@@ -1979,7 +1985,7 @@ function returnCounterToReinforcements(id) {
     resetMp(counter)
     unspendEntryCost(counter)
   }
-  log('return', `${counter?.name ?? id} replacé dans les renforts`, { counterId: id })
+  log('return', t('log.returned', { unit: counter?.name ?? id }), { counterId: id })
 }
 /** "Replacer le pion" sur un pion de soutien : le retire de la carte, ce qui
  *  le remet dans la tablette s'il est du tour courant (cf.
@@ -1991,7 +1997,7 @@ function returnSupportToTray(id) {
   const [counter] = counters.value.splice(counterIndex, 1)
   moveHistory.value = moveHistory.value.filter((move) => String(move.counterId) !== String(id))
   const back = supportTrackerRef.value?.isTurnToken(id)
-  log('support-return', `${counter.name} ${back ? 'replacé dans la tablette' : 'retiré de la carte'}`, { counterId: id })
+  log('support-return', t(back ? 'log.supportBackToTray' : 'log.supportRemoved', { unit: counter.name }), { counterId: id })
 }
 /** Élimine un pion (menu contextuel, ou résultat de combat — cf.
  *  lib/useRetreat.js, qui précise alors pourquoi dans `reason`). */
@@ -1999,8 +2005,8 @@ function eliminateCounter(id, reason) {
   const lost = counters.value.find((counter) => String(counter.id) === String(id))
   const rebuilt = noteElimination(id)
   const counter = allCounters.value.find((counter) => String(counter.id) === String(id))
-  const comeback = rebuilt ? `, se reconstitue et revient au tour ${rebuilt.turn}` : ''
-  log('eliminate', `${counter?.name ?? id} éliminé${reason ? ` (${reason})` : ''}${comeback}`, { counterId: id })
+  const comeback = rebuilt ? t('log.rebuilt', { turn: rebuilt.turn }) : ''
+  log('eliminate', t('log.eliminated', { unit: counter?.name ?? id }) + (reason ? ` (${reason})` : '') + comeback, { counterId: id })
   // Points de victoire (cf. la section du même nom) : une unité qui se
   // reconstitue et revient en renfort n'a pas été perdue, elle ne rapporte
   // rien à l'adversaire.
@@ -2011,25 +2017,25 @@ function onCounterContextMenu(id, ev) {
   // pion à la main désynchroniserait la file des retraites : menu désactivé.
   if (inputLocked.value || retreatActive.value) return
   const items = [
-    { label: 'Replacer le pion', action: () => returnCounterToReinforcements(id) },
-    { label: 'Éliminé', action: () => eliminateCounter(id) },
+    { label: t('menu.putBack'), action: () => returnCounterToReinforcements(id) },
+    { label: t('menu.eliminate'), action: () => eliminateCounter(id) },
   ]
   // Phase Mouvement uniquement (ou partie Libre, sans phases : `phase` vaut
   // `null`) — même raison que "Retour arrière" (cf. `moveHistory`) : en phase
   // Combat, l'unité a pu combattre, retraiter ou avancer depuis.
   if (movedThisTurnIds.value.has(String(id)) && (phase.value === null || phase.value === 0)) {
-    items.push({ label: 'Annuler le mouvement', action: () => cancelMovement(id) })
+    items.push({ label: t('menu.cancelMove'), action: () => cancelMovement(id) })
   }
   // Sortie de carte (cf. section du même nom) : proposée sur une bande de
   // bord, grisée quand la règle l'interdit ici et maintenant.
   const exit = mapExitOffer(counters.value.find((counter) => String(counter.id) === String(id)))
   if (exit) {
     items.push({
-      label: `Sortir de la carte (${exit.cost} MP)`,
+      label: t('menu.exitMap', { cost: exit.cost }),
       disabled: !!exit.blocked,
-      title: exit.blocked === 'zoc' ? "Unité figée dans une zone de contrôle ennemie : elle ne peut pas quitter son hex"
-        : exit.blocked === 'mp' ? `Il lui faut ${exit.cost} MP pour sortir par la ${exit.zone.label}`
-          : `Sort par la ${exit.zone.label} et reviendra en renfort au tour suivant`,
+      title: exit.blocked === 'zoc' ? t('menu.exitZoc')
+        : exit.blocked === 'mp' ? t('menu.exitMp', { cost: exit.cost, zone: mt(exit.zone.label) })
+          : t('menu.exitOk', { zone: mt(exit.zone.label) }),
       action: () => exitMap(id),
     })
   }
@@ -2107,7 +2113,7 @@ function exitMap(id) {
   // Plus rien à annuler pour un pion qui n'est plus sur la carte.
   moveHistory.value = moveHistory.value.filter((move) => String(move.counterId) !== String(id))
   exitedUnits.value = new Map(exitedUnits.value).set(String(id), { zone: offer.zone.id, turn: turnInfo.value.turn })
-  log('exit', `${counter.name} quitte la carte par la ${offer.zone.label} (${from}) — ${offer.cost} MP`,
+  log('exit', t('log.exit', { unit: counter.name, zone: mt(offer.zone.label), from, cost: offer.cost }),
     { counterId: id, zone: offer.zone.id, turn: turnInfo.value.turn, mp: spent })
 }
 
@@ -2129,12 +2135,12 @@ function onSupportContextMenu(id, ev) {
   // Déjà engagé dans un combat résolu (cf. lib/useCombat.js) : il reste sur
   // la carte jusqu'à la fin de la phase, sans quoi il resservirait ailleurs.
   if (hasFought(counters.value.find((counter) => String(counter.id) === String(id)))) return
-  openContextMenu(ev, [{ label: 'Replacer le pion', action: () => returnSupportToTray(id) }])
+  openContextMenu(ev, [{ label: t('menu.putBack'), action: () => returnSupportToTray(id) }])
 }
 function onEliminatedContextMenu(id, ev) {
   if (inputLocked.value) return
   openContextMenu(ev, [
-    { label: 'Replacer le pion', action: () => returnCounterToReinforcements(id) },
+    { label: t('menu.putBack'), action: () => returnCounterToReinforcements(id) },
   ])
 }
 function chooseContextMenuItem(action) {
@@ -2511,7 +2517,7 @@ function placeSelectedSupport(hex) {
   // Même entrée `support` que la pose au glisser-déposer (cf. onMapDrop) :
   // `counter` embarque le pion entier, que le rejeu ne peut pas retrouver
   // dans `allCounters` (pions créés à la volée par la tablette).
-  log('support', `${placed.name} engagé en ${hexId(placed.col + 1, placed.row)}`,
+  log('support', t('log.supportCommitted', { unit: placed.name, hex: hexId(placed.col + 1, placed.row) }),
     { counterId: placed.id, col: placed.col, row: placed.row, counter: placed })
   return true
 }
@@ -2705,13 +2711,13 @@ const onHex = (hex) => {
         // ce tour-ci, cf. lib/useAssisted.js::entryCost) : le journal le
         // signale, avec le coût majoré réellement payé.
         const congestion = paid && paid.cost > paid.baseCost
-          ? ` — hex d'entrée déjà utilisé (${paid.rank}e entrée ce tour) : coût ×${paid.rank} = ${paid.cost} MP au lieu de ${paid.baseCost}`
+          ? ` — ${t('log.congestion', { rank: paid.rank, cost: paid.cost, base: paid.baseCost })}`
           : ''
         // `entry` : il a payé un coût d'entrée — au rejeu, on le repaie pour
         // rétablir aussi la CONGESTION de cet hex (cf. applyReplayEntry, qui
         // recalcule le coût lui-même : `entryRank`/`entryCost` ne sont là que
         // pour information).
-        log('place', `${reinforcement.name} entre en jeu en ${hexId(hex.c + 1, hex.r)}${mpText(placed)}${congestion}`,
+        log('place', t('log.enters', { unit: reinforcement.name, hex: hexId(hex.c + 1, hex.r) }) + mpText(placed) + congestion,
           { counterId: placed.id, col: hex.c, row: hex.r, mp: spentMpOf(placed), entry: paysEntry,
             entryRank: paid?.rank ?? null, entryCost: paid?.cost ?? null })
         // Sélectionné automatiquement après son entrée en jeu, pour pouvoir
@@ -2750,7 +2756,7 @@ const onHex = (hex) => {
       counter.col = hex.c; counter.row = hex.r
       spendMp(counter, hex, fromHex)
       emit('move', { counterId: counter.id, col: counter.col, row: counter.row })
-      const journalId = log('move', `${counter.name} se déplace vers ${hexId(hex.c + 1, hex.r)}${mpText(counter)}`,
+      const journalId = log('move', t('log.moves', { unit: counter.name, hex: hexId(hex.c + 1, hex.r) }) + mpText(counter),
         { counterId: counter.id, col: counter.col, row: counter.row, mp: spentMpOf(counter) })
       pushMoveHistory(counter.id, from, { col: counter.col, row: counter.row }, journalId)
       markMoved(counter.id, from)
@@ -2846,7 +2852,7 @@ function onCounterDragEnd(ev) {
     const from = { col: counter.col, row: counter.row }
     counter.col = hex.col; counter.row = hex.row
     emit('move', { counterId: counter.id, col: counter.col, row: counter.row })
-    const journalId = log(isSupport(counter) ? 'support' : 'move', `${counter.name} déplacé de ${fromLabel} vers ${hexId(counter.col + 1, counter.row)}`, { counterId: counter.id, col: counter.col, row: counter.row })
+    const journalId = log(isSupport(counter) ? 'support' : 'move', t('log.moved', { unit: counter.name, from: fromLabel, to: hexId(counter.col + 1, counter.row) }), { counterId: counter.id, col: counter.col, row: counter.row })
     pushMoveHistory(counter.id, from, { col: counter.col, row: counter.row }, journalId)
     if (!isSupport(counter)) markMoved(counter.id, from)
   }
@@ -2901,7 +2907,7 @@ function onMapDrop(ev) {
       counters.value.push(placed)
       noteMapEntry(placed.id)
       emit('move', { counterId: placed.id, col: placed.col, row: placed.row })
-      log('place', `${placed.name} entre en jeu en ${hexId(placed.col + 1, placed.row)}`,
+      log('place', t('log.enters', { unit: placed.name, hex: hexId(placed.col + 1, placed.row) }),
         { counterId: placed.id, col: placed.col, row: placed.row })
     } else {
       const token = supportTrackerRef.value?.findToken(draggedCounterId.value)
@@ -2914,7 +2920,7 @@ function onMapDrop(ev) {
         // le rejeu ne peut pas les retrouver par id : on embarque l'objet
         // complet dans `data.counter` pour pouvoir le recréer (cf.
         // applyReplayEntry plus bas).
-        log('support', `${placed.name} posé en ${hexId(placed.col + 1, placed.row)}`,
+        log('support', t('log.supportPlaced', { unit: placed.name, hex: hexId(placed.col + 1, placed.row) }),
           { counterId: placed.id, col: placed.col, row: placed.row, counter: placed })
       }
     }
@@ -3322,7 +3328,7 @@ function syncMoveTimer(elapsedMs = 0) {
 watch([moveTimerRunning, () => turnTrackerRef.value?.currentStep], () => syncMoveTimer(), { flush: 'sync' })
 const showTimeUp = ref(false)
 const showGameOver = ref(false)
-const sideLabel = (side) => props.module.turnTrack?.sides?.[side]?.label ?? side
+const sideLabel = (side) => mt(props.module.turnTrack?.sides?.[side]?.label) ?? side
 /** Compteur à zéro (cf. MoveTimer.vue, `expired`). Blitz : le camp `side`
  *  PERD la partie. Limité : le MOUVEMENT S'ARRÊTE (cf. `moveTimeLocked`) —
  *  plus de déplacement, d'entrée de renfort ni de retour arrière, il ne reste
@@ -3346,7 +3352,7 @@ function declareBlitzLoss(loser, { remote = false } = {}) {
   if (!loser || blitzLoser.value === loser) return
   if (blitzLoser.value != null && !remote) return
   blitzLoser.value = loser
-  const text = `Temps écoulé — ${sideLabel(loser)} perd la partie`
+  const text = t('log.timeUp', { side: sideLabel(loser) })
   if (!remote) {
     if (props.online) emit('game-over', { loser, text, t: new Date().toLocaleTimeString('fr-FR') })
     else log('gameover', text, { loser })
@@ -3664,7 +3670,7 @@ function onMapDragEnd() {
     <ContextMenu v-if="contextMenu" :left-px="contextMenu.x" :top-px="contextMenu.y" :items="contextMenu.items"
       @choose="chooseContextMenuItem" @close="closeContextMenu" />
     <StackPopup v-if="hoveredStackCounters.length" :counters="hoveredStackCounters" :anchor="hoveredCounter.anchor"
-      :title="`Hex ${hexId(hoveredCounter.col + 1, hoveredCounter.row)} — ${hoveredStackCounters.length} pions`" />
+      :title="$t('stack.title', { hex: hexId(hoveredCounter.col + 1, hoveredCounter.row), n: hoveredStackCounters.length })" />
 
     <!-- cf. lib/useCombat.js — modale de combat, ouverte par un clic sur une
          unité ennemie en phase Combat. Non bloquante : la carte reste
@@ -3701,24 +3707,23 @@ function onMapDragEnd() {
       @attempt="onRepairAttempt" @decline="onRepairDecline" />
 
     <!-- cf. MoveTimer.vue — timing "Limité" : temps de la phase de Mouvement écoulé. -->
-    <PhaseBlockedModal v-if="showTimeUp" title="Temps imparti terminé" @close="showTimeUp = false">
-      Le temps accordé pour la phase de Mouvement est écoulé : vous ne pouvez plus déplacer
-      d'unité. Passez à la phase suivante.
+    <PhaseBlockedModal v-if="showTimeUp" :title="$t('timeUp.title')" @close="showTimeUp = false">
+      {{ $t('timeUp.limited') }}
     </PhaseBlockedModal>
 
     <!-- cf. lib/useVictoryPoints.js — ce qui vient d'être marqué. -->
-    <VictoryModal :awards="victoryNotice" :title="victoryNoticeTitle" @close="victoryNotice = []" />
+    <VictoryModal :awards="victoryNotice" :title="$t(victoryNoticeTitle)" @close="victoryNotice = []" />
 
     <!-- cf. declareBlitzLoss — Blitz : une pendule est tombée à 0, partie perdue. -->
-    <PhaseBlockedModal v-if="showGameOver && blitzLoser" title="Temps imparti terminé" @close="showGameOver = false">
-      Le temps de mouvement du camp « {{ sideLabel(blitzLoser) }} » est écoulé : ce camp perd la partie.
-      <template v-if="localSide"><br><b>{{ localSide === blitzLoser ? 'Vous avez perdu.' : 'Vous avez gagné !' }}</b></template>
+    <PhaseBlockedModal v-if="showGameOver && blitzLoser" :title="$t('timeUp.title')" @close="showGameOver = false">
+      {{ $t('timeUp.blitz', { side: sideLabel(blitzLoser) }) }}
+      <template v-if="localSide"><br><b>{{ localSide === blitzLoser ? $t('timeUp.youLost') : $t('timeUp.youWon') }}</b></template>
     </PhaseBlockedModal>
 
     <!-- cf. setSelectedCounter — changement de sélection refusé : l'unité
          en cours de mouvement est en overstack avec une unité amie. -->
-    <PhaseBlockedModal v-if="unitStackBlock" title="Mouvement non terminé" :stacks="[unitStackBlock]"
-      stack-message="Cette unité partage son hex avec une unité amie. Déplacez-la (ou annulez son mouvement) avant de passer à une autre unité :"
+    <PhaseBlockedModal v-if="unitStackBlock" :title="$t('unitStack.title')" :stacks="[unitStackBlock]"
+      :stack-message="$t('unitStack.message')"
       @close="unitStackBlock = null" />
 
     <!-- Dé libre : mode Libre uniquement (cf. `showRollModal`). -->

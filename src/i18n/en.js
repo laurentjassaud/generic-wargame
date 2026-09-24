@@ -148,6 +148,7 @@ export default {
 
   victory: {
     title: 'Victory points',
+    endOfTurnTitle: 'End of turn — victory points',
     total: '{side}:',
     manualTitle: 'Victory points — kept by hand',
     engineTitle: 'Victory points — kept by the engine',
@@ -305,6 +306,95 @@ export default {
     advanceOf: 'Advance of {unit}: click a {green} hex, or another victorious unit to end this one.',
     advancePick: 'Advance after combat: click a victorious unit ({green} outline), then a hex of the retreat path.',
     endAdvance: 'End the advance',
+  },
+
+  phases: {
+    airborne: 'Airborne',
+    movement: 'Movement',
+    combat: 'Combat',
+    endOfTurn: 'End of turn',
+  },
+
+  tabs: {
+    reinforcements: 'Reinforcements',
+    sideReinforcements: '{Side} reinforcements',
+    eliminated: 'Eliminated units',
+    journal: 'Log',
+  },
+
+  menu: {
+    putBack: 'Put the counter back',
+    eliminate: 'Eliminated',
+    cancelMove: 'Cancel the move',
+    exitMap: 'Exit the map ({cost} MP)',
+    exitZoc: 'Unit locked in an enemy zone of control: it cannot leave its hex',
+    exitMp: 'It needs {cost} MP to exit by the {zone}',
+    exitOk: 'Exits by the {zone} and will come back as a reinforcement next turn',
+  },
+
+  stack: {
+    title: 'Hex {hex} — {n} counters',
+  },
+
+  airborne: {
+    incompleteTitle: 'Drop not finished',
+    incompleteMessage: "This turn's wave must be dropped before the end of the Airborne phase:",
+  },
+
+  timeUp: {
+    title: 'Time is up',
+    limited: 'The time allowed for the Movement phase is over: you can no longer move any unit. Go on to the next phase.',
+    blitz: 'The movement time of the “{side}” side is over: this side loses the game.',
+    youLost: 'You lost.',
+    youWon: 'You won!',
+  },
+
+  unitStack: {
+    title: 'Move not finished',
+    message: 'This unit shares its hex with a friendly unit. Move it (or cancel its move) before switching to another unit:',
+  },
+
+  log: {
+    deployment: 'Initial deployment',
+    turn: 'Turn {turn} — {side}',
+    phase: 'Phase: {name}',
+    dice: 'Die roll: {value}',
+    moveCancelled: '{unit}: move cancelled, back to {hex}',
+    moves: '{unit} moves to {hex}',
+    moved: '{unit} moved from {from} to {to}',
+    enters: '{unit} enters play at {hex}',
+    congestion: 'entry hex already used (entry #{rank} this turn): cost ×{rank} = {cost} MP instead of {base}',
+    retreat: '{unit} retreats to {hex} ({done}/{total})',
+    displaced: '{unit} pushed to {hex} to let {by} through',
+    noFire: '(cannot fire again this phase)',
+    advance: '{unit} advances to {hex} (after combat)',
+    riverAssaultFailed: 'did not take the hex of its river assault',
+    supportAttacking: 'support attacking',
+    supportDefending: 'support defending',
+    supportNoEffect: 'no effect',
+    combat: 'Combat on {hexes} ({forces}): differential {diff}, {row}, die {die} → {result} ({label})',
+    defenderImmune: '{result} has no effect on the defender: attack made only by artillery and/or support',
+    bridgeDestroyed: '{bridge} {where} destroyed (die {die})',
+    bridgeFailed: '{bridge} {where}: demolition fails (die {die}), it will stand until the end of the game',
+    bridgeSpared: '{bridge} {where} left intact: it can no longer be destroyed',
+    bridgeRepaired: '{bridge} {where} repaired by {unit}',
+    engineers: 'the engineers',
+    supportDefense: '{unit} committed in defense at {hex}',
+    supportCommitted: '{unit} committed at {hex}',
+    supportPlaced: '{unit} placed at {hex}',
+    supportBackToTray: '{unit} put back in the tray',
+    supportRemoved: '{unit} removed from the map',
+    returned: '{unit} put back into the reinforcements',
+    eliminated: '{unit} eliminated',
+    rebuilt: ', rebuilds and comes back on turn {turn}',
+    exit: '{unit} leaves the map by the {zone} ({from}) — {cost} MP',
+    victoryAward: '{side}: +{n} point ({reason}) — total {total} | {side}: +{n} points ({reason}) — total {total}',
+    victorySet: '{side}: {n} point — total {total} | {side}: {n} points — total {total}',
+    unitEliminated: '{unit} eliminated',
+    aUnit: 'unit',
+    unitsInZone: '{n} unit {zone} | {n} units {zone}',
+    unitsUnsupplied: '{n} unit without a line of communication | {n} units without a line of communication',
+    timeUp: 'Time is up — {side} loses the game',
   },
 
   toolbar: {

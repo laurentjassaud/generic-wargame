@@ -150,6 +150,7 @@ export default {
 
   victory: {
     title: 'Points de victoire',
+    endOfTurnTitle: 'Fin de tour — points de victoire',
     total: '{side} :',
     manualTitle: 'Points de victoire — à tenir à la main',
     engineTitle: 'Points de victoire — tenus par le moteur',
@@ -307,6 +308,95 @@ export default {
     advanceOf: 'Avance de {unit} : cliquez sur un hex {green}, ou sur une autre unité victorieuse pour terminer la sienne.',
     advancePick: 'Avance après combat : cliquez sur une unité victorieuse (contour {green}), puis sur un hex du chemin de retraite.',
     endAdvance: "Terminer l'avance",
+  },
+
+  phases: {
+    airborne: 'Airborne',
+    movement: 'Mouvement',
+    combat: 'Combat',
+    endOfTurn: 'Fin de tour',
+  },
+
+  tabs: {
+    reinforcements: 'Renforts',
+    sideReinforcements: 'Renfort {side}',
+    eliminated: 'Unités éliminées',
+    journal: 'Journal',
+  },
+
+  menu: {
+    putBack: 'Replacer le pion',
+    eliminate: 'Éliminé',
+    cancelMove: 'Annuler le mouvement',
+    exitMap: 'Sortir de la carte ({cost} MP)',
+    exitZoc: 'Unité figée dans une zone de contrôle ennemie : elle ne peut pas quitter son hex',
+    exitMp: 'Il lui faut {cost} MP pour sortir par la {zone}',
+    exitOk: 'Sort par la {zone} et reviendra en renfort au tour suivant',
+  },
+
+  stack: {
+    title: 'Hex {hex} — {n} pions',
+  },
+
+  airborne: {
+    incompleteTitle: 'Largage incomplet',
+    incompleteMessage: 'La vague de ce tour doit être larguée avant la fin de la phase Airborne :',
+  },
+
+  timeUp: {
+    title: 'Temps imparti terminé',
+    limited: "Le temps accordé pour la phase de Mouvement est écoulé : vous ne pouvez plus déplacer d'unité. Passez à la phase suivante.",
+    blitz: 'Le temps de mouvement du camp « {side} » est écoulé : ce camp perd la partie.',
+    youLost: 'Vous avez perdu.',
+    youWon: 'Vous avez gagné !',
+  },
+
+  unitStack: {
+    title: 'Mouvement non terminé',
+    message: 'Cette unité partage son hex avec une unité amie. Déplacez-la (ou annulez son mouvement) avant de passer à une autre unité :',
+  },
+
+  log: {
+    deployment: 'Déploiement initial',
+    turn: 'Tour {turn} — {side}',
+    phase: 'Phase : {name}',
+    dice: 'Lancer de dé : {value}',
+    moveCancelled: '{unit} : mouvement annulé, retour en {hex}',
+    moves: '{unit} se déplace vers {hex}',
+    moved: '{unit} déplacé de {from} vers {to}',
+    enters: '{unit} entre en jeu en {hex}',
+    congestion: "hex d'entrée déjà utilisé ({rank}e entrée ce tour) : coût ×{rank} = {cost} MP au lieu de {base}",
+    retreat: '{unit} retraite en {hex} ({done}/{total})',
+    displaced: '{unit} refoulé en {hex} pour laisser passer {by}',
+    noFire: '(ne pourra plus tirer pendant cette phase)',
+    advance: '{unit} avance en {hex} (après combat)',
+    riverAssaultFailed: "n'a pas pris l'hex de son assaut de rivière",
+    supportAttacking: 'soutien en attaque',
+    supportDefending: 'soutien en défense',
+    supportNoEffect: 'sans effet',
+    combat: 'Combat sur {hexes} ({forces}) : différentiel {diff}, {row}, dé {die} → {result} ({label})',
+    defenderImmune: "{result} sans effet sur le défenseur : attaque faite uniquement d'artillerie et/ou de soutien",
+    bridgeDestroyed: '{bridge} {where} détruit (dé {die})',
+    bridgeFailed: "{bridge} {where} : la destruction échoue (dé {die}), il tiendra jusqu'à la fin de la partie",
+    bridgeSpared: '{bridge} {where} laissé intact : il ne pourra plus être détruit',
+    bridgeRepaired: '{bridge} {where} réparé par {unit}',
+    engineers: 'le génie',
+    supportDefense: '{unit} engagé en défense en {hex}',
+    supportCommitted: '{unit} engagé en {hex}',
+    supportPlaced: '{unit} posé en {hex}',
+    supportBackToTray: '{unit} replacé dans la tablette',
+    supportRemoved: '{unit} retiré de la carte',
+    returned: '{unit} replacé dans les renforts',
+    eliminated: '{unit} éliminé',
+    rebuilt: ', se reconstitue et revient au tour {turn}',
+    exit: '{unit} quitte la carte par la {zone} ({from}) — {cost} MP',
+    victoryAward: '{side} : +{n} point ({reason}) — total {total} | {side} : +{n} points ({reason}) — total {total}',
+    victorySet: '{side} : {n} point — total {total} | {side} : {n} points — total {total}',
+    unitEliminated: '{unit} éliminé',
+    aUnit: 'unité',
+    unitsInZone: '{n} unité {zone} | {n} unités {zone}',
+    unitsUnsupplied: '{n} unité sans ligne de communication | {n} unités sans ligne de communication',
+    timeUp: 'Temps écoulé — {side} perd la partie',
   },
 
   toolbar: {
