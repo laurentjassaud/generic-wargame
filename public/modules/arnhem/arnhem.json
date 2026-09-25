@@ -1615,10 +1615,10 @@
       "kinds": {
         "road": { "mp": 0.5, "vehicles": true },
         "trail": { "mp": 1, "vehicles": true },
-        "bridge": { "vehicles": true },
+        "bridge": { "vehicles": true, "spans": ["river", "stream"] },
         "ferry": { "extraMp": 3, "vehicles": false },
-        "river": { "impassable": true, "blocksZoc": true, "blocksAttack": true },
-        "stream": { "extraMp": 3, "vehicles": false }
+        "river": { "impassable": true, "blocksZoc": true, "blocksAttack": true, "severs": ["road", "trail"] },
+        "stream": { "extraMp": 3, "vehicles": false, "severs": ["road", "trail"] }
       },
       "movementPriority": ["road", "trail", "bridge", "ferry", "river", "stream"],
       "combatPriority": ["bridge", "river", "road", "trail", "stream"]

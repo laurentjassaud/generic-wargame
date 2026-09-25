@@ -35,10 +35,16 @@
 //         est autrement interdit (cf. `rules.impassableForVehicles`) ;
 //       • `blocksZoc` : la zone de contrôle ne s'étend pas à travers ;
 //       • `blocksAttack` : on ne peut pas attaquer à travers ;
-//   - `movementPriority` : quand une arête porte PLUSIEURS natures, celle qui
-//     fait foi pour le MOUVEMENT (coût, franchissement) est la première de
-//     cette liste présente sur l'arête (une route qui franchit un ruisseau :
-//     on suit la route, pas le gué) ;
+//       • `severs` : natures que cet obstacle COUPE quand il n'est pas
+//         enjambé (ruisseau d'Arnhem : `["road", "trail"]` — une route ou
+//         une piste qui le traverse sans pont est sectionnée, l'arête ne vaut
+//         plus que ruisseau : +3 MP sur le coût du terrain, pas de véhicule) ;
+//       • `spans` : obstacles que cette nature ENJAMBE (pont d'Arnhem :
+//         `["river", "stream"]`), qui ne coupent alors plus rien ;
+//   - `movementPriority` : quand une arête porte PLUSIEURS natures (après
+//     les coupures ci-dessus), celle qui fait foi pour le MOUVEMENT (coût,
+//     franchissement) est la première de cette liste présente sur l'arête
+//     (une route qui franchit un ruisseau SUR UN PONT : on suit la route) ;
 //   - `combatPriority` : même principe pour tout ce qui "traverse" l'arête
 //     sans s'y déplacer — COMBAT (attaque interdite, ligne de la table de
 //     combat substituée, cf. `module.combat.edgeRows`) et ZOC. L'ordre peut
@@ -88,7 +94,23 @@ export function resolveEdges(terrain, demolition = null) {
   const known = (list) => (Array.isArray(list) ? list : Object.keys(kinds)).filter((kind) => kinds[kind])
   const movementPriority = known(declaration.movementPriority)
   const combatPriority = known(declaration.combatPriority ?? declaration.movementPriority)
-  const firstPresent = (priority, edgeKey) => priority.find((kind) => edgesByKind.get(kind)?.has(edgeKey)) ?? null
+  const listOf = (value) => (Array.isArray(value) ? value : [])
+
+  // Natures qui TIENNENT sur l'arête `edgeKey` (cf. l'en-tête, `severs` et
+  // `spans`) : toutes celles qu'elle porte, moins celles qu'un obstacle non
+  // enjambé coupe. Ex. Arnhem : piste + ruisseau sans pont -> seul le
+  // ruisseau reste (la piste est sectionnée) ; route + pont + ruisseau -> le
+  // pont enjambe le ruisseau, qui ne coupe donc plus rien : tout reste.
+  function effectiveKinds(edgeKey) {
+    const present = [...edgesByKind].filter(([, set]) => set.has(edgeKey)).map(([kind]) => kind)
+    const spanned = new Set(present.flatMap((kind) => listOf(kinds[kind].spans)))
+    const severed = new Set(present.filter((kind) => !spanned.has(kind)).flatMap((kind) => listOf(kinds[kind].severs)))
+    return present.filter((kind) => !severed.has(kind))
+  }
+  const firstPresent = (priority, edgeKey) => {
+    const present = effectiveKinds(edgeKey)
+    return priority.find((kind) => present.includes(kind)) ?? null
+  }
 
   // Hex ("CCRR") touchés par au moins une arête de chaque nature à coût fixe
   // (`mp`) — pour le coût d'ENTRÉE EN JEU, qui n'a pas d'arête de provenance.
@@ -116,12 +138,13 @@ export function resolveEdges(terrain, demolition = null) {
   return {
     /** Propriétés d'une nature (cf. l'en-tête), `null` pour `null`/inconnue. */
     kindOf: (kind) => (kind ? kinds[kind] ?? null : null),
-    /** TOUTES les natures portées par l'arête `edgeKey`, sans priorité — là
-     *  où `movementKind`/`combatKind` n'en retiennent qu'une. Une règle peut
-     *  avoir besoin de savoir qu'une route franchit un ruisseau, ce que la
-     *  priorité masque (cf. lib/useSupplyLine.js : la ligne s'arrête au
-     *  ruisseau même quand une route le traverse). */
-    kindsOf: (edgeKey) => [...edgesByKind].filter(([, set]) => set.has(edgeKey)).map(([kind]) => kind),
+    /** TOUTES les natures qui tiennent sur l'arête `edgeKey` (cf.
+     *  `effectiveKinds` : une route coupée par un ruisseau sans pont n'y
+     *  figure plus), sans priorité — là où `movementKind`/`combatKind` n'en
+     *  retiennent qu'une. Une règle peut avoir besoin de savoir qu'un pont
+     *  franchit un ruisseau, ce que la priorité masque (cf.
+     *  lib/useSupplyLine.js : la ligne s'arrête au ruisseau sans pont). */
+    kindsOf: (edgeKey) => effectiveKinds(edgeKey),
     /** L'arête `edgeKey` porte-t-elle un pont DÉMOLISSABLE (cf. l'en-tête) ? */
     demolishable: (edgeKey) => demolishableSet.has(edgeKey),
     /** Les arêtes démolissables, une entrée par arête : `{ key, layer, from, to }`. */

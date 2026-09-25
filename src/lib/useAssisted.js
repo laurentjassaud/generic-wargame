@@ -606,9 +606,14 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  Quand PLUSIEURS natures sont posées sur la même arête, c'est la
    *  première de `terrain.edges.movementPriority` qui fait foi. Pour Arnhem,
    *  du plus fort au plus faible :
-   *   1. route > piste : une route/piste qui franchit un ruisseau,
-   *      typiquement un pont/gué aménagé -> on suit son coût, PAS le surcoût
-   *      de ruisseau (cf. `terrainCost`) ;
+   *   0. AVANT toute priorité, un ruisseau/une rivière SANS pont COUPE la
+   *      route ou la piste qui le traverse (`severs`/`spans`, cf.
+   *      lib/edges.js) : l'arête ne vaut plus que ruisseau — +3 MP sur le
+   *      coût du terrain de `h` (pas le coût de route), interdite aux
+   *      véhicules. Ex. Arnhem : la piste 0507-0606 ;
+   *   1. route > piste : une route/piste qui franchit un ruisseau SUR UN
+   *      PONT -> on suit son coût, PAS le surcoût de ruisseau (cf.
+   *      `terrainCost`) ;
    *   2. pont (canal/chemin de fer/route, peu importe lequel) — s'il n'y a ni
    *      route ni piste déclarée par-dessus (rare : la plupart des ponts
    *      routiers SONT aussi une route/piste, déjà couverts ci-dessus) ;
@@ -662,8 +667,9 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *     cohérente avec la ZOC qui ne s'y étend pas non plus, `blocksZoc`).
    *     Un BAC n'y change rien : ce n'est pas un pont (absent de la liste) ;
    *   - 'road' / 'trail' : passage aménagé, donc pas un obstacle — aucune
-   *     propriété de combat, la ligne du terrain de l'hex s'applique (un
-   *     ruisseau traversé par une route ne pénalise pas) ;
+   *     propriété de combat, la ligne du terrain de l'hex s'applique. Une
+   *     route/piste qui traverse un ruisseau SANS pont est coupée (cf.
+   *     `edgeKind`) : c'est alors le ruisseau qui compte ;
    *   - 'stream' : ruisseau nu, qui remplace la ligne de terrain sur la
    *     table de combat si TOUS les attaquants le franchissent ;
    *   - `null` sinon (hexside ordinaire, sans particularité).
@@ -1039,10 +1045,10 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  répond toujours vrai au-delà du cas 1 ci-dessus :
    *
    *  2. l'arête est déclarée `vehicles: false` : pour Arnhem, RUISSEAU À GUÉ
-   *     ou RIVIÈRE PAR BAC sans route ni piste dessus — un véhicule ne peut
-   *     les franchir, contrairement à l'infanterie et assimilés (cf.
-   *     `terrainCost`, surcoût pour eux) ; il lui faut une route/piste
-   *     (ruisseau) ou un PONT (rivière — jamais un simple bac).
+   *     ou RIVIÈRE PAR BAC — une route/piste qui les traverse sans pont y est
+   *     coupée (cf. `edgeKind`) —, un véhicule ne peut les franchir,
+   *     contrairement à l'infanterie et assimilés (cf. `terrainCost`,
+   *     surcoût pour eux) ; il lui faut un PONT (jamais un simple bac).
    *  3. `h` est d'un terrain interdit aux véhicules (`rules.
    *     impassableForVehicles` — rough/broken/woods pour Arnhem) — sauf s'il
    *     y entre par une arête déclarée `vehicles: true` (route, piste ou
