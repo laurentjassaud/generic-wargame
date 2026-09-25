@@ -36,6 +36,10 @@ const MAX_EXPORT_LENGTH = 4200
  *  vite.config.js), ou chaîne vide. */
 export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : ''
 
+/** Numéro de version de l'application (champ `version` de package.json,
+ *  injecté au build par vite.config.js), ou chaîne vide. */
+export const APP_RELEASE = typeof __APP_RELEASE__ !== 'undefined' ? __APP_RELEASE__ : ''
+
 /** Octets -> base64url (sans `=`), qui passe dans une URL sans être
  *  ré-encodé. */
 function toBase64Url(bytes) {
@@ -74,7 +78,7 @@ export async function prepareExport(snapshot) {
 function issueBody({ description, context, lines, exported }) {
   const parts = [description.trim() || '_(pas de description)_', '', '### Contexte']
   for (const [label, value] of context) parts.push(`- ${label} : ${value}`)
-  parts.push(`- Version : ${APP_VERSION || 'inconnue'}`)
+  parts.push(`- Version : ${[APP_RELEASE, APP_VERSION].filter(Boolean).join(' · ') || 'inconnue'}`)
   parts.push(`- Navigateur : ${navigator.userAgent}`)
   if (lines.length) {
     parts.push('', `### Derniers coups (${lines.length})`, '```', ...lines, '```')

@@ -5,6 +5,7 @@ import HexMap from '../components/HexMap.vue'
 import { stashPendingReplay } from '../lib/journalStorage.js'
 import { resolveSettings, describeSettings, scenarioOptions } from '../lib/gameSettings.js'
 import { registerModuleTexts } from '../i18n/index.js'
+import { APP_RELEASE, APP_VERSION } from '../lib/bugReport.js'
 
 // Chargement direct d'un module en local, sans passer par le lobby
 // multijoueur — pratique pour tester le moteur de jeu (HexMap) seul.
@@ -66,7 +67,7 @@ onMounted(async () => {
 
 <template>
   <div class="app">
-    <p v-if="module" class="setup-banner">
+    <p v-if="module" class="setup-banner"><span class="version" :title="APP_VERSION">v. {{ APP_RELEASE }}</span>
       {{ $t('summary.scenario', { name: settingsInfo.scenario }) }}<span v-if="settingsInfo.weather"> · {{ $t('summary.weatherOn') }}</span>
       · {{ $t('summary.party', { name: settingsInfo.party }) }} · {{ $t('summary.timing', { name: settingsInfo.timing })
       }}<span v-if="settingsInfo.timingValue"> ({{ settingsInfo.timingValue }} min)</span>

@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from 'node:url'
 import { execSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -15,6 +16,10 @@ function gitVersion() {
   }
 }
 
+/** Numéro de version de l'application, lu dans package.json (affiché dans le
+ *  bandeau de la partie, cf. src/lib/bugReport.js::APP_RELEASE). */
+const appRelease = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')).version
+
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({
   plugins: [
@@ -27,6 +32,7 @@ export default defineConfig(({ command }) => ({
     },
   },
   define: {
+    __APP_RELEASE__: JSON.stringify(appRelease),
     // En dev, le commit est celui du lancement du serveur : suffixé "(dev)".
     __APP_VERSION__: JSON.stringify(command === 'serve' ? `${gitVersion()} (dev)` : gitVersion()),
   },
