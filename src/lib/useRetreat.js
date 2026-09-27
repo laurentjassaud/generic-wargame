@@ -36,14 +36,19 @@
 // des unités AMIES, l'unité (ou la pile) qui "bloque" l'hex choisi est
 // déplacée d'UN hex, comme si elle retraitait elle-même d'un hex, pour le
 // libérer ; l'unité qui retraite entre ensuite dans l'hex laissé vacant.
-//   - mêmes règles qu'un pas de retraite (1 à 3 ci-dessus) : s'éloigner de
-//     l'hex de combat (choix de règle : le MÊME que celui de l'unité qui
-//     retraite — tout le monde "recule" dans le même sens), pas de ZOC
-//     ennemie, pas d'hex ennemi, pas de terrain interdit, pas de sortie de
-//     carte ;
+//   - l'ami refoulé s'éloigne de SON PROPRE hex (et non de l'hex de combat
+//     de l'unité qui retraite) : il va donc dans n'importe quel hex VOISIN
+//     du sien. Sinon, mêmes règles qu'un pas de retraite (2 et 3
+//     ci-dessus) : pas de ZOC ennemie, pas d'hex ennemi, pas de terrain
+//     interdit, pas de sortie de carte ;
+//   - jamais dans l'hex que QUITTE l'unité qui retraite (pas d'échange de
+//     places), ni dans un hex déjà libéré plus haut dans la même chaîne
+//     (pas de boucle) ;
 //   - règle 4 aussi : un hex libre si possible ; sinon, l'ami qui occupe
-//     l'hex visé est lui-même refoulé, et ainsi de suite (refoulement EN
-//     CHAÎNE) ;
+//     l'hex visé est lui-même refoulé (d'un hex, à partir de SON hex), et
+//     ainsi de suite (refoulement EN CHAÎNE, au plus `MAX_CHAIN` maillons —
+//     filet de sécurité contre une explosion combinatoire dans un gros
+//     paquet d'unités amies) ;
 //   - en principe un hex ne contient qu'UNE unité (pas d'empilement en fin
 //     de mouvement). Par sécurité, si plusieurs amis s'y trouvaient quand
 //     même, ils seraient refoulés EN BLOC vers un même hex (chacun devant
@@ -157,6 +162,10 @@ const keyOf = (col, row) => `${col},${row}`
 // Aucun ami déplacé : positions réelles de la carte (cf. `positionOf`).
 const NO_MOVES = new Map()
 
+// Nombre maximal d'amis refoulés en chaîne par un même pas de retraite (cf.
+// l'en-tête, "Refoulement des amis").
+const MAX_CHAIN = 6
+
 export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTerrain, isEnemyOf, moveUnit, eliminateUnit, advanceUnit, displaceUnit, resultEffect = () => null, advanceAfterCombat = true, retreatReduction = null }) {
   // File des retraites À FAIRE, dans l'ordre. Chaque entrée :
   //   { id, side, initial, total, done, refHexes }
@@ -245,22 +254,24 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
   }
 
   /** Toutes les façons de LIBÉRER l'hex `hex` (occupé par des amis de
-   *  `pusher`, l'unité qui retraite `task`) en refoulant ses occupants d'un
+   *  `pusher`, l'unité qui retraite) en refoulant ses occupants d'un
    *  hex — cf. l'en-tête, "Refoulement des amis". Générateur (paresseux :
    *  l'appelant s'arrête au premier plan qui lui convient) de PLANS : listes
    *  de déplacements `{ ids, from, to }` à exécuter DANS L'ORDRE — le bout de
    *  la chaîne d'abord, pour que chaque hex visé soit libre quand on y entre.
    *  Aucun plan = refoulement impossible. `zoc` : ZOC ennemie du camp de
-   *  `pusher` (le même que celui des amis refoulés). Terminaison garantie :
-   *  chaque maillon s'éloigne strictement de l'hex de combat. */
-  function* pushPlans(task, pusher, hex, zoc, moved) {
+   *  `pusher` (le même que celui des amis refoulés). `chain` : clés des hex
+   *  interdits aux amis refoulés — l'hex que quitte `pusher`, puis chaque
+   *  hex déjà libéré dans la chaîne (dont `hex`). Terminaison garantie : un
+   *  hex n'apparaît qu'une fois dans une chaîne, bornée à `MAX_CHAIN`. */
+  function* pushPlans(pusher, hex, zoc, moved, chain) {
     const group = friendsAt(pusher, hex, moved)
     const push = (to) => ({ ids: group.map((friend) => String(friend.id)), from: hex, to })
-    const hexDist = refDistance(task, hex)
-    // Mêmes règles 1 à 3 qu'un pas de retraite, pour CHAQUE pion de la pile.
+    // L'ami s'éloigne de SON hex (tout voisin convient) ; règles 2 et 3 d'un
+    // pas de retraite, pour CHAQUE pion de la pile.
     const destinations = neighborsOf(hex.col, hex.row).filter((neighbor) =>
       hexOnMap(neighbor.col, neighbor.row)
-      && refDistance(task, neighbor) > hexDist
+      && !chain.has(keyOf(neighbor.col, neighbor.row))
       && !zoc.has(keyOf(neighbor.col, neighbor.row))
       && !hasEnemy(pusher, neighbor)
       && group.every((friend) => canEnterTerrain(friend, { c: neighbor.col, r: neighbor.row }, { c: hex.col, r: hex.row })))
@@ -270,9 +281,12 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
       for (const neighbor of free) yield [push(neighbor)]
       return
     }
-    // ... sinon on refoule à son tour l'ami qui occupe l'hex visé.
+    // ... sinon on refoule à son tour l'ami qui occupe l'hex visé (depuis
+    // SON hex) — dans la limite de `MAX_CHAIN` maillons.
+    if (chain.size > MAX_CHAIN) return
     for (const neighbor of destinations) {
-      for (const subPlan of pushPlans(task, pusher, neighbor, zoc, moved)) yield [...subPlan, push(neighbor)]
+      const nextChain = new Set(chain).add(keyOf(neighbor.col, neighbor.row))
+      for (const subPlan of pushPlans(pusher, neighbor, zoc, moved, nextChain)) yield [...subPlan, push(neighbor)]
     }
   }
 
@@ -327,7 +341,8 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
     }
     if (found.length > 0) return found
     for (const neighbor of steps.filter(occupied)) {
-      for (const plan of pushPlans(task, unit, neighbor, zoc, moved)) {
+      const chain = new Set([keyOf(from.col, from.row), keyOf(neighbor.col, neighbor.row)])
+      for (const plan of pushPlans(unit, neighbor, zoc, moved, chain)) {
         const move = { hex: neighbor, plan, moved: applyPlan(moved, plan) }
         if (canCompleteVia(task, unit, move, zoc)) {
           found.push(move)
@@ -390,7 +405,8 @@ export function useRetreat({ phase, counters, hexOnMap, enemyZocSet, canEnterTer
     const { hex, chosen } = pending.value
     const zoc = enemyZocSet(unit)
     const chains = []
-    for (const plan of pushPlans(task, unit, hex, zoc, NO_MOVES)) {
+    const chain = new Set([keyOf(unit.col, unit.row), keyOf(hex.col, hex.row)])
+    for (const plan of pushPlans(unit, hex, zoc, NO_MOVES, chain)) {
       const chain = [...plan].reverse()
       if (!chosen.every((choice, index) => chain[index] && sameHex(chain[index].to, choice))) continue
       if (!canCompleteVia(task, unit, { hex, plan, moved: applyPlan(NO_MOVES, plan) }, zoc)) continue
