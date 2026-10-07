@@ -328,6 +328,7 @@ export default {
     putBack: 'Replacer le pion',
     eliminate: 'Éliminé',
     cancelMove: 'Annuler le mouvement',
+    restack: "Changer l'ordre de l'empilement",
     exitMap: 'Sortir de la carte ({cost} MP)',
     exitZoc: 'Unité figée dans une zone de contrôle ennemie : elle ne peut pas quitter son hex',
     exitMp: 'Il lui faut {cost} MP pour sortir par la {zone}',
@@ -341,6 +342,21 @@ export default {
   airborne: {
     incompleteTitle: 'Largage incomplet',
     incompleteMessage: 'La vague de ce tour doit être larguée avant la fin de la phase Airborne :',
+  },
+
+  gameEnd: {
+    title: 'Fin de la partie',
+    bravo: 'Bravo, victoire des {side} !',
+    draw: 'Match nul : les deux camps sont à égalité de points.',
+    byConcession: '{side} a concédé la partie.',
+    byTime: 'Le temps de {side} est écoulé.',
+    byTurns: 'Dernier tour joué : victoire aux points.',
+    turn: 'Tour',
+    total: 'Total',
+    noPoints: 'Aucun point de victoire marqué.',
+    confirmTitle: 'Concéder la partie',
+    confirmMessage: 'Les {side} abandonnent la partie et la donnent à leur adversaire. Cette décision est définitive.',
+    concede: 'Concéder',
   },
 
   timeUp: {
@@ -397,6 +413,7 @@ export default {
     unitsInZone: '{n} unité {zone} | {n} unités {zone}',
     unitsUnsupplied: '{n} unité sans ligne de communication | {n} unités sans ligne de communication',
     timeUp: 'Temps écoulé — {side} perd la partie',
+    conceded: '{side} concède la partie',
   },
 
   phaseButton: {
@@ -427,6 +444,10 @@ export default {
 
   toolbar: {
     gameOverTag: 'Partie terminée — {side} perd au temps',
+    concede: 'Concéder la partie',
+    concedeTitle: 'Abandonner la partie : votre adversaire la remporte',
+    gameSummary: 'Bilan de la partie',
+    gameSummaryTitle: 'Revoir le vainqueur et les points de victoire tour par tour',
     gridDisabled: 'Grille désactivée en partie libre',
     grid: 'grille',
     coordinates: 'coordonnées',
@@ -443,5 +464,58 @@ export default {
     bugReport: 'Signaler un bug',
     replayStep: 'Lecture : avancer d\'une ligne',
     replayEnd: 'Avance rapide : aller à la fin',
+    help: 'Aide',
+    helpTitle: "Guide de l'interface",
+  },
+
+
+  guide: {
+    stepOf: 'Étape {step} / {total}',
+    previous: 'Précédent',
+    finish: 'Terminer',
+    intro: "Bienvenue ! Ce guide présente l'écran de jeu en quelques étapes. Vous jouez en mode {mode}. Vous pourrez le rouvrir à tout moment avec le bouton « ? » de la barre d'outils.",
+    toolbar: {
+      title: 'La barre du haut',
+      lead: "En haut de l'écran, tout ce qui décrit où en est la partie.",
+      turn: { term: 'Piste des tours', text: 'Le tour en cours et le camp qui joue. Seul le camp actif peut déplacer ses unités.' },
+      phases: { term: 'Phases et bouton « suivant »', text: 'Sous la piste, les phases du tour (Mouvement, Combat, Fin de tour). Le bouton passe à la phase suivante, puis au camp suivant : il est refusé tant qu’il reste des unités empilées ou des combats obligatoires.' },
+      next: { term: 'Bouton « suivant »', text: "Fait avancer la piste des tours d'un pas quand un camp a fini de jouer." },
+      support: { term: 'Tablette de soutien', text: 'Les pions de soutien disponibles ce tour-ci. Un pion non posé avant la fin du tour est perdu.' },
+      victory: { term: 'Points de victoire', text: 'Le score de chaque camp.' },
+      timer: { term: 'Chronomètre', text: 'Affiché seulement si la partie a un timing Limité ou Blitz.' },
+    },
+    map: {
+      title: 'La carte',
+      lead: 'Au centre, la carte et ses pions.',
+      zoom: { term: 'Zoom', text: 'Molette de la souris, ou boutons − / + en haut à droite.' },
+      pan: { term: 'Se déplacer', text: 'Maintenez le clic droit enfoncé et faites glisser pour faire défiler la carte.' },
+      stack: { term: 'Piles de pions', text: "Survolez un pion empilé pour voir en grand tous les pions de l'hex." },
+    },
+    units: {
+      title: 'Jouer ses unités',
+      lead: 'Comment déplacer les pions et agir sur eux.',
+      select: { term: 'Déplacer une unité', text: "Cliquez sur une de vos unités pour la sélectionner, puis cliquez sur l'hex de destination." },
+      highlight: { term: 'Hex surlignés', text: "Les hex atteignables avec les points de mouvement restants sont mis en évidence. Il en va de même pour les hex d'entrée d'un renfort sélectionné." },
+      drag: { term: 'Déplacer un pion', text: 'Glissez-déposez un pion sur la carte, ou depuis le panneau des renforts. Aucune règle n’est vérifiée : à vous de les appliquer.' },
+      menu: { term: 'Menu du pion', text: "Clic droit sur un pion : le replacer dans les renforts, l'éliminer, ou annuler son mouvement." },
+      undo: { term: 'Retour arrière', text: 'Annule le dernier mouvement pendant la phase Mouvement.' },
+      combat: { term: 'Combat', text: "En phase Combat, cliquez sur une unité ennemie adjacente : la fenêtre de combat s'ouvre, désignez vos attaquants sur la carte puis lancez l'attaque." },
+    },
+    panel: {
+      title: 'Le panneau latéral',
+      lead: "Sur le bord droit, des onglets s'ouvrent au clic.",
+      reinforcements: { term: 'Renforts', text: "Un onglet par camp, avec les unités qui arrivent et leur tour d'entrée." },
+      eliminated: { term: 'Unités éliminées', text: 'Les pions retirés de la carte.' },
+      journal: { term: 'Journal', text: 'Chaque action de la partie, enregistrée automatiquement. On peut y sauvegarder, charger ou rejouer une partie.' },
+    },
+    tools: {
+      title: 'Les outils',
+      lead: 'À droite de la barre du haut, quelques boutons utiles.',
+      charts: { term: 'Tables', text: 'La table des mouvements et la table de combat du module, en fenêtres déplaçables.' },
+      die: { term: 'Dé', text: 'Un dé à lancer soi-même.' },
+      display: { term: 'Affichage', text: 'Masquer les pions pour voir le terrain, afficher les coordonnées des hex.' },
+      bug: { term: 'Signaler un bug', text: 'Ouvre un rapport GitHub pré-rempli avec un export de la partie.' },
+      help: { term: 'Aide « ? »', text: 'Rouvre ce guide.' },
+    },
   },
 }

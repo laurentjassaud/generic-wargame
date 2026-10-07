@@ -54,8 +54,10 @@ import CombatModal from './CombatModal.vue'
 import BridgeModal from './BridgeModal.vue'
 import VictoryPoints from './VictoryPoints.vue'
 import VictoryModal from './VictoryModal.vue'
+import GameEndModal from './GameEndModal.vue'
 import PhaseBlockedModal from './PhaseBlockedModal.vue'
 import BugReportModal from './BugReportModal.vue'
+import InterfaceGuide, { guideSeen, markGuideSeen } from './InterfaceGuide.vue'
 import { APP_VERSION, REPORT_ENTRIES } from '../lib/bugReport.js'
 import MoveTimer from './MoveTimer.vue'
 import LanguageSwitcher from './LanguageSwitcher.vue'
@@ -81,6 +83,9 @@ const props = defineProps({
   // Timing "Blitz" : camp ayant déjà perdu au temps (partie en ligne
   // terminée, cf. server/src/rooms.js::recordGameOver), ou `null`.
   initialBlitzLoser: { type: String, default: null },
+  // Ce qui a mis fin à la partie côté serveur : 'blitz' ou 'concede' (cf.
+  // declareLoss).
+  initialGameOverReason: { type: String, default: null },
   // Combat soumis au défenseur pour son FPF, en attente ou déjà répondu
   // (partie en ligne reprise en route, cf. server/src/rooms.js::
   // recordFpfRequest) — `{ id, targets, attackerIds, fpfIds }`, ou `null`.
@@ -121,8 +126,9 @@ const props = defineProps({
 
 // `phase` : `{ phase, step, blitzUsed }` — changement de phase LOCAL sans changement de
 // pas (cf. onPhaseNext), à répercuter aux autres joueurs (multijoueur).
-// `game-over` : `{ loser, text, t }` — Blitz, un camp a perdu au temps (cf.
-// declareBlitzLoss), à répercuter aux autres joueurs (multijoueur).
+// `game-over` : `{ loser, text, t, reason }` — un camp a perdu : au temps
+// (Blitz, `reason` 'blitz') ou en concédant ('concede') — cf. declareLoss, à
+// répercuter aux autres joueurs (multijoueur).
 // En ligne uniquement (journal partagé, cf. `log`) :
 //  - `log` : `{ uid, t, kind, text, data }` — entrée ajoutée localement ;
 //  - `unlog` : uid d'une entrée retirée (retour arrière) ;
@@ -241,6 +247,11 @@ function clearMoved(counterId) {
   // justifie QUE par un mouvement réellement effectué) ne tient plus non plus.
   if (lockedFromSelectionIds.value.delete(key)) lockedFromSelectionIds.value = new Set(lockedFromSelectionIds.value)
 }
+// Liseré AFFICHÉ seulement jusqu'à la fin de la phase Mouvement (Airborne,
+// Mouvement, ou partie Libre sans phases : `phase` vaut `null`) : dès la
+// phase Combat, il disparaît de la carte. `movedThisTurnIds` reste, lui,
+// intact jusqu'au changement de tour (verrou de sélection, rejeu).
+const showMovedRings = computed(() => phase.value === null || phase.value <= 0)
 function clearAllMoved() {
   turnStartPositions.clear()
   movedThisTurnIds.value = new Set()
@@ -1530,6 +1541,15 @@ function openBugReport() {
     ],
   }
 }
+// --- Guide de l'interface (cf. InterfaceGuide.vue) : ouvert d'office la
+// première fois qu'on arrive sur une partie sur ce navigateur, puis par le
+// bouton "?" de la barre d'outils. Marqué comme vu dès sa fermeture.
+const showGuide = ref(!guideSeen())
+
+function closeGuide() {
+  showGuide.value = false
+  markGuideSeen()
+}
 // Avertissement "changement de phase refusé" (cf. PhaseBlockedModal.vue) —
 // ouvert par onPhaseNext ci-dessous, qui refuse trois choses : quitter la
 // phase Airborne en laissant une vague à terre, la phase Mouvement avec des
@@ -1645,7 +1665,8 @@ onMounted(() => {
   // sans effet, hormis le démarrage des pendules.
   applyServerState({
     turnStep: props.initialTurnStep, phase: props.initialPhase, phaseElapsedMs: props.initialPhaseElapsedMs,
-    blitzUsedMs: props.initialBlitzUsedMs, blitzLoser: props.initialBlitzLoser, fpfRequest: props.initialFpfRequest,
+    blitzUsedMs: props.initialBlitzUsedMs, blitzLoser: props.initialBlitzLoser, gameOverReason: props.initialGameOverReason,
+    fpfRequest: props.initialFpfRequest,
   })
   // Ponts déjà détruits, relevés ou définitivement épargnés (cf.
   // restoreBridges).
@@ -1822,19 +1843,29 @@ const victorySides = computed(() => (rules.victoryPoints?.sides ?? [])
 // Totaux et saisie, pour le template (cf. VictoryPoints.vue).
 const victoryScores = computed(() => victory.scores.value)
 const victoryEditable = computed(() => victory.editable.value)
+// Points marqués tour par tour, pour la modale de fin de partie.
+const victoryByTurn = computed(() => victory.byTurn.value)
 
 // Attributions à annoncer (cf. VictoryModal.vue), vidées à l'acquittement.
 const victoryNotice = ref([])
 // Clé du titre de la modale (cf. src/i18n), traduite à l'affichage.
 const victoryNoticeTitle = ref('victory.title')
 
-/** Inscrit `points` au camp `side` et le journalise. `reason` paraît dans le
- *  journal et dans la modale. Renvoie la ligne à annoncer, ou `null`. */
-function awardVictory(side, points, reason) {
+/** Tour en cours (1 sans piste de tour) — lu sur TurnTracker.vue, à jour
+ *  dès qu'un pas change, rejeu compris (contrairement à `turnInfo`, différé). */
+const currentTurnNumber = () => turnTrackerRef.value?.currentTurn ?? 1
+
+/** Inscrit `points` au camp `side` et le journalise, avec le tour en cours
+ *  (récapitulatif par tour, cf. GameEndModal.vue). `reason` paraît dans le
+ *  journal et dans la modale ; `endOfTurn` marque un compte de Fin de tour
+ *  (cf. `scoreEndOfTurn`). Renvoie la ligne à annoncer, ou `null`. */
+function awardVictory(side, points, reason, { endOfTurn = false } = {}) {
   const result = victory.award(side, points)
   if (!result) return null
+  const turn = currentTurnNumber()
+  victory.record(turn, side, result.delta)
   log('victory', t('log.victoryAward', { side: sideLabel(side), n: points, reason, total: result.total }, points),
-    { side, points, total: result.total, reason })
+    { side, points, total: result.total, reason, turn, ...(endOfTurn ? { endOfTurn: true } : {}) })
   return { side, label: sideLabel(side), points, total: result.total, reason }
 }
 
@@ -1843,9 +1874,11 @@ function onVictoryChange({ side, value }) {
   if (!victory.editable.value || inputLocked.value) return
   const result = victory.set(side, value)
   if (!result) return
+  const turn = currentTurnNumber()
+  victory.record(turn, side, result.delta)
   const sign = result.delta > 0 ? `+${result.delta}` : String(result.delta)
   log('victory', t('log.victorySet', { side: sideLabel(side), n: sign, total: result.total }, Math.abs(result.delta)),
-    { side, points: result.delta, total: result.total, reason: 'saisie' })
+    { side, points: result.delta, total: result.total, reason: 'saisie', turn })
 }
 
 /** Mode Assisté : une unité vient d'être éliminée pour de bon (une unité qui
@@ -1865,8 +1898,14 @@ function scoreElimination(counter) {
  *  En ligne, seul le joueur qui a la main compte : l'entrée de journal qu'il
  *  produit porte les points chez l'autre. */
 function scoreEndOfTurn() {
-  if (!props.assisted || !victory.active.value || actionsLocked.value) return
+  if (!props.assisted || !victory.active.value || actionsLocked.value || isReplaying.value) return
   if (props.online && !isLocalTurn.value) return
+  // UNE SEULE fois par tour (cf. lib/useVictoryPoints.js, `scoredTurns`) :
+  // un journal rechargé en pleine Fin de tour a déjà rejoué les points de
+  // ce tour — les recompter les ajouterait une seconde fois.
+  const turn = currentTurnNumber()
+  if (victory.isTurnScored(turn)) return
+  victory.markTurnScored(turn)
   const lines = []
   const cut = supplyLine.unsuppliedIds(counters.value)
 
@@ -1882,7 +1921,7 @@ function scoreEndOfTurn() {
   }
   for (const { zone, count } of held.values()) {
     const line = awardVictory(zone.to, zone.points * count,
-      t('log.unitsInZone', { n: count, zone: mt(zone.label) }, count))
+      t('log.unitsInZone', { n: count, zone: mt(zone.label) }, count), { endOfTurn: true })
     if (line) lines.push(line)
   }
 
@@ -1892,12 +1931,14 @@ function scoreEndOfTurn() {
     const count = counters.value.filter((counter) => supplyLine.concerns(counter) && cut.has(String(counter.id))).length
     if (count) {
       const line = awardVictory(unsupplied.to, unsupplied.points * count,
-        t('log.unitsUnsupplied', { n: count }, count))
+        t('log.unitsUnsupplied', { n: count }, count), { endOfTurn: true })
       if (line) lines.push(line)
     }
   }
 
-  if (lines.length) {
+  // Dernier tour : la modale de fin de partie (cf. `startVictoryWatch`)
+  // récapitule déjà tout, pas besoin d'annoncer ces points à part.
+  if (lines.length && !isFinalEndOfTurn.value) {
     victoryNoticeTitle.value = 'victory.endOfTurnTitle'
     victoryNotice.value = lines
   }
@@ -1908,7 +1949,12 @@ function scoreEndOfTurn() {
 // pour ne pas lire trop tôt ce qui est déclaré plus bas.
 function startVictoryWatch() {
   watch(phase, (now, before) => {
-    if (now === PHASE_END_OF_TURN && before !== PHASE_END_OF_TURN) scoreEndOfTurn()
+    if (now !== PHASE_END_OF_TURN || before === PHASE_END_OF_TURN) return
+    scoreEndOfTurn()
+    // Fin du DERNIER tour : la partie est finie, on annonce le vainqueur aux
+    // points (cf. `gameEnd`) — chez tous les joueurs, mais pas pendant un
+    // rejeu (le bouton "Bilan de la partie" permet de la rouvrir).
+    if (isFinalEndOfTurn.value && !isReplaying.value && !replayLocked.value) showGameEnd.value = true
   })
 }
 
@@ -2035,7 +2081,13 @@ function onCounterContextMenu(id, ev) {
   }
   // Sortie de carte (cf. section du même nom) : proposée sur une bande de
   // bord, grisée quand la règle l'interdit ici et maintenant.
-  const exit = mapExitOffer(counters.value.find((counter) => String(counter.id) === String(id)))
+  const clicked = counters.value.find((counter) => String(counter.id) === String(id))
+  // Pile d'unités (2 ou plus sur l'hex) : faire passer une autre unité
+  // au-dessus, pour pouvoir la sélectionner (cf. `cycleStack`).
+  if (clicked && stackUnitsAt(clicked).length > 1) {
+    items.push({ label: t('menu.restack'), action: () => cycleStack(clicked) })
+  }
+  const exit = mapExitOffer(clicked)
   if (exit) {
     items.push({
       label: t('menu.exitMap', { cost: exit.cost }),
@@ -2047,6 +2099,22 @@ function onCounterContextMenu(id, ev) {
     })
   }
   openContextMenu(ev, items)
+}
+/** Unités (ni marqueurs ni pions de soutien, cf. `isUnit`) de l'hex de
+ *  `counter`, dans l'ordre de `counters` — du bas de la pile vers le haut
+ *  (cf. `stackOffsets` et l'ordre de peinture du template). */
+function stackUnitsAt(counter) {
+  return counters.value.filter((other) => isUnit(other) && other.col === counter.col && other.row === counter.row)
+}
+/** Menu contextuel "Changer l'ordre de l'empilement" : l'unité du BAS de la
+ *  pile passe tout en HAUT — c'est elle qui se sélectionne désormais au
+ *  clic. Répété, le menu fait tourner toute la pile. Simple affichage local :
+ *  `counters` n'est pas synchronisé entre clients, et aucune règle ne dépend
+ *  de cet ordre. */
+function cycleStack(counter) {
+  const [bottom] = stackUnitsAt(counter)
+  if (!bottom) return
+  counters.value = [...counters.value.filter((other) => other !== bottom), bottom]
 }
 // --- Sortie de carte (cf. lib/rules.js::resolveMapExit, `rules.mapExit`) ----
 // Le module déclare un CAMP et des BANDES DE BORD (plages "CCRR-CCRR", cf.
@@ -2953,9 +3021,10 @@ function applyRemoteMove(counterId, col, row) {
   noteMapEntry(counterId)
 }
 
-/** Multijoueur : un camp a perdu au temps (cf. RoomLobby.vue, `game:over`). */
-function applyRemoteGameOver(loser) {
-  declareBlitzLoss(loser, { remote: true })
+/** Multijoueur : un camp a perdu, au temps ou en concédant (cf.
+ *  RoomLobby.vue, `game:over`). */
+function applyRemoteGameOver(loser, reason) {
+  declareLoss(loser, { remote: true, reason })
 }
 
 /** En ligne : entrée du journal partagé reçue d'un autre joueur (ou du
@@ -2976,7 +3045,7 @@ function removeRemoteEntry(uid) {
 /** Aligne pas courant, phase, pendules et fin de partie sur l'état du
  *  serveur (`toPublic`, cf. server/src/rooms.js) — au montage (props) comme
  *  après une reconnexion (cf. resyncFromServer). */
-function applyServerState({ turnStep, phase: serverPhase, phaseElapsedMs, blitzUsedMs: serverBlitz, blitzLoser: serverLoser, fpfRequest }) {
+function applyServerState({ turnStep, phase: serverPhase, phaseElapsedMs, blitzUsedMs: serverBlitz, blitzLoser: serverLoser, gameOverReason: serverReason, fpfRequest }) {
   if (turnTrackerRef.value && turnStep != null && turnTrackerRef.value.currentStep !== turnStep) applyRemoteTurn(turnStep)
   // Phase déjà atteinte par le joueur actif (cf. server/src/rooms.js::
   // recordPhase) — `null` : phase de départ du camp, déjà recalculée.
@@ -2986,7 +3055,7 @@ function applyServerState({ turnStep, phase: serverPhase, phaseElapsedMs, blitzU
   moveTimerStartedAt.value = null
   syncMoveTimer(phaseElapsedMs ?? 0)
   blitzUsedMs.value = { ...(serverBlitz ?? {}) }
-  if (serverLoser) declareBlitzLoss(serverLoser, { remote: true })
+  if (serverLoser) declareLoss(serverLoser, { remote: true, reason: serverReason })
   // Négociation de FPF en cours (cf. section "FPF en ligne").
   restoreFpfRequest(fpfRequest)
 }
@@ -3043,6 +3112,8 @@ function resetBoardForReplay() {
   // `phase` et `gameover` rejouées.
   blitzUsedMs.value = {}
   blitzLoser.value = null
+  gameOverReason.value = null
+  showGameEnd.value = false
   counters.value = buildInitialCounters()
   eliminatedIds.value = new Set()
   // Sorties de carte (cf. la section du même nom) : rétablies par les entrées
@@ -3158,6 +3229,9 @@ function applyReplayEntry(entry) {
     if (entryData.blitzUsed) blitzUsedMs.value = { ...entryData.blitzUsed }
   } else if (entry.kind === 'gameover') {
     blitzLoser.value = entryData.loser ?? null
+    // Journaux antérieurs à la concession : seule la pendule mettait fin à
+    // la partie.
+    gameOverReason.value = entryData.reason === 'concede' ? 'concede' : 'blitz'
   } else if (entry.kind === 'combat') {
     markFought([...(entryData.attackerIds ?? []), ...(entryData.defenderIds ?? []), ...(entryData.supportIds ?? [])])
     // FPF faits et résultats subis par l'artillerie (cf. lib/useArtillery.js).
@@ -3175,8 +3249,14 @@ function applyReplayEntry(entry) {
   } else if (entry.kind === 'victory') {
     // Points de victoire (cf. la section du même nom) : le TOTAL de l'entrée
     // fait foi, jamais un recalcul — sinon une partie rechargée, ou l'entrée
-    // reçue d'un autre joueur, compterait deux fois.
-    victory.applyReplay(entryData)
+    // reçue d'un autre joueur, compterait deux fois. Une entrée de Fin de
+    // tour marque ce tour comme soldé (cf. `scoreEndOfTurn`) ; pour un
+    // journal antérieur à `endOfTurn`, une entrée rejouée PENDANT la Fin de
+    // tour en est forcément une.
+    victory.applyReplay(entryData, {
+      turn: entryData.turn ?? currentTurnNumber(),
+      endOfTurn: entryData.endOfTurn ?? phase.value === PHASE_END_OF_TURN,
+    })
   } else if (entry.kind === 'repair') {
     // Pont relevé par le génie (cf. la section "Réparation des ponts") : le
     // journal fait foi, comme pour une démolition.
@@ -3244,9 +3324,13 @@ function fastForwardReplay() {
 // plus haut, et props `disabled` sur TurnTracker/RollModal ci-dessous) :
 // la carte ne doit bouger qu'au rythme du lecteur pendant un rejeu.
 const replayLocked = computed(() => replayEntries.value.length > 0 && replayIndex.value < replayEntries.value.length)
-// Timing "Blitz" : camp dont la pendule est tombée à 0 — il a PERDU la
-// partie (cf. declareBlitzLoss), `null` tant que la partie continue.
+// Camp qui a PERDU la partie — pendule tombée à 0 en Blitz, ou concession
+// (cf. declareLoss, `gameOverReason`) —, `null` tant que la partie continue.
+// Le nom vient du Blitz, premier cas de fin de partie (le serveur le garde).
 const blitzLoser = ref(null)
+// Ce qui a mis fin à la partie quand `blitzLoser` est renseigné : 'blitz' ou
+// 'concede'.
+const gameOverReason = ref(null)
 // La PARTIE est figée pendant un rejeu et une fois terminée : plus aucune
 // action de jeu, et les pendules du timing s'arrêtent (cf. moveTimerRunning).
 const actionsLocked = computed(() => replayLocked.value || blitzLoser.value != null)
@@ -3334,7 +3418,10 @@ function syncMoveTimer(elapsedMs = 0) {
 // onPhaseNext, qui l'envoie aussitôt aux autres joueurs).
 watch([moveTimerRunning, () => turnTrackerRef.value?.currentStep], () => syncMoveTimer(), { flush: 'sync' })
 const showTimeUp = ref(false)
-const showGameOver = ref(false)
+// Modale de fin de partie (cf. GameEndModal.vue, `gameEnd`) et demande de
+// confirmation d'une concession (cf. `askConcede`).
+const showGameEnd = ref(false)
+const concedeConfirm = ref(false)
 const sideLabel = (side) => mt(props.module.turnTrack?.sides?.[side]?.label) ?? side
 /** Compteur à zéro (cf. MoveTimer.vue, `expired`). Blitz : le camp `side`
  *  PERD la partie. Limité : le MOUVEMENT S'ARRÊTE (cf. `moveTimeLocked`) —
@@ -3343,28 +3430,74 @@ const sideLabel = (side) => mt(props.module.turnTrack?.sides?.[side]?.label) ?? 
  *  joueur actif : en ligne, chaque navigateur a son compteur, mais seul celui
  *  dont c'est le tour a quelque chose à en faire. */
 function onMoveTimeUp(side) {
-  if (isBlitz.value) { declareBlitzLoss(side); return }
+  if (isBlitz.value) { declareLoss(side); return }
   moveTimeExpired.value = true
   if (isLocalTurn.value) showTimeUp.value = true
 }
-/** Blitz : fin de partie, `loser` a perdu au temps. La modale de fin
- *  s'affiche chez TOUS les joueurs.
+/** Fin de partie : `loser` a perdu — au temps (Blitz, `reason` 'blitz') ou
+ *  en concédant ('concede', cf. `concede`). La modale de fin (cf.
+ *  GameEndModal.vue) s'affiche chez TOUS les joueurs.
  *  - En local : inscrite au journal.
- *  - En ligne : chaque navigateur détecte la chute de la pendule et
- *    l'annonce au serveur ; seule la PREMIÈRE annonce compte, le serveur
- *    l'inscrit lui-même au journal partagé et la renvoie à tous (`remote` :
- *    annonce du serveur, qui fait foi et peut corriger une détection
- *    locale). */
-function declareBlitzLoss(loser, { remote = false } = {}) {
+ *  - En ligne : annoncée au serveur ; seule la PREMIÈRE annonce compte, le
+ *    serveur l'inscrit lui-même au journal partagé et la renvoie à tous
+ *    (`remote` : annonce du serveur, qui fait foi et peut corriger une
+ *    détection locale de la pendule). */
+function declareLoss(loser, { remote = false, reason = 'blitz' } = {}) {
   if (!loser || blitzLoser.value === loser) return
   if (blitzLoser.value != null && !remote) return
   blitzLoser.value = loser
-  const text = t('log.timeUp', { side: sideLabel(loser) })
+  gameOverReason.value = reason === 'concede' ? 'concede' : 'blitz'
+  const text = t(gameOverReason.value === 'concede' ? 'log.conceded' : 'log.timeUp', { side: sideLabel(loser) })
   if (!remote) {
-    if (props.online) emit('game-over', { loser, text, t: new Date().toLocaleTimeString('fr-FR') })
-    else log('gameover', text, { loser })
+    if (props.online) emit('game-over', { loser, text, t: new Date().toLocaleTimeString('fr-FR'), reason: gameOverReason.value })
+    else log('gameover', text, { loser, reason: gameOverReason.value })
   }
-  showGameOver.value = true
+  showGameEnd.value = true
+}
+
+// --- Concession et fin de partie (cf. GameEndModal.vue) ----------------------
+// Un camp peut CONCÉDER à tout moment : la partie s'arrête, son adversaire
+// l'emporte. Concède : en ligne, le camp de CE joueur (même quand ce n'est
+// pas son tour) ; en local, un seul navigateur pour tous les camps, le camp
+// qui a la main. La partie s'arrête aussi quand la Fin de tour du DERNIER
+// tour de la piste est atteinte : victoire aux points.
+
+/** Camp qui concéderait depuis ce navigateur (cf. l'en-tête de section). */
+const concedingSide = computed(() => (props.online ? props.localSide : turnInfo.value.activeSideKey) || null)
+
+/** Fin de tour du DERNIER tour de la piste (cf. `startVictoryWatch`). */
+const isFinalEndOfTurn = computed(() => {
+  const turns = props.module.turnTrack?.turns
+  return !!turns && phase.value === PHASE_END_OF_TURN && currentTurnNumber() >= turns
+})
+
+/** La partie est-elle terminée — par une défaite (Blitz, concession) ou par
+ *  la fin du dernier tour ? `{ reason, winner, loser }` (libellés de camp ;
+ *  `winner` `null` pour un match nul), ou `null` si elle continue. */
+const gameEnd = computed(() => {
+  if (blitzLoser.value) {
+    const winner = turnOrder.find((side) => side !== blitzLoser.value)
+    return { reason: gameOverReason.value ?? 'blitz', winner: winner ? sideLabel(winner) : null, loser: sideLabel(blitzLoser.value) }
+  }
+  if (!isFinalEndOfTurn.value) return null
+  // Victoire aux points : le camp qui en a le plus, ou match nul.
+  const scores = victory.scores.value
+  const ranked = [...turnOrder].sort((sideA, sideB) => (scores[sideB] ?? 0) - (scores[sideA] ?? 0))
+  const tie = ranked.length > 1 && (scores[ranked[0]] ?? 0) === (scores[ranked[1]] ?? 0)
+  return { reason: 'end', winner: ranked.length && !tie ? sideLabel(ranked[0]) : null, loser: null }
+})
+
+/** Bouton "Concéder la partie" : demande d'abord confirmation. */
+function askConcede() {
+  if (actionsLocked.value || !concedingSide.value) return
+  concedeConfirm.value = true
+}
+
+/** Confirmation de la concession (cf. GameEndModal.vue, mode `confirm`). */
+function concede() {
+  concedeConfirm.value = false
+  if (actionsLocked.value || !concedingSide.value) return
+  declareLoss(concedingSide.value, { reason: 'concede' })
 }
 // Nouvelle phase ou nouveau camp : le compteur repart à plein (cf.
 // `syncMoveTimer`), donc le mouvement se rouvre et la modale du joueur
@@ -3476,11 +3609,23 @@ function onMapDragEnd() {
           @click="showCombatChart = !showCombatChart">
           {{ $t('toolbar.combatChart') }}
         </button>
+        <!-- cf. `askConcede` / `gameEnd` : concéder tant que la partie
+             continue, revoir le bilan une fois qu'elle est finie. -->
+        <button v-if="gameEnd" type="button" class="toggle-btn" :title="$t('toolbar.gameSummaryTitle')"
+          @click="showGameEnd = true">
+          {{ $t('toolbar.gameSummary') }}
+        </button>
+        <button v-else-if="concedingSide && !replayLocked" type="button" class="toggle-btn" :title="$t('toolbar.concedeTitle')"
+          @click="askConcede">
+          {{ $t('toolbar.concede') }}
+        </button>
         <button type="button" class="toggle-btn"
           :title="$t('toolbar.bugReportTitle')"
           @click="openBugReport">
           {{ $t('toolbar.bugReport') }}
         </button>
+        <button type="button" class="toggle-btn" :class="{ active: showGuide }" :title="$t('toolbar.helpTitle')"
+          :aria-label="$t('toolbar.help')" @click="showGuide = true">?</button>
         <div v-if="replayEntries.length" class="replay-ctl">
           <span class="replay-pos">{{ replayIndex }} / {{ replayEntries.length }}</span>
           <button type="button" class="toggle-btn replay-btn" :title="$t('toolbar.replayStep')"
@@ -3633,7 +3778,7 @@ function onMapDragEnd() {
             @dragstart="onCounterDragStart" @hex-click="onMarkerClick" @hover="onCounterHover" @unhover="onCounterUnhover" />
           <Counter v-for="counter in counters.filter(isUnit)" :key="counter.id" :id="counter.id" :src="counter.src" :col="counter.col"
             :row="counter.row" :calibration="calibration" :selected="selectedCounterId === counter.id" :selectable="selectable"
-            :moved="movedThisTurnIds.has(String(counter.id))" :spent="hasFought(counter)"
+            :moved="showMovedRings && movedThisTurnIds.has(String(counter.id))" :spent="hasFought(counter)"
             :disrupted="artillery.isDisrupted(counter)" :displaced="artillery.isDisplaced(counter)"
             :unsupplied="outOfSupplyIds.has(String(counter.id))"
             :offset="stackOffsets.get(counter.id) ?? ZERO_OFFSET" :drag-px="draggedCounterId === counter.id ? dragCurrentPx : null"
@@ -3698,6 +3843,9 @@ function onMapDragEnd() {
          obligatoires encore en attente (cf. lib/useCombat.js::pendingEngagements).
          Les deux listes sont vides hors de leur phase respective. -->
     <!-- Signaler un bug : cf. `openBugReport`. -->
+    <!-- Guide de l'interface : cf. `showGuide`. -->
+    <InterfaceGuide v-if="showGuide" :assisted="assisted" @close="closeGuide" />
+
     <BugReportModal v-if="bugReport" :snapshot="bugReport.snapshot" :context="bugReport.context" @close="bugReport = null" />
 
     <PhaseBlockedModal v-if="showPhaseBlocked" v-bind="phaseBlockedView" @close="showPhaseBlocked = false" />
@@ -3721,11 +3869,13 @@ function onMapDragEnd() {
     <!-- cf. lib/useVictoryPoints.js — ce qui vient d'être marqué. -->
     <VictoryModal :awards="victoryNotice" :title="$t(victoryNoticeTitle)" @close="victoryNotice = []" />
 
-    <!-- cf. declareBlitzLoss — Blitz : une pendule est tombée à 0, partie perdue. -->
-    <PhaseBlockedModal v-if="showGameOver && blitzLoser" :title="$t('timeUp.title')" @close="showGameOver = false">
-      {{ $t('timeUp.blitz', { side: sideLabel(blitzLoser) }) }}
-      <template v-if="localSide"><br><b>{{ localSide === blitzLoser ? $t('timeUp.youLost') : $t('timeUp.youWon') }}</b></template>
-    </PhaseBlockedModal>
+    <!-- cf. `gameEnd` — fin de partie : concession, pendule Blitz à 0 ou
+         fin du dernier tour. Et la confirmation d'une concession (cf.
+         `askConcede`). -->
+    <GameEndModal v-if="concedeConfirm" :confirm-side="sideLabel(concedingSide)"
+      @confirm="concede" @close="concedeConfirm = false" />
+    <GameEndModal v-else-if="showGameEnd && gameEnd" :reason="gameEnd.reason" :winner="gameEnd.winner" :loser="gameEnd.loser"
+      :sides="victorySides" :rows="victoryByTurn" :totals="victoryScores" @close="showGameEnd = false" />
 
     <!-- cf. setSelectedCounter — changement de sélection refusé : l'unité
          en cours de mouvement est en overstack avec une unité amie. -->

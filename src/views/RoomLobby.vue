@@ -100,8 +100,8 @@ function attachSocketListeners() {
   socket.on('game:phase', ({ phase, step, blitzUsed }) => {
     hexMapRef.value?.applyRemotePhase(phase, step, blitzUsed)
   })
-  socket.on('game:over', ({ loser }) => {
-    hexMapRef.value?.applyRemoteGameOver(loser)
+  socket.on('game:over', ({ loser, reason }) => {
+    hexMapRef.value?.applyRemoteGameOver(loser, reason)
   })
   socket.on('game:log', ({ entry }) => {
     hexMapRef.value?.applyRemoteEntry(entry)
@@ -175,8 +175,8 @@ function onLocalPhase({ phase, step, blitzUsed }) {
   getSocket().emit('game:phase', { gameId: props.id, phase, step, blitzUsed })
 }
 
-function onLocalGameOver({ loser, text, t }) {
-  getSocket().emit('game:over', { gameId: props.id, loser, text, t })
+function onLocalGameOver({ loser, text, t, reason }) {
+  getSocket().emit('game:over', { gameId: props.id, loser, text, t, reason })
 }
 
 function onLocalLog(entry) {
@@ -334,6 +334,7 @@ onUnmounted(() => {
       :initial-phase-elapsed-ms="room.phaseElapsedMs ?? 0"
       :initial-blitz-used-ms="room.blitzUsedMs ?? {}"
       :initial-blitz-loser="room.blitzLoser ?? null"
+      :initial-game-over-reason="room.gameOverReason ?? null"
       :initial-fpf-request="room.fpfRequest ?? null"
       :initial-bridge-log="room.bridgeLog ?? []"
       :initial-bridge-request="room.bridgeRequest ?? null"

@@ -72,19 +72,20 @@ export function registerSocketHandlers(io) {
       }
     })
 
-    socket.on('game:over', ({ gameId, loser, text, t } = {}) => {
+    socket.on('game:over', ({ gameId, loser, text, t, reason } = {}) => {
       // Blitz : une pendule est tombée à 0. Diffusé à TOUS (émetteur
       // compris) une seule fois, à la première annonce — avec l'entrée de
       // journal correspondante, inscrite par le serveur.
       if (socket.data.gameId !== gameId) return
       try {
-        const recorded = recordGameOver(gameId, { loser, text, t })
+        const recorded = recordGameOver(gameId, { loser, text, t, reason, playerId: socket.data.playerId })
         if (recorded) {
-          io.to(`game:${gameId}`).emit('game:over', { loser })
+          io.to(`game:${gameId}`).emit('game:over', { loser, reason: recorded.game.gameOverReason })
           io.to(`game:${gameId}`).emit('game:log', { entry: recorded.entry })
         }
       } catch {
-        // Partie pas lancée, pas en Blitz ou annonce invalide : on ignore.
+        // Partie pas lancée, pas en Blitz (hors concession), concession
+        // d'un autre camp que le sien, ou annonce invalide : on ignore.
       }
     })
 

@@ -114,6 +114,8 @@ export function createGame({ moduleId, scenarioId, variants, settings, maxPlayer
     // Timing "Blitz" : camp dont la pendule est tombée à 0 — partie
     // terminée, plus aucun coup accepté. `null` tant qu'elle continue.
     blitzLoser: null,
+    // Ce qui a mis fin à la partie : 'blitz' ou 'concede' (cf. recordGameOver).
+    gameOverReason: null,
     // Journal PARTAGÉ de la partie (ordre chronologique) : entrées
     // `{ uid, t, kind, text, data }` envoyées par les joueurs (cf.
     // src/components/HexMap.vue::log). Transmis en entier à chaque joueur
@@ -177,6 +179,7 @@ export function toPublic(game) {
     phaseElapsedMs: Date.now() - game.phaseSince,
     blitzUsedMs: game.blitzUsedMs,
     blitzLoser: game.blitzLoser,
+    gameOverReason: game.gameOverReason ?? null,
     fpfRequest: game.fpfRequest,
     bridgeLog: game.bridgeLog,
     bridgeRequest: game.bridgeRequest,
@@ -551,19 +554,27 @@ export function recordDeployment(id, entry, turnEntry) {
   return { entries, created: true }
 }
 
-/** Blitz : la pendule de `loser` est tombée à 0, il perd la partie. Seule
- *  la PREMIÈRE annonce compte (chaque client la détecte de son côté) : le
- *  serveur l'inscrit alors lui-même au journal partagé et renvoie
- *  `{ game, entry }` ; `null` si la partie était déjà terminée. */
-export function recordGameOver(id, { loser, text, t }) {
+/** Fin de partie : `loser` perd — au temps (Blitz : sa pendule est tombée
+ *  à 0) ou parce qu'il CONCÈDE (`reason` 'concede', quel que soit le
+ *  timing, et seulement pour le camp du joueur `playerId` lui-même). Seule
+ *  la PREMIÈRE annonce compte (chaque client détecte la pendule de son
+ *  côté) : le serveur l'inscrit alors lui-même au journal partagé et
+ *  renvoie `{ game, entry }` ; `null` si la partie était déjà terminée. */
+export function recordGameOver(id, { loser, text, t, reason, playerId: announcer }) {
   const game = games.get(id)
   if (!game) throw new RoomError('not-found')
   if (game.status !== 'started') throw new RoomError('not-started')
-  if (game.settings.timing !== 'blitz') throw new RoomError('not-blitz')
   if (typeof loser !== 'string' || !loser || loser.length > 32) throw new RoomError('bad-loser')
+  const conceded = reason === 'concede'
+  if (conceded) {
+    if (game.players.get(announcer)?.side !== loser) throw new RoomError('not-your-side')
+  } else if (game.settings.timing !== 'blitz') {
+    throw new RoomError('not-blitz')
+  }
   if (game.blitzLoser) return null
   game.blitzLoser = loser
-  const entry = sanitizeEntry({ uid: `srv-${playerId()}`, t, kind: 'gameover', text: text || `Temps écoulé — ${loser}`, data: { loser } })
+  game.gameOverReason = conceded ? 'concede' : 'blitz'
+  const entry = sanitizeEntry({ uid: `srv-${playerId()}`, t, kind: 'gameover', text: text || `Temps écoulé — ${loser}`, data: { loser, reason: game.gameOverReason } })
   pushJournal(game, [entry])
   return { game, entry }
 }

@@ -326,6 +326,7 @@ export default {
     putBack: 'Put the counter back',
     eliminate: 'Eliminated',
     cancelMove: 'Cancel the move',
+    restack: 'Change the stacking order',
     exitMap: 'Exit the map ({cost} MP)',
     exitZoc: 'Unit locked in an enemy zone of control: it cannot leave its hex',
     exitMp: 'It needs {cost} MP to exit by the {zone}',
@@ -339,6 +340,21 @@ export default {
   airborne: {
     incompleteTitle: 'Drop not finished',
     incompleteMessage: "This turn's wave must be dropped before the end of the Airborne phase:",
+  },
+
+  gameEnd: {
+    title: 'Game over',
+    bravo: 'Congratulations, victory for the {side}!',
+    draw: 'Draw: both sides are level on points.',
+    byConcession: 'The {side} conceded the game.',
+    byTime: 'The {side} ran out of time.',
+    byTurns: 'Last turn played: victory on points.',
+    turn: 'Turn',
+    total: 'Total',
+    noPoints: 'No victory points scored.',
+    confirmTitle: 'Concede the game',
+    confirmMessage: 'The {side} give up the game and hand it to their opponent. This cannot be undone.',
+    concede: 'Concede',
   },
 
   timeUp: {
@@ -395,6 +411,7 @@ export default {
     unitsInZone: '{n} unit {zone} | {n} units {zone}',
     unitsUnsupplied: '{n} unit without a line of communication | {n} units without a line of communication',
     timeUp: 'Time is up — {side} loses the game',
+    conceded: '{side} concede the game',
   },
 
   phaseButton: {
@@ -425,6 +442,10 @@ export default {
 
   toolbar: {
     gameOverTag: 'Game over — {side} loses on time',
+    concede: 'Concede the game',
+    concedeTitle: 'Give up the game: your opponent wins it',
+    gameSummary: 'Game summary',
+    gameSummaryTitle: 'See the winner and the victory points turn by turn again',
     gridDisabled: 'Grid disabled in free play',
     grid: 'grid',
     coordinates: 'coordinates',
@@ -441,5 +462,58 @@ export default {
     bugReport: 'Report a bug',
     replayStep: 'Replay: step one line forward',
     replayEnd: 'Fast forward: go to the end',
+    help: 'Help',
+    helpTitle: 'Interface guide',
+  },
+
+
+  guide: {
+    stepOf: 'Step {step} / {total}',
+    previous: 'Previous',
+    finish: 'Done',
+    intro: 'Welcome! This guide walks you through the game screen in a few steps. You are playing in {mode} mode. You can reopen it at any time with the "?" button in the toolbar.',
+    toolbar: {
+      title: 'The top bar',
+      lead: 'At the top of the screen, everything about where the game stands.',
+      turn: { term: 'Turn track', text: 'The current turn and the side to play. Only the active side can move its units.' },
+      phases: { term: 'Phases and "next" button', text: 'Below the track, the phases of the turn (Movement, Combat, End of turn). The button moves to the next phase, then to the next side: it is refused while units are still stacked or mandatory combats remain.' },
+      next: { term: '"Next" button', text: 'Moves the turn track one step forward once a side has finished playing.' },
+      support: { term: 'Support tray', text: 'The support counters available this turn. A counter not placed before the end of the turn is lost.' },
+      victory: { term: 'Victory points', text: "Each side's score." },
+      timer: { term: 'Timer', text: 'Shown only when the game uses Limited or Blitz timing.' },
+    },
+    map: {
+      title: 'The map',
+      lead: 'In the middle, the map and its counters.',
+      zoom: { term: 'Zoom', text: 'Mouse wheel, or the − / + buttons at the top right.' },
+      pan: { term: 'Scroll', text: 'Hold the right mouse button and drag to scroll the map.' },
+      stack: { term: 'Stacks', text: 'Hover a stacked counter to see every counter in the hex at full size.' },
+    },
+    units: {
+      title: 'Playing your units',
+      lead: 'How to move counters and act on them.',
+      select: { term: 'Moving a unit', text: 'Click one of your units to select it, then click the destination hex.' },
+      highlight: { term: 'Highlighted hexes', text: 'Hexes reachable with the remaining movement points are highlighted. The same goes for the entry hexes of a selected reinforcement.' },
+      drag: { term: 'Moving a counter', text: 'Drag and drop a counter on the map, or from the reinforcements panel. No rule is checked: applying them is up to you.' },
+      menu: { term: 'Counter menu', text: 'Right-click a counter to put it back in the reinforcements, eliminate it, or cancel its move.' },
+      undo: { term: 'Undo', text: 'Cancels the last move during the Movement phase.' },
+      combat: { term: 'Combat', text: 'In the Combat phase, click an adjacent enemy unit: the combat window opens, pick your attackers on the map, then launch the attack.' },
+    },
+    panel: {
+      title: 'The side panel',
+      lead: 'On the right edge, tabs open on click.',
+      reinforcements: { term: 'Reinforcements', text: 'One tab per side, with the incoming units and their entry turn.' },
+      eliminated: { term: 'Eliminated units', text: 'Counters removed from the map.' },
+      journal: { term: 'Journal', text: 'Every action of the game, saved automatically. You can save, load or replay a game from it.' },
+    },
+    tools: {
+      title: 'Tools',
+      lead: 'On the right of the top bar, a few handy buttons.',
+      charts: { term: 'Charts', text: "The module's movement and combat charts, in movable windows." },
+      die: { term: 'Die', text: 'A die to roll yourself.' },
+      display: { term: 'Display', text: 'Hide the counters to see the terrain, show the hex coordinates.' },
+      bug: { term: 'Report a bug', text: 'Opens a GitHub report pre-filled with an export of the game.' },
+      help: { term: 'Help "?"', text: 'Reopens this guide.' },
+    },
   },
 }

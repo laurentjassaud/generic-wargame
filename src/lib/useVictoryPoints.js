@@ -37,9 +37,20 @@
 //
 // ─── CE QUI EST JOURNALISÉ ───────────────────────────────────────────────────
 // Chaque attribution donne une entrée `victory` (cf. HexMap.vue) : le camp,
-// les points, le nouveau total et la raison. `applyReplay` la rejoue telle
+// les points, le nouveau total, la raison, le TOUR (`turn`) et, pour un
+// compte de Fin de tour, `endOfTurn: true`. `applyReplay` la rejoue telle
 // quelle — ce qui la fait aussi arriver, en ligne, chez l'autre joueur (cf.
 // HexMap.vue::applyRemoteEntry), sans canal réseau dédié.
+//
+// ─── UNE SEULE FIN DE TOUR PAR TOUR ──────────────────────────────────────────
+// Les comptes de Fin de tour ne se font qu'UNE fois par tour (cf.
+// `scoredTurns`) : un journal rechargé en pleine Fin de tour rejoue les
+// entrées déjà marquées, il ne doit pas les compter une seconde fois.
+//
+// ─── RÉCAPITULATIF PAR TOUR ──────────────────────────────────────────────────
+// Chaque attribution, jouée ou rejouée, rejoint `history` (`{ turn, side,
+// points }`) : c'est ce que la modale de fin de partie récapitule tour par
+// tour (cf. `byTurn`, GameEndModal.vue).
 //
 // Paramètres reçus :
 //   - `assisted` : ref/computed booléen — décide qui tient le compte.
@@ -68,6 +79,48 @@ export function useVictoryPoints({ assisted, victory = null, terrain = null, hex
   // Total par camp (clé de `module.sides`).
   const scores = ref(Object.fromEntries((victory?.sides ?? []).map((side) => [side, 0])))
 
+  // Attributions de la partie, dans l'ordre : `[{ turn, side, points }]`
+  // (cf. l'en-tête, « Récapitulatif par tour »).
+  const history = ref([])
+
+  // Tours dont la Fin de tour a déjà été soldée (cf. l'en-tête).
+  const scoredTurns = ref(new Set())
+
+  /** Note `points` (positifs ou négatifs) au camp `side` pour le tour `turn`. */
+  function record(turn, side, points) {
+    if (!points) return
+    history.value = [...history.value, { turn: turn ?? 1, side, points }]
+  }
+
+  /** La Fin de tour du tour `turn` a-t-elle déjà été soldée ? */
+  function isTurnScored(turn) {
+    return scoredTurns.value.has(turn)
+  }
+
+  /** Marque la Fin de tour du tour `turn` comme soldée. */
+  function markTurnScored(turn) {
+    if (turn == null || scoredTurns.value.has(turn)) return
+    scoredTurns.value = new Set(scoredTurns.value).add(turn)
+  }
+
+  /** Points marqués par camp, tour par tour : `[{ turn, points: { [camp]:
+   *  n } }]`, du premier tour au dernier où quelqu'un a marqué — un tour
+   *  sans aucun point y figure quand même, à zéro, pour que le tableau se
+   *  lise sans trou. */
+  const byTurn = computed(() => {
+    const sides = victory?.sides ?? []
+    const last = history.value.reduce((max, line) => Math.max(max, line.turn), 0)
+    const rows = []
+    for (let turn = 1; turn <= last; turn += 1) {
+      rows.push({ turn, points: Object.fromEntries(sides.map((side) => [side, 0])) })
+    }
+    for (const line of history.value) {
+      const row = rows[line.turn - 1]
+      if (row && line.side in row.points) row.points[line.side] += line.points
+    }
+    return rows
+  })
+
   /** Fixe le total d'un camp — la seule porte d'entrée, en jeu comme au
    *  rejeu. Renvoie ce qu'il faut journaliser, ou `null` si rien ne change. */
   function set(side, value) {
@@ -88,11 +141,16 @@ export function useVictoryPoints({ assisted, victory = null, terrain = null, hex
 
   /** Rejeu d'une entrée `victory` du journal : le total qu'elle porte fait
    *  foi — jamais un recalcul, sans quoi une partie rechargée pourrait
-   *  compter deux fois. */
-  function applyReplay({ side, total } = {}) {
+   *  compter deux fois. `turn` : le tour de l'attribution ; `endOfTurn` :
+   *  c'était un compte de Fin de tour, qui ne doit pas être refait (cf.
+   *  `scoredTurns`). */
+  function applyReplay({ side, total } = {}, { turn = 1, endOfTurn = false } = {}) {
     if (side == null || total == null) return
     if (!(side in scores.value)) return
-    scores.value = { ...scores.value, [side]: Math.max(0, Math.round(Number(total) || 0)) }
+    const next = Math.max(0, Math.round(Number(total) || 0))
+    record(turn, side, next - scores.value[side])
+    scores.value = { ...scores.value, [side]: next }
+    if (endOfTurn) markTurnScored(turn)
   }
 
   // --- Zones au-delà d'un fleuve (cf. l'en-tête) ------------------------------
@@ -172,7 +230,12 @@ export function useVictoryPoints({ assisted, victory = null, terrain = null, hex
    *  resetBoardForReplay), les entrées rejouées rétablissent les totaux. */
   function reset() {
     scores.value = Object.fromEntries((victory?.sides ?? []).map((side) => [side, 0]))
+    history.value = []
+    scoredTurns.value = new Set()
   }
 
-  return { active, editable, scores, set, award, applyReplay, reset, zoneOf, holdsPosition, eliminationAward, zoneHexes }
+  return {
+    active, editable, scores, set, award, record, applyReplay, reset, zoneOf, holdsPosition, eliminationAward, zoneHexes,
+    isTurnScored, markTurnScored, byTurn,
+  }
 }
