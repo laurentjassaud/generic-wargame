@@ -747,7 +747,7 @@
         "mov": 7,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_3-3-7_032-3I.png",
         "turn": 2,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-11",
@@ -760,7 +760,7 @@
         "mov": 7,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_3-3-7_231-2D.png",
         "turn": 2,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-12",
@@ -773,7 +773,7 @@
         "mov": 10,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_3-3-10_Eng.png",
         "turn": 2,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-13",
@@ -786,7 +786,7 @@
         "mov": 10,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_4-3-10_005-1C.png",
         "turn": 3,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-14",
@@ -799,7 +799,7 @@
         "mov": 10,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_4-3-10_005-2G.png",
         "turn": 3,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-15",
@@ -812,7 +812,7 @@
         "mov": 10,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_4-3-10_005-2I.png",
         "turn": 2,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-16",
@@ -825,7 +825,7 @@
         "mov": 10,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_4-3-10_029-3.png",
         "turn": 8,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-17",
@@ -838,7 +838,7 @@
         "mov": 7,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_5-5-7_032.png",
         "turn": 3,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-18",
@@ -851,7 +851,7 @@
         "mov": 7,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_5-5-7_129.png",
         "turn": 3,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-19",
@@ -864,7 +864,7 @@
         "mov": 7,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_5-5-7_130.png",
         "turn": 4,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-20",
@@ -877,7 +877,7 @@
         "mov": 7,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_5-5-7_214.png",
         "turn": 4,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-21",
@@ -924,7 +924,7 @@
         "mov": 10,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_Arty_019-15.png",
         "turn": 3,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-24",
@@ -939,7 +939,7 @@
         "mov": 10,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_Arty_044.png",
         "turn": 3,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-25",
@@ -954,7 +954,7 @@
         "mov": 10,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_Arty_055.png",
         "turn": 2,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-26",
@@ -969,7 +969,7 @@
         "mov": 6,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_Arty_094.png",
         "turn": 5,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-27",
@@ -984,7 +984,7 @@
         "mov": 6,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_Arty_112.png",
         "turn": 5,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-28",
@@ -999,7 +999,7 @@
         "mov": 6,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_Arty_153.png",
         "turn": 3,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-29",
@@ -1014,7 +1014,7 @@
         "mov": 6,
         "src": "/modules/arnhem/images/counters/commonwealth/CW_Arty_179.png",
         "turn": 5,
-        "setup": "0106"
+        "setup": "0105-0106"
       },
       {
         "id": "cw-30",

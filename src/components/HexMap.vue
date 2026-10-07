@@ -2393,57 +2393,105 @@ const airborneToDropByZone = computed(() => {
   return [...zones.values()]
 })
 
-// Hex de repli pour un `setup` "ref seule" (cf. `entryHexSet`) dont l'hex de
-// référence `ref` est bloqué (cf. `isEntryHexBlocked`) : parmi les hex de
-// bord voisins de `ref` (cf. `isEdgeHex` — généralement 2, celui "avant" et
-// celui "après" le long du bord de la carte), on ne garde que ceux qui ne
-// sont PAS eux-mêmes bloqués, puis on ne retient que le(s) plus proche(s)
-// (cf. lib/hex.js::hexDistance) d'UNE UNITÉ AMIE de `r`, où qu'elle soit sur
-// la carte — les deux hex de repli sont retenus ensemble en cas d'égalité
-// (le joueur choisit alors lequel utiliser). Si aucune unité amie n'est sur
-// la carte (cas limite, ex. tout premier renfort de la partie), tous les
-// hex de repli valides restent proposés faute de repère de distance.
-// Liste vide si aucun repli n'est possible : cf. `entryHexSet`, qui laisse
-// alors le renfort tout simplement hors de portée ce tour-ci (rien n'est
-// surligné, un clic n'importe où ne fait rien — cf. onHex).
+// --- Hex d'entrée bloqué : le repli -----------------------------------------
+// Règle (Arnhem) : « If, and only if, a scheduled entry hex is occupied by an
+// Enemy unit, or a Friendly unit in an Enemy Zone of Control, the
+// Reinforcing unit may enter the nearest unblocked map edge hex to the
+// scheduled hex, in the direction of the nearest Friendly unit. »
+//
+// Elle vaut pour CHAQUE hex d'entrée prévu — l'hex seul d'un `setup` "CCRR"
+// comme chacun des hex d'une plage "CCRR-CCRR" (ex. le XXX Corps, prévu en
+// 0105 ou 0106) : un hex prévu libre reste utilisable, un hex prévu bloqué
+// est remplacé par son repli (cf. `entryHexSet`).
+
+/** L'hex d'entrée prévu `hex` est-il bloqué AU SENS DE LA RÈGLE, ce qui seul
+ *  ouvre le repli : une unité ennemie l'occupe, ou une unité amie figée en
+ *  ZOC ennemie (cf. lib/useAssisted.js::isZocFrozen). Un hex où le renfort
+ *  resterait simplement coincé avec un ami (cf. `entryWouldStack`) est
+ *  inutilisable, mais n'ouvre PAS de repli (« if, and only if »). */
+function entryHexRuleBlocked(reinforcement, hex) {
+  return counters.value.some((counter) => counter.col === hex.col && counter.row === hex.row && isFighter(counter)
+    && (isEnemyOf(reinforcement, counter) || isZocFrozen(counter)))
+}
+
+/** Hex de repli de `reinforcement` pour l'hex d'entrée prévu `ref`, bloqué
+ *  (cf. `entryHexRuleBlocked`) :
+ *   1. on LONGE LE BORD de la carte (cf. `isEdgeHex`) depuis `ref`, dans
+ *      chacun de ses sens — en général deux, "avant" et "après" —, et l'on
+ *      retient dans chaque sens le premier hex non bloqué (cf.
+ *      `isEntryHexBlocked`, qui écarte aussi un hex où le renfort resterait
+ *      coincé) : « the nearest unblocked map edge hex » ;
+ *   2. parmi ces candidats, on garde celui qui va vers l'UNITÉ AMIE LA PLUS
+ *      PROCHE de `ref` (« in the direction of the nearest Friendly unit ») :
+ *      le plus proche d'elle (cf. lib/hex.js::hexDistance) — ou d'elles, si
+ *      plusieurs sont à égale distance de `ref`. Égalité : les DEUX sont
+ *      proposés, le joueur choisit.
+ *  Sans aucune unité amie sur la carte, faute de repère, le(s) plus proche(s)
+ *  de `ref` le long du bord. Liste vide si aucun repli n'est possible : le
+ *  renfort attend alors au bord de la carte. */
 function fallbackEntryHexes(reinforcement, ref) {
-  const candidates = neighborsOf(ref.col, ref.row)
-    .filter((neighbor) => isEdgeHex(neighbor) && !isEntryHexBlocked(reinforcement, neighbor))
+  const key = (hex) => hex.col + ',' + hex.row
+  const visited = new Set([key(ref)])
+  // Parcours en largeur le long du bord ; chaque hex hérite du SENS (le
+  // premier pas depuis `ref`) par lequel il a été atteint en premier.
+  let frontier = neighborsOf(ref.col, ref.row)
+    .filter((hex) => isEdgeHex(hex))
+    .map((hex) => ({ hex, branch: key(hex) }))
+  frontier.forEach(({ hex }) => visited.add(key(hex)))
+  const firstFree = new Map() // sens -> { hex, steps }
+  for (let steps = 1; frontier.length; steps += 1) {
+    const next = []
+    for (const { hex, branch } of frontier) {
+      if (firstFree.has(branch)) continue
+      if (!isEntryHexBlocked(reinforcement, hex)) { firstFree.set(branch, { hex, steps }); continue }
+      for (const neighbor of neighborsOf(hex.col, hex.row)) {
+        if (visited.has(key(neighbor)) || !isEdgeHex(neighbor)) continue
+        visited.add(key(neighbor))
+        next.push({ hex: neighbor, branch })
+      }
+    }
+    frontier = next
+  }
+  const candidates = [...firstFree.values()]
   if (!candidates.length) return []
   const friendlies = counters.value.filter(
     (counter) => isFighter(counter) && !isEnemyOf(reinforcement, counter)
   )
-  if (!friendlies.length) return candidates
-  const distanceToFriendlies = (hex) => Math.min(...friendlies.map((friendly) => hexDistance(hex, friendly)))
-  const scored = candidates.map((candidate) => ({ h: candidate, d: distanceToFriendlies(candidate) }))
-  const minD = Math.min(...scored.map((scoredHex) => scoredHex.d))
-  return scored.filter((scoredHex) => scoredHex.d === minD).map((scoredHex) => scoredHex.h)
+  const keepClosest = (scored) => {
+    const best = Math.min(...scored.map((entry) => entry.d))
+    return scored.filter((entry) => entry.d === best).map((entry) => entry.hex)
+  }
+  if (!friendlies.length) return keepClosest(candidates.map(({ hex, steps }) => ({ hex, d: steps })))
+  const nearestToRef = Math.min(...friendlies.map((friendly) => hexDistance(ref, friendly)))
+  const nearest = friendlies.filter((friendly) => hexDistance(ref, friendly) === nearestToRef)
+  return keepClosest(candidates.map(({ hex }) => ({
+    hex, d: Math.min(...nearest.map((friendly) => hexDistance(hex, friendly))),
+  })))
 }
 
 // Hex d'entrée valides pour le renfort actuellement sélectionné, selon la
 // forme de son `setup` (cf. arnhem.json) :
-//  1. "CCRR-CCRR" (plage bord-de-carte, ex. renforts allemands) : toute la
-//     plage déclarée (cf. enumerateSetupHexes), sauf les hex où le renfort
-//     resterait coincé avec un ami (cf. `entryWouldStack`) ;
-//  2. "CCRR+adj" (aéroporté, ex. chaque unité alliée près de sa DZ) : l'hex
+//  1. "CCRR+adj" (aéroporté, ex. chaque unité alliée près de sa DZ) : l'hex
 //     de référence ET ses 6 voisins, mais en mode Assisté UNIQUEMENT ceux
 //     qui ne contiennent AUCUNE unité, amie comme ennemie (règle "1 unité par
 //     hex" à l'atterrissage, cf. `airborneLandingBlocked`) — pas de blocage
 //     ZOC à ce niveau, l'éventail est déjà large ;
-//  3. "CCRR" seule (sans "-" ni "+adj") : UNIQUEMENT cet hex précis — SAUF
-//     s'il est bloqué (cf. `isEntryHexBlocked`), auquel cas seuls le(s) hex
-//     de repli valide(s) (cf. `fallbackEntryHexes`) sont proposés à la
-//     place (jamais les deux à la fois : soit la référence, soit son/ses
-//     repli(s), jamais plus d'un choix "normal" en même temps).
+//  2. "CCRR" seule, ou "CCRR-CCRR" (plage de bord de carte, ex. renforts
+//     allemands, XXX Corps en 0105 ou 0106) : CHAQUE hex prévu, tel quel
+//     s'il est libre — sauf si le renfort y resterait coincé avec un ami
+//     (cf. `entryWouldStack`) —, remplacé par son/ses hex de repli s'il est
+//     bloqué au sens de la règle (cf. `entryHexRuleBlocked`,
+//     `fallbackEntryHexes`).
 const entryHexSet = computed(() => {
   const reinforcement = selectedReinforcement.value
   const parsed = parseSetup(reinforcement?.setup)
   if (!parsed) return new Set()
   const keys = (cells) => new Set(cells.map((hex) => hex.col + ',' + hex.row))
-  if (parsed.kind === 'range') return keys(rangeCells(parsed, hexOnMap).filter((hex) => !entryWouldStack(reinforcement, hex)))
   if (parsed.kind === 'adjacent') return keys(landingCells(parsed, hexOnMap).filter((hex) => !airborneLandingBlocked(hex)))
-  const { ref } = parsed
-  return keys(isEntryHexBlocked(reinforcement, ref) ? fallbackEntryHexes(reinforcement, ref) : [ref])
+  return keys(rangeCells(parsed, hexOnMap).flatMap((hex) => {
+    if (entryHexRuleBlocked(reinforcement, hex)) return fallbackEntryHexes(reinforcement, hex)
+    return entryWouldStack(reinforcement, hex) ? [] : [hex]
+  }))
 })
 const isEntryHex = (hex) => entryHexSet.value.has(hex.c + ',' + hex.r)
 
