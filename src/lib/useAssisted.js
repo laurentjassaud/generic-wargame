@@ -884,18 +884,44 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
   // pion déjà sur la carte (cf. HexMap.vue::onHex) — pas l'entrée en jeu d'un
   // renfort, qui a ses propres règles de blocage (cf. HexMap.vue::
   // isEntryHexBlocked : ennemi, ou ami figé en ZOC).
+  //
+  // Exception (règle validée) : un ami qui N'A PAS ENCORE BOUGÉ dans cette
+  // phase de Mouvement, et qui peut encore partir, ne compte pas — c'est LUI
+  // qui libérera l'hex en jouant son mouvement ensuite (cf. `willMakeRoom`).
+  // L'unité qui le rejoint peut donc s'y arrêter. Si l'ami ne bouge
+  // finalement pas, le contrôle de fin de phase (cf. `stackedHexes`, qui
+  // compte TOUTES les unités) refuse de quitter la phase.
 
   /** Nombre d'unités AMIES de `c` (même camp, cf. `isEnemyOf` — `c` lui-même
    *  exclu) déjà présentes dans `h`. Marqueurs et pions de soutien ignorés,
    *  ni amis ni ennemis au sens de cette règle — pas plus que les pions
    *  qu'une règle du module dispense de la limite (cf.
    *  `moduleRules.stackingExempt` et lib/useArnhem.js : à Arnhem, une unité
-   *  peut terminer sa phase dans l'hex du génie, qui ne l'encombre pas). */
+   *  peut terminer sa phase dans l'hex du génie, qui ne l'encombre pas), ni
+   *  les amis qui vont encore partir (cf. `willMakeRoom`). */
   function friendlyCount(counter, hex) {
     return counters.value.filter(
       (other) => other.col === hex.c && other.row === hex.r && other.id !== counter?.id && isFighter(other) && !isEnemyOf(counter, other)
-        && moduleRules.stackingExempt?.(other) !== true
+        && moduleRules.stackingExempt?.(other) !== true && !willMakeRoom(other)
     ).length
+  }
+
+  /** `friend`, déjà posé sur la carte, libérera-t-il son hex plus tard dans
+   *  la phase ? Il faut, dans l'ordre :
+   *   1. être en phase de Mouvement (pas la phase Airborne : le contrôle de
+   *      fin de phase, cf. `stackedHexes`, ne vaut que pour le Mouvement) ;
+   *   2. appartenir au camp actif (cf. `canControl`) — lui seul joue ;
+   *   3. N'AVOIR PAS ENCORE BOUGÉ cette phase (cf. `hasMovedThisTurn` — les
+   *      MP sont remis à zéro à chaque changement de camp) ;
+   *   4. ne pas être figé par une ZOC ennemie (cf. `isZocFrozen`) ;
+   *   5. pouvoir faire au moins un pas avec ses MP (cf. `hasExitWithMp`) —
+   *      un pion sans MP déclarés (`mov` absent) peut toujours partir. */
+  function willMakeRoom(friend) {
+    if (phaseStep.value !== 0 || !canControl(friend)) return false
+    if (hasMovedThisTurn(friend) || isZocFrozen(friend)) return false
+    const remaining = remainingMp(friend)
+    if (remaining == null) return true
+    return hasExitWithMp(friend, { c: friend.col, r: friend.row }, remaining)
   }
 
   /** `c` serait-il EN SURPLUS d'empilement en s'arrêtant dans `h` ? Oui si
@@ -956,10 +982,18 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
     // Une fois entré dans `h`, `c` AURA bougé : s'il s'y retrouve en ZOC
     // ennemie, c'est la règle `stopOnEntry` du module qui dit s'il est figé.
     if (rules.zoc.stopOnEntry && enemyZocSet(counter).has(hex.c + ',' + hex.r)) return false
+    return hasExitWithMp(counter, hex, afterEntry)
+  }
+
+  /** `c`, sur `h` avec `mp` MP, a-t-il au moins un voisin franchissable (cf.
+   *  `canEnterTerrain`) et abordable (cf. `terrainCost`) ? Étape 3 de
+   *  `canLeaveAfterEntering`, partagée avec `willMakeRoom`. */
+  function hasExitWithMp(counter, hex, mp) {
+    if (mp <= 0) return false
     return neighborsOf(hex.c, hex.r).some((neighbor) => {
       if (!hexOnMap(neighbor.col, neighbor.row)) return false
       const nh = { c: neighbor.col, r: neighbor.row }
-      return canEnterTerrain(counter, nh, hex) && afterEntry >= terrainCost(nh, hex)
+      return canEnterTerrain(counter, nh, hex) && mp >= terrainCost(nh, hex)
     })
   }
 
@@ -976,7 +1010,8 @@ export function useAssisted(assisted, turnTrackerRef, terrain, counters, sides, 
    *  un renfort) tant qu'elle est en overstack — le joueur doit d'abord la
    *  déplacer ailleurs (ou annuler son mouvement). Marqueurs et pions de
    *  soutien ne comptent jamais (ni amis ni ennemis, cf.
-   *  `wouldOverstack`). Toujours faux hors mode Assisté. */
+   *  `wouldOverstack`), pas plus qu'un ami qui n'a pas encore bougé et
+   *  libérera l'hex (cf. `willMakeRoom`). Toujours faux hors mode Assisté. */
   function isOverstacked(counter) {
     if (!assisted.value || !isFighter(counter)) return false
     return friendlyCount(counter, { c: counter.col, r: counter.row }) >= rules.stackingLimit
