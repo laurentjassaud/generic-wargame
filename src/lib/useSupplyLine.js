@@ -66,7 +66,7 @@
 //   - `hexOnMap` : `(col, row) => bool`.
 import { computed } from 'vue'
 import { hexId, parseHexId } from './calibration.js'
-import { neighborsOf } from './hex.js'
+import { hexDistance, neighborsOf } from './hex.js'
 
 // Étage de départ d'une ligne terrestre : elle n'a encore rien emprunté et
 // passe donc où elle veut. Les étages suivants sont ceux que le module
@@ -249,6 +249,101 @@ export function useSupplyLine({
     return null
   }
 
+  /** LE TRACÉ DE DEBUG de `unit` (cf. HexMap.vue, mode debug, phase de Fin
+   *  de tour) : la même recherche que `pathFor`, mais qui garde l'ÉTAGE de
+   *  chaque pas et qui, faute de ligne complète, rend quand même la MEILLEURE
+   *  ligne partielle et l'endroit où elle casse — c'est ce qu'il faut voir
+   *  pour vérifier la règle sur la carte.
+   *
+   *  - ligne complète : `{ connected: true, steps }` ;
+   *  - ligne coupée : `{ connected: false, steps, rupture }`, où `steps` va
+   *    jusqu'à l'hex atteint le plus PROCHE d'une source (à distance égale, le
+   *    chemin le plus court), et `rupture` dit ce qui empêche le pas suivant
+   *    vers cette source : `{ hex, onEdge, reason }` — `hex` est le voisin
+   *    refusé, `onEdge` vrai si c'est l'HEXSIDE qui bloque (la croix se pose
+   *    alors sur le côté d'hex, pas au centre), `reason` l'une de 'edge'
+   *    (cours d'eau sans pont), 'enemy', 'zoc', 'stage' (la ligne devrait
+   *    redescendre d'étage, ex. quitter la route à travers champs), 'range'
+   *    (portée des aéroportés épuisée), 'offMap', 'noSource' (aucune source
+   *    sur la carte) ou 'detour' (pas suivant libre, mais qui ne mène nulle
+   *    part au-delà).
+   *
+   *  Chaque pas : `{ col, row, stage }` — `stage` est l'étage de l'arête par
+   *  laquelle la ligne ENTRE dans cet hex (0 libre, puis l'index+1 de
+   *  `ground.stages` : 1 piste, 2 route pour Arnhem) ; pour le premier hex,
+   *  celui de l'hex de l'unité (cf. `stageOfHex`). Toujours 0 pour un
+   *  aéroporté (`staged` faux). `null` si l'unité n'est pas concernée. */
+  function traceFor(unit) {
+    if (!concerns(unit)) return null
+    const staged = !isAirborneEntry(unit)
+    const start = { col: unit.col, row: unit.row }
+    const first = staged ? stageOfHex(start) : STAGE_FREE
+    const origin = [{ ...start, stage: first }]
+    const sources = sourcesFor(unit)
+    if (!sources.length) return { connected: false, staged, steps: origin, rupture: { hex: start, onEdge: false, reason: 'noSource' } }
+    const goal = new Set(sources.map((source) => keyOf(source.col, source.row)))
+    if (goal.has(keyOf(start.col, start.row))) return { connected: true, staged, steps: origin }
+    const context = contextFor(sideOf(unit), unit)
+    const limit = rangeFor(unit)
+    const toSource = (hex) => Math.min(...sources.map((source) => hexDistance(hex, source)))
+
+    // Même parcours en largeur que `pathFor`, en retenant au passage l'état le
+    // plus proche d'une source (le premier trouvé à distance égale est le plus
+    // court, la largeur d'abord le garantit).
+    const seen = new Set([keyOf(start.col, start.row) + '@' + first])
+    let frontier = [{ hex: start, stage: first, steps: origin }]
+    let closest = frontier[0]
+    let closestDistance = toSource(start)
+    for (let step = 0; step < limit && frontier.length; step += 1) {
+      const next = []
+      for (const state of frontier) {
+        for (const neighbor of neighborsOf(state.hex.col, state.hex.row)) {
+          if (!edgeAllows(context, state.hex, neighbor)) continue
+          if (!hexAllows(context, neighbor)) continue
+          let stage = STAGE_FREE
+          if (staged) {
+            stage = stageOfEdge(edgeKinds({ c: state.hex.col, r: state.hex.row }, { c: neighbor.col, r: neighbor.row }))
+            if (stage < state.stage) continue
+          }
+          const steps = [...state.steps, { ...neighbor, stage }]
+          if (goal.has(keyOf(neighbor.col, neighbor.row))) return { connected: true, staged, steps }
+          const mark = keyOf(neighbor.col, neighbor.row) + '@' + stage
+          if (seen.has(mark)) continue
+          seen.add(mark)
+          const reached = { hex: neighbor, stage, steps }
+          const distance = toSource(neighbor)
+          if (distance < closestDistance) { closest = reached; closestDistance = distance }
+          next.push(reached)
+        }
+      }
+      frontier = next
+    }
+    return { connected: false, staged, steps: closest.steps, rupture: ruptureAfter(closest, { context, staged, limit, toSource }) }
+  }
+
+  /** Ce qui bloque la ligne partielle `state` au pas suivant (cf.
+   *  `traceFor`) : on examine ses voisins du plus proche au plus éloigné d'une
+   *  source, et l'on rend la raison du refus du PREMIER — c'est le pas que la
+   *  ligne aurait voulu faire. */
+  function ruptureAfter(state, { context, staged, limit, toSource }) {
+    const from = state.hex
+    const candidates = neighborsOf(from.col, from.row)
+      .map((hex) => ({ hex, distance: hexOnMap(hex.col, hex.row) ? toSource(hex) : Infinity }))
+      .sort((a, b) => a.distance - b.distance)
+    const towards = candidates[0].hex
+    if (state.steps.length - 1 >= limit) return { hex: towards, onEdge: false, reason: 'range' }
+    if (!hexOnMap(towards.col, towards.row)) return { hex: towards, onEdge: false, reason: 'offMap' }
+    if (!edgeAllows(context, from, towards)) return { hex: towards, onEdge: true, reason: 'edge' }
+    const key = keyOf(towards.col, towards.row)
+    if (context.enemy.has(key)) return { hex: towards, onEdge: false, reason: 'enemy' }
+    if (!context.friendly.has(key) && context.zoc.has(key)) return { hex: towards, onEdge: false, reason: 'zoc' }
+    if (staged) {
+      const stage = stageOfEdge(edgeKinds({ c: from.col, r: from.row }, { c: towards.col, r: towards.row }))
+      if (stage < state.stage) return { hex: towards, onEdge: true, reason: 'stage' }
+    }
+    return { hex: towards, onEdge: false, reason: 'detour' }
+  }
+
   /** `unit` est-elle reliée à ses arrières ? Pour UNE unité : `unsuppliedIds`
    *  est bien plus rapide dès qu'il faut le savoir pour toute une armée. */
   function hasSupply(unit) {
@@ -379,5 +474,5 @@ export function useSupplyLine({
     return path ? path.hexes.map((hex) => hexId(hex.col + 1, hex.row)) : []
   }
 
-  return { active, concerns, pathFor, hasSupply, unsuppliedIds, pathKeys, pathLabels }
+  return { active, concerns, pathFor, traceFor, hasSupply, unsuppliedIds, pathKeys, pathLabels }
 }

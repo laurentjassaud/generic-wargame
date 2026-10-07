@@ -468,6 +468,20 @@ export default {
     helpTitle: "Guide de l'interface",
   },
 
+  // Ligne de communication en mode debug (cf. lib/useSupplyLine.js::traceFor) :
+  // raison affichée en infobulle sur la croix de rupture.
+  supplyTrace: {
+    rupture: {
+      edge: 'Rupture : cours d\'eau sans pont',
+      enemy: 'Rupture : hex occupé par l\'ennemi',
+      zoc: 'Rupture : ZOC ennemie (aucune unité amie pour l\'annuler)',
+      stage: 'Rupture : la ligne devrait quitter la piste ou la route',
+      range: 'Rupture : portée maximale atteinte (zone de largage trop loin)',
+      offMap: 'Rupture : bord de carte',
+      noSource: 'Rupture : aucune source (zone de largage absente de la carte)',
+      detour: 'Rupture : passage libre, mais sans issue plus loin',
+    },
+  },
 
   guide: {
     stepOf: 'Étape {step} / {total}',

@@ -466,6 +466,20 @@ export default {
     helpTitle: 'Interface guide',
   },
 
+  // Supply line in debug mode (see lib/useSupplyLine.js::traceFor): reason
+  // shown as a tooltip on the break cross.
+  supplyTrace: {
+    rupture: {
+      edge: 'Break: unbridged waterway',
+      enemy: 'Break: hex occupied by the enemy',
+      zoc: 'Break: enemy ZOC (no friendly unit to negate it)',
+      stage: 'Break: the line would have to leave the trail or road',
+      range: 'Break: maximum range reached (drop zone too far)',
+      offMap: 'Break: map edge',
+      noSource: 'Break: no source (drop zone not on the map)',
+      detour: 'Break: open passage, but a dead end further on',
+    },
+  },
 
   guide: {
     stepOf: 'Step {step} / {total}',

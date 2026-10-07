@@ -1962,22 +1962,45 @@ function startVictoryWatch() {
 // La règle (cf. lib/useSupplyLine.js) ne pénalise personne pour l'instant :
 // elle se REGARDE. Pendant la phase de Fin de tour — celle du dernier camp de
 // l'ordre, l'allemand à Arnhem, le moment où l'on fait ses comptes —, un clic
-// sur une unité en mode debug surligne en vert la ligne qui la relie à ses
-// arrières. Recliquer dessus l'efface, comme un clic sur une autre unité la
-// remplace.
+// sur une unité en mode debug trace la ligne qui la relie à ses arrières, de
+// centre d'hex en centre d'hex, chaque pas coloré selon son ÉTAGE (hors
+// piste, piste, route — cf. lib/useSupplyLine.js::traceFor). Une unité COUPÉE
+// montre quand même sa meilleure ligne partielle, terminée par une croix
+// rouge au point de rupture (au centre de l'hex refusé, ou sur l'hexside si
+// c'est lui qui bloque), avec la raison en infobulle. Recliquer sur l'unité
+// efface le tracé, comme un clic sur une autre unité le remplace.
 const supplyLineUnitId = ref(null)
 
 /** Peut-on demander une ligne en ce moment ? */
 const supplyLineOpen = computed(() => debug.value && supplyLine.active.value
   && phase.value === PHASE_END_OF_TURN)
 
-/** Hex de la ligne actuellement montrée, en clés "col,row". */
-const supplyLineKeys = computed(() => {
-  if (!supplyLineOpen.value || supplyLineUnitId.value == null) return new Set()
+/** Tracé de la ligne actuellement montrée, prêt à dessiner (coordonnées
+ *  pixel) : `{ segments: [{ x1, y1, x2, y2, stage }], start, cross }` —
+ *  `cross` (`{ x, y, reason }`) seulement si la ligne est coupée. `null` si
+ *  aucune ligne n'est demandée. */
+const supplyTrace = computed(() => {
+  if (!supplyLineOpen.value || supplyLineUnitId.value == null) return null
   const unit = counters.value.find((counter) => String(counter.id) === String(supplyLineUnitId.value))
-  return unit ? supplyLine.pathKeys(unit) : new Set()
+  const trace = unit && supplyLine.traceFor(unit)
+  if (!trace) return null
+  const centers = trace.steps.map((step) => ({ ...hexCenterPx(step.col, step.row), stage: step.stage }))
+  const segments = centers.slice(1).map((center, index) => ({
+    x1: centers[index].x, y1: centers[index].y, x2: center.x, y2: center.y, stage: center.stage,
+  }))
+  let cross = null
+  if (!trace.connected) {
+    const last = centers.at(-1)
+    const refused = hexCenterPx(trace.rupture.hex.col, trace.rupture.hex.row)
+    const at = trace.rupture.onEdge ? { x: (last.x + refused.x) / 2, y: (last.y + refused.y) / 2 } : refused
+    cross = { ...at, reason: trace.rupture.reason }
+  }
+  return { segments, start: centers[0], cross }
 })
-const isSupplyLineHex = (hex) => supplyLineKeys.value.has(hex.c + ',' + hex.r)
+
+/** Demi-largeur de la croix de rupture : un quart de pas de ligne, assez
+ *  pour se voir sans masquer l'hex voisin. */
+const SUPPLY_CROSS = computed(() => calibration.rowStep / 4)
 
 /** UNITÉS HORS COMMUNICATION, cerclées de rouge sur la carte pendant la phase
  *  de Fin de tour — le moment où l'on fait ses comptes. Contrairement au
@@ -3690,12 +3713,26 @@ function onMapDragEnd() {
             :points="hex.pts" vector-effect="non-scaling-stroke" />
         </g>
 
-        <!-- cf. lib/useSupplyLine.js — ligne de communication de l'unité
-             cliquée (mode debug, phase de Fin de tour). Purement informatif :
-             les clics la traversent. -->
-        <g v-if="supplyLineKeys.size">
-          <polygon v-for="hex in hexes.filter(isSupplyLineHex)" :key="'loc' + hex.id" class="hex-supply-line"
-            :points="hex.pts" vector-effect="non-scaling-stroke" />
+        <!-- cf. lib/useSupplyLine.js::traceFor — ligne de communication de
+             l'unité cliquée (mode debug, phase de Fin de tour) : un segment
+             par pas, coloré selon son étage (hors piste, piste, route), et une
+             croix rouge au point de rupture si la ligne est coupée.
+             Purement informatif : les clics la traversent. -->
+        <g v-if="supplyTrace" class="supply-trace">
+          <circle :cx="supplyTrace.start.x" :cy="supplyTrace.start.y" :r="SUPPLY_CROSS / 2"
+            :class="'supply-stage-' + Math.min(supplyTrace.segments[0]?.stage ?? 0, 2)" />
+          <line v-for="(segment, index) in supplyTrace.segments" :key="'loc' + index"
+            :x1="segment.x1" :y1="segment.y1" :x2="segment.x2" :y2="segment.y2"
+            :class="'supply-stage-' + Math.min(segment.stage, 2)" vector-effect="non-scaling-stroke" />
+          <g v-if="supplyTrace.cross" class="supply-rupture">
+            <title>{{ t('supplyTrace.rupture.' + supplyTrace.cross.reason) }}</title>
+            <line :x1="supplyTrace.cross.x - SUPPLY_CROSS" :y1="supplyTrace.cross.y - SUPPLY_CROSS"
+              :x2="supplyTrace.cross.x + SUPPLY_CROSS" :y2="supplyTrace.cross.y + SUPPLY_CROSS"
+              vector-effect="non-scaling-stroke" />
+            <line :x1="supplyTrace.cross.x - SUPPLY_CROSS" :y1="supplyTrace.cross.y + SUPPLY_CROSS"
+              :x2="supplyTrace.cross.x + SUPPLY_CROSS" :y2="supplyTrace.cross.y - SUPPLY_CROSS"
+              vector-effect="non-scaling-stroke" />
+          </g>
         </g>
 
         <!-- cf. lib/useBridges.js — ponts démolissables dont le sort est
@@ -4137,14 +4174,26 @@ polygon.hex.entry:hover {
   pointer-events: none;
 }
 
-/* cf. lib/useSupplyLine.js — hex d'une ligne de communication (mode debug) :
-   un liseré vert franc, qui se suit d'un hex à l'autre sans masquer la carte
-   ni les pions. */
-.hex-supply-line {
-  fill: var(--green-a18);
-  stroke: var(--color-green-light);
-  stroke-width: 3;
+/* cf. lib/useSupplyLine.js::traceFor — ligne de communication (mode debug) :
+   un trait de centre d'hex en centre d'hex, une couleur par étage — orange
+   hors piste (et pour un aéroporté, que les étages n'engagent pas), or sur
+   piste, bleu sur route —, et une croix rouge au point de rupture. Les clics
+   traversent le tracé ; seule la croix capte le survol, pour son infobulle
+   (la raison de la rupture). */
+.supply-trace line {
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+.supply-trace .supply-stage-0 { stroke: var(--color-orange); fill: var(--color-orange); }
+.supply-trace .supply-stage-1 { stroke: var(--color-gold); fill: var(--color-gold); }
+.supply-trace .supply-stage-2 { stroke: var(--color-blue); fill: var(--color-blue); }
+.supply-trace circle,
+.supply-trace > line {
   pointer-events: none;
+}
+.supply-rupture line {
+  stroke: var(--color-red);
+  stroke-width: 6;
 }
 
 /* cf. lib/useBridges.js — sort d'un pont démolissable, marqué au milieu de
