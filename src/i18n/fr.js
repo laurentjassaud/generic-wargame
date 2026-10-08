@@ -198,6 +198,7 @@ export default {
     intro: 'Un export du jeu sera réalisé, et placé dans un rapport de bug GitHub. Il vous faut un compte GitHub pour poursuivre.',
     quick: "Cela ne vous prendra qu'un instant de signaler le bug et vous pourrez reprendre votre partie ensuite.",
     lastMoves: "L'export ne contiendra que les {count} derniers coups, donc assurez-vous que votre problème s'y trouve, ou bien détaillez la marche à suivre pour le reproduire.",
+    fullGame: "La partie complète sera téléchargée ({file}) : glissez ce fichier dans le rapport GitHub, il permet de reproduire le problème.",
     titlePlaceholder: 'Un titre concis',
     descriptionPlaceholder: "Ce qu'il s'est passé",
     exportFailed: "L'export du jeu n'a pas pu être préparé : décrivez le problème en détail.",

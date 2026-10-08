@@ -20,6 +20,10 @@
 //      (gzip) puis encodé en base64url — illisible tel quel, mais plusieurs
 //      fois plus court que le JSON. Décodage :
 //      `node scripts/decode-bug-report.mjs <export>`.
+//
+// La partie COMPLÈTE ne tient pas dans l'URL : elle est téléchargée au clic
+// sur "Soumettre" (cf. BugReportModal.vue), et le ticket demande d'y glisser
+// ce fichier (section "Partie complète").
 
 /** Dépôt GitHub qui reçoit les rapports ("propriétaire/nom"). */
 export const GITHUB_REPO = import.meta.env.VITE_GITHUB_REPO || 'laurentjassaud/generic-wargame'
@@ -75,8 +79,13 @@ export async function prepareExport(snapshot) {
 }
 
 /** Corps Markdown du ticket. */
-function issueBody({ description, context, lines, exported }) {
-  const parts = [description.trim() || '_(pas de description)_', '', '### Contexte']
+function issueBody({ description, context, lines, exported, gameFileName }) {
+  const parts = [description.trim() || '_(pas de description)_', '']
+  if (gameFileName) {
+    parts.push('### Partie complète',
+      `**Glissez ici le fichier \`${gameFileName}\`**, qui vient d'être téléchargé (dossier Téléchargements).`, '')
+  }
+  parts.push('### Contexte')
   for (const [label, value] of context) parts.push(`- ${label} : ${value}`)
   parts.push(`- Version : ${[APP_RELEASE, APP_VERSION].filter(Boolean).join(' · ') || 'inconnue'}`)
   parts.push(`- Navigateur : ${navigator.userAgent}`)
@@ -93,9 +102,9 @@ function issueBody({ description, context, lines, exported }) {
  *  (du plus ancien au plus récent) ; on en garde le plus possible, les plus
  *  récents d'abord, puis, en dernier recours, on raccourcit la description.
  *  Renvoie `{ url, lineCount, descriptionCut }`. */
-export function buildIssueUrl({ title, description, context, lines, exported }) {
+export function buildIssueUrl({ title, description, context, lines, exported, gameFileName = '' }) {
   const make = (text, kept) => {
-    const params = new URLSearchParams({ title: title.trim(), body: issueBody({ description: text, context, lines: kept, exported }) })
+    const params = new URLSearchParams({ title: title.trim(), body: issueBody({ description: text, context, lines: kept, exported, gameFileName }) })
     return `https://github.com/${GITHUB_REPO}/issues/new?${params}`
   }
   for (let count = lines.length; count >= 0; count--) {

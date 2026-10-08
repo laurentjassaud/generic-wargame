@@ -48,6 +48,18 @@ export function sameSettings(settingsA, settingsB) {
   return RULE_SETTING_KEYS.every((settingKey) => ra[settingKey] === rb[settingKey])
 }
 
+/** Télécharge `content` en fichier JSON nommé `name` (export du journal,
+ *  partie complète jointe à un rapport de bug). */
+export function downloadJson(name, content) {
+  const blob = new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const downloadLink = document.createElement('a')
+  downloadLink.href = url
+  downloadLink.download = name
+  downloadLink.click()
+  URL.revokeObjectURL(url)
+}
+
 /** Met de côté un journal à rejouer après la relance de la partie. */
 export function stashPendingReplay(entries, message) {
   try {

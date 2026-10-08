@@ -12,7 +12,7 @@
 
 import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AUTOSAVE_KEY, normalizeSettings, sameSettings, hasPendingReplay, takePendingReplay } from '../lib/journalStorage.js'
+import { AUTOSAVE_KEY, downloadJson, normalizeSettings, sameSettings, hasPendingReplay, takePendingReplay } from '../lib/journalStorage.js'
 
 const props = defineProps({
   // Identifiant/nom du module en cours (cf. HexMap.vue) et tour courant —
@@ -144,14 +144,18 @@ function toChronological() {
  *  `{ module, settings, entries }` (les anciens fichiers, simple liste
  *  d'entrées, restent lisibles — cf. `onFileChosen`). */
 function exportJournal() {
-  const content = { module: props.moduleId, settings: normalizeSettings(props.settings), entries: toChronological() }
-  const blob = new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const downloadLink = document.createElement('a')
-  downloadLink.href = url
-  downloadLink.download = `${saveLabel(false)}.json`
-  downloadLink.click()
-  URL.revokeObjectURL(url)
+  const { name, content } = gameFile()
+  downloadJson(name, content)
+}
+
+/** Partie complète, au format de l'export manuel : `{ name, content }`.
+ *  Aussi téléchargée avec un rapport de bug (cf. BugReportModal.vue), ce
+ *  qui permet de la recharger pour reproduire le problème. */
+function gameFile() {
+  return {
+    name: `${saveLabel(false)}.json`,
+    content: { module: props.moduleId, settings: normalizeSettings(props.settings), entries: toChronological() },
+  }
 }
 
 // --- Auto-save : un seul emplacement (clé localStorage fixe), écrasé à
@@ -311,8 +315,9 @@ function revealEntry(entry) {
 }
 
 // `toChronological` : journal complet, du plus ancien au plus récent — sert
-// aussi à l'export joint à un rapport de bug (cf. HexMap.vue::bugReportSnapshot).
-defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendRemote, removeByUid, loadShared, toChronological })
+// aussi à l'export joint à un rapport de bug (cf. HexMap.vue::bugReportSnapshot),
+// et `gameFile` à la partie complète téléchargée avec ce rapport.
+defineExpose({ log, clear, remove, revealEntry, resumePending, getEntry, appendRemote, removeByUid, loadShared, toChronological, gameFile })
 </script>
 
 <template>

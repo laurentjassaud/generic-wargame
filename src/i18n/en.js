@@ -196,6 +196,7 @@ export default {
     intro: 'An export of the game will be made and put into a GitHub bug report. You need a GitHub account to continue.',
     quick: 'Reporting the bug only takes a moment, and you can resume your game afterwards.',
     lastMoves: 'The export will only contain the last {count} moves, so make sure your problem is among them, or describe the steps to reproduce it.',
+    fullGame: 'The full game will be downloaded ({file}): drop this file into the GitHub report, it lets us reproduce the problem.',
     titlePlaceholder: 'A short title',
     descriptionPlaceholder: 'What happened',
     exportFailed: 'The game export could not be prepared: describe the problem in detail.',

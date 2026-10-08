@@ -1495,7 +1495,7 @@ function mpText(counter) {
 const phaseName = (index) => t(`phases.${['movement', 'combat', 'endOfTurn'][index]}`)
 
 // --- Signaler un bug (cf. BugReportModal.vue, lib/bugReport.js) : état du
-// jeu capturé au clic sur le bouton — `{ snapshot, context }` — ou `null`
+// jeu capturé au clic sur le bouton — `{ snapshot, game, context }` — ou `null`
 // (modale fermée). Toujours accessible, même pendant un rejeu ou le tour
 // adverse : un bug peut se signaler à tout moment.
 const bugReport = ref(null)
@@ -1532,6 +1532,7 @@ function openBugReport() {
   const side = turnInfo.value.activeSideKey
   bugReport.value = {
     snapshot: bugReportSnapshot(),
+    game: journalRef.value?.gameFile() ?? null,
     context: [
       ['Module', `${props.module.name} (${props.moduleId || '?'})`],
       ['Réglages', settings || 'inconnus'],
@@ -3931,7 +3932,7 @@ function onMapDragEnd() {
     <!-- Guide de l'interface : cf. `showGuide`. -->
     <InterfaceGuide v-if="showGuide" :assisted="assisted" @close="closeGuide" />
 
-    <BugReportModal v-if="bugReport" :snapshot="bugReport.snapshot" :context="bugReport.context" @close="bugReport = null" />
+    <BugReportModal v-if="bugReport" :snapshot="bugReport.snapshot" :game="bugReport.game" :context="bugReport.context" @close="bugReport = null" />
 
     <PhaseBlockedModal v-if="showPhaseBlocked" v-bind="phaseBlockedView" @close="showPhaseBlocked = false" />
 

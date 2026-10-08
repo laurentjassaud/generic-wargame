@@ -6,6 +6,12 @@
 // (cf. lib/bugReport.js, qui construit tout le rapport). Il ne reste qu'à la
 // valider avec son compte GitHub, puis à revenir à la partie.
 //
+// La partie COMPLÈTE ne tient pas dans l'URL du ticket, et GitHub ne permet
+// pas d'y joindre un fichier d'avance : "Soumettre" la TÉLÉCHARGE donc aussi
+// (format de l'export du journal, rechargeable), et le ticket invite le
+// joueur à y glisser ce fichier. L'export compressé des derniers coups reste
+// dans le ticket au cas où le fichier ne serait pas joint.
+//
 // "Soumettre" est un vrai LIEN (`<a target="_blank">`) plutôt qu'un
 // `window.open` : l'export est compressé de façon asynchrone à l'ouverture de
 // la modale, et une fenêtre ouverte après un `await` serait bloquée par
@@ -16,11 +22,15 @@
 // "Annuler", le bouton de fermeture et Échap le font.
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { buildIssueUrl, prepareExport, REPORT_ENTRIES } from '../lib/bugReport.js'
+import { downloadJson } from '../lib/journalStorage.js'
 
 const props = defineProps({
   // État du jeu à exporter (cf. HexMap.vue::bugReportSnapshot), avec ses
   // `entries` : les derniers coups du journal.
   snapshot: { type: Object, required: true },
+  // Partie complète à télécharger, `{ name, content }` (cf.
+  // JournalPanel.vue::gameFile), ou `null`.
+  game: { type: Object, default: null },
   // Contexte lisible, `[[libellé, valeur], ...]` (module, réglages...).
   context: { type: Array, default: () => [] },
 })
@@ -52,23 +62,29 @@ function onKey(event) {
 /** Derniers coups en clair, du plus ancien au plus récent. */
 const lines = computed(() => (props.snapshot.entries ?? []).map((entry) => `${entry.t ?? ''} · ${entry.text ?? entry.kind}`))
 
+/** Nom du fichier de la partie complète téléchargé avec le rapport, ou ''. */
+const gameFileName = computed(() => (props.game ? `bug-report_${props.game.name}` : ''))
+
 /** Ticket pré-rempli (cf. lib/bugReport.js::buildIssueUrl), ou `null` tant
  *  qu'il manque le titre ou l'export. */
 const issue = computed(() => {
   if (!title.value.trim() || !exported.value) return null
   return buildIssueUrl({
     title: title.value, description: description.value, context: props.context, lines: lines.value, exported: exported.value,
+    gameFileName: gameFileName.value,
   })
 })
 
-/** Clic sur "Soumettre" : le lien ouvre GitHub dans un nouvel onglet, puis
- *  la modale se ferme. Fermée au tour suivant seulement : retirer le lien du
- *  DOM pendant son propre clic pourrait annuler l'ouverture de l'onglet. */
+/** Clic sur "Soumettre" : télécharge la partie complète, le lien ouvre
+ *  GitHub dans un nouvel onglet, puis la modale se ferme. Fermée au tour
+ *  suivant seulement : retirer le lien du DOM pendant son propre clic
+ *  pourrait annuler l'ouverture de l'onglet. */
 function onSubmit(event) {
   if (!issue.value) {
     event.preventDefault()
     return
   }
+  if (props.game) downloadJson(gameFileName.value, props.game.content)
   setTimeout(() => emit('close'), 0)
 }
 </script>
@@ -82,7 +98,8 @@ function onSubmit(event) {
       </header>
       <p class="br-text">{{ $t('bugReport.intro') }}</p>
       <p class="br-note br-orange">{{ $t('bugReport.quick') }}</p>
-      <p class="br-note br-red">{{ $t('bugReport.lastMoves', { count: REPORT_ENTRIES }) }}</p>
+      <p v-if="game" class="br-note br-red">{{ $t('bugReport.fullGame', { file: gameFileName }) }}</p>
+      <p v-else class="br-note br-red">{{ $t('bugReport.lastMoves', { count: REPORT_ENTRIES }) }}</p>
       <input v-model="title" class="br-field" type="text" maxlength="120" :placeholder="$t('bugReport.titlePlaceholder')" />
       <textarea v-model="description" class="br-field" rows="3" :placeholder="$t('bugReport.descriptionPlaceholder')" />
       <!-- Ce que l'export a dû laisser de côté pour tenir dans l'URL GitHub. -->
