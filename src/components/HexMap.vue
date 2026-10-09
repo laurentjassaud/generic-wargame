@@ -3552,11 +3552,34 @@ const gameEnd = computed(() => {
     return { reason: gameOverReason.value ?? 'blitz', winner: winner ? sideLabel(winner) : null, loser: sideLabel(blitzLoser.value) }
   }
   if (!isFinalEndOfTurn.value) return null
-  // Victoire aux points : le camp qui en a le plus, ou match nul.
+  // Victoire aux points. Le module déclare ses paliers (cf.
+  // useVictoryPoints.js::outcome — rapport des totaux, victoire stratégique
+  // ou tactique) : ils font foi. Sinon, le camp qui a le plus de points, ou
+  // match nul.
+  const outcome = victory.outcome.value
+  if (outcome) return { reason: 'end', winner: outcome.winner ? sideLabel(outcome.winner) : null, loser: null, level: outcome.level }
   const scores = victory.scores.value
   const ranked = [...turnOrder].sort((sideA, sideB) => (scores[sideB] ?? 0) - (scores[sideA] ?? 0))
   const tie = ranked.length > 1 && (scores[ranked[0]] ?? 0) === (scores[ranked[1]] ?? 0)
   return { reason: 'end', winner: ranked.length && !tie ? sideLabel(ranked[0]) : null, loser: null }
+})
+
+/** Résultat aux points, pour les modales de fin et de concession (cf.
+ *  GameEndModal.vue, `outcome`) : libellés des deux camps comparés, leurs
+ *  totaux, le rapport et ce qu'il donne — ou `null` si le module ne déclare
+ *  aucun palier (cf. useVictoryPoints.js::outcome). Une concession ou une
+ *  pendule Blitz reste une défaite : ce résultat n'y est qu'indicatif. */
+const victoryOutcome = computed(() => {
+  const outcome = victory.outcome.value
+  if (!outcome) return null
+  const scores = victory.scores.value
+  return {
+    of: sideLabel(outcome.of), to: sideLabel(outcome.to),
+    pointsOf: scores[outcome.of] ?? 0, pointsTo: scores[outcome.to] ?? 0,
+    ratio: outcome.ratio,
+    winner: outcome.winner ? sideLabel(outcome.winner) : null,
+    level: outcome.level,
+  }
 })
 
 /** Bouton "Concéder la partie" : demande d'abord confirmation. */
@@ -3958,9 +3981,10 @@ function onMapDragEnd() {
     <!-- cf. `gameEnd` — fin de partie : concession, pendule Blitz à 0 ou
          fin du dernier tour. Et la confirmation d'une concession (cf.
          `askConcede`). -->
-    <GameEndModal v-if="concedeConfirm" :confirm-side="sideLabel(concedingSide)"
+    <GameEndModal v-if="concedeConfirm" :confirm-side="sideLabel(concedingSide)" :outcome="victoryOutcome"
       @confirm="concede" @close="concedeConfirm = false" />
     <GameEndModal v-else-if="showGameEnd && gameEnd" :reason="gameEnd.reason" :winner="gameEnd.winner" :loser="gameEnd.loser"
+      :level="gameEnd.level ?? null" :outcome="victoryOutcome"
       :sides="victorySides" :rows="victoryByTurn" :totals="victoryScores" @close="showGameEnd = false" />
 
     <!-- cf. setSelectedCounter — changement de sélection refusé : l'unité

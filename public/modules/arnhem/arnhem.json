@@ -1517,7 +1517,17 @@
       "zones": [
         { "id": "waal", "label": "au-dela de la Waal", "seed": "3005", "to": "allies", "points": 5 },
         { "id": "rijn", "label": "au-dela du Neder Rijn", "seed": "3706", "to": "allies", "points": 10 }
-      ]
+      ],
+      "outcome": {
+        "ratio": { "of": "german", "to": "allies" },
+        "levels": [
+          { "min": 3, "winner": "german", "level": "strategic" },
+          { "min": 2.01, "winner": "german", "level": "tactical" },
+          { "min": 2, "winner": null },
+          { "min": 1.01, "winner": "allies", "level": "tactical" },
+          { "winner": "allies", "level": "strategic" }
+        ]
+      }
     },
     "supplyLine": {
       "side": "allies",

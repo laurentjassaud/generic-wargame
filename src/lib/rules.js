@@ -210,6 +210,14 @@ export function resolveSupplyLine(raw) {
  *  et `points`) ; `zoneBarriers` les couches d'arêtes qui délimitent ces
  *  zones (les rivières), et qu'un remplissage ne franchit jamais.
  *
+ *  `outcome` (facultatif) : le RÉSULTAT de la partie d'après les totaux
+ *  (cf. useVictoryPoints.js::outcome) — `ratio: { of, to }`, les deux camps
+ *  dont on compare les points (`of` contre `to`, ramené à « N contre 1 »),
+ *  et `levels`, les paliers de ce rapport du plus haut au plus bas : chacun
+ *  `min` (rapport minimal, inclus ; absent sur le dernier, qui ramasse tout
+ *  le reste), `winner` (camp vainqueur, `null` pour un match nul) et `level`
+ *  ('strategic' | 'tactical').
+ *
  *  `sides` est indispensable : sans camp, rien à compter. */
 export function resolveVictoryPoints(raw) {
   if (!raw || typeof raw !== 'object') return null
@@ -235,7 +243,25 @@ export function resolveVictoryPoints(raw) {
       : null,
     zones,
     zoneBarriers: (Array.isArray(raw.zoneBarriers) ? raw.zoneBarriers : []).filter((layer) => typeof layer === 'string' && layer),
+    outcome: resolveOutcome(raw.outcome, sides),
   }
+}
+
+/** `victoryPoints.outcome` → paliers de résultat vérifiés, ou `null` (cf.
+ *  `resolveVictoryPoints`). Un palier sans `min` vaut pour tout rapport. */
+function resolveOutcome(raw, sides) {
+  if (!raw || typeof raw !== 'object') return null
+  const ratio = raw.ratio && typeof raw.ratio === 'object' ? raw.ratio : {}
+  if (!sides.includes(ratio.of) || !sides.includes(ratio.to) || ratio.of === ratio.to) return null
+  const levels = (Array.isArray(raw.levels) ? raw.levels : [])
+    .filter((level) => level && typeof level === 'object' && (level.winner == null || sides.includes(level.winner)))
+    .map((level) => ({
+      min: typeof level.min === 'number' && Number.isFinite(level.min) ? level.min : -Infinity,
+      winner: level.winner ?? null,
+      level: level.winner == null ? null : (level.level === 'tactical' ? 'tactical' : 'strategic'),
+    }))
+    .sort((levelA, levelB) => levelB.min - levelA.min)
+  return levels.length ? { ratio: { of: ratio.of, to: ratio.to }, levels } : null
 }
 
 /** `module.rules` (objet libre, éventuellement absent) → règles prêtes à

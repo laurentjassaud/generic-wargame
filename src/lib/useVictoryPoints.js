@@ -47,6 +47,25 @@
 // `scoredTurns`) : un journal rechargé en pleine Fin de tour rejoue les
 // entrées déjà marquées, il ne doit pas les compter une seconde fois.
 //
+// ─── RÉSULTAT DE LA PARTIE ───────────────────────────────────────────────────
+// Le module peut déclarer comment les totaux se traduisent en résultat
+// (`victory.outcome`, cf. lib/rules.js::resolveOutcome) : on divise les
+// points d'un camp par ceux de l'autre, et le rapport obtenu, arrondi au
+// centième (la table se lit au centième : 2,01, 1,99...), tombe dans un
+// palier. Arnhem compare Allemands contre Alliés :
+//   - 3,00 contre 1 ou plus  → victoire stratégique allemande ;
+//   - de 2,01 à 2,99         → victoire tactique allemande ;
+//   - exactement 2,00        → match nul ;
+//   - de 1,01 à 1,99         → victoire tactique alliée ;
+//   - 1,00 contre 1 ou moins → victoire stratégique alliée.
+// Cas limites : un camp `to` à zéro face à des points adverses donne un
+// rapport infini (premier palier) ; deux camps à zéro, aucun rapport — match
+// nul (cf. `outcome`).
+// C'est le résultat d'une partie menée à son DERNIER tour. Une concession
+// ou une pendule Blitz à zéro reste une défaite, quel que soit ce rapport :
+// la fin de partie l'affiche alors à titre indicatif (cf. HexMap.vue::
+// gameEnd, GameEndModal.vue).
+//
 // ─── RÉCAPITULATIF PAR TOUR ──────────────────────────────────────────────────
 // Chaque attribution, jouée ou rejouée, rejoint `history` (`{ turn, side,
 // points }`) : c'est ce que la modale de fin de partie récapitule tour par
@@ -119,6 +138,24 @@ export function useVictoryPoints({ assisted, victory = null, terrain = null, hex
       if (row && line.side in row.points) row.points[line.side] += line.points
     }
     return rows
+  })
+
+  /** Résultat de la partie d'après les totaux actuels (cf. l'en-tête,
+   *  « Résultat de la partie ») : `{ of, to, ratio, winner, level }` —
+   *  `ratio` arrondi au centième (`Infinity` si `to` n'a rien marqué, `null`
+   *  si personne n'a rien marqué), `winner` le camp vainqueur ou `null` pour
+   *  un match nul, `level` 'strategic' | 'tactical' | `null`. `null` si le
+   *  module ne déclare aucun palier. */
+  const outcome = computed(() => {
+    const rule = victory?.outcome
+    if (!active.value || !rule) return null
+    const { of, to } = rule.ratio
+    const pointsOf = scores.value[of] ?? 0
+    const pointsTo = scores.value[to] ?? 0
+    if (pointsOf === 0 && pointsTo === 0) return { of, to, ratio: null, winner: null, level: null }
+    const ratio = pointsTo === 0 ? Infinity : Math.round((pointsOf / pointsTo) * 100) / 100
+    const reached = rule.levels.find((level) => ratio >= level.min) ?? rule.levels[rule.levels.length - 1]
+    return { of, to, ratio, winner: reached.winner, level: reached.level }
   })
 
   /** Fixe le total d'un camp — la seule porte d'entrée, en jeu comme au
@@ -236,6 +273,6 @@ export function useVictoryPoints({ assisted, victory = null, terrain = null, hex
 
   return {
     active, editable, scores, set, award, record, applyReplay, reset, zoneOf, holdsPosition, eliminationAward, zoneHexes,
-    isTurnScored, markTurnScored, byTurn,
+    isTurnScored, markTurnScored, byTurn, outcome,
   }
 }

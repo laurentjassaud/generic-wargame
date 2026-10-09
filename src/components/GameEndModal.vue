@@ -7,7 +7,13 @@
 //   - un camp CONCÈDE la partie (bouton de la barre d'outils) ;
 //   - Blitz : la pendule d'un camp est tombée à 0 ;
 //   - la Fin de tour du DERNIER tour de la piste est atteinte : le vainqueur
-//     est le camp qui a le plus de points (égalité : match nul).
+//     se lit au rapport des points, si le module en déclare les paliers (cf.
+//     lib/useVictoryPoints.js::outcome — victoire stratégique ou tactique,
+//     ou match nul), sinon c'est le camp qui a le plus de points (égalité :
+//     match nul).
+// Le résultat aux points (`outcome`) est rappelé sous le titre dans TOUS les
+// cas, y compris dans la demande de concession : une concession ou une
+// pendule Blitz reste une défaite, il n'y est qu'indicatif.
 // Le composant ne décide de rien : HexMap.vue lui passe le vainqueur, la
 // raison et les lignes du tableau, il ne fait que les AFFICHER.
 //
@@ -16,6 +22,7 @@
 //
 // BLOQUANTE (overlay), comme VictoryModal.vue.
 import { computed, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
   // 'concede' | 'blitz' | 'end' — ce qui a mis fin à la partie.
@@ -24,6 +31,13 @@ const props = defineProps({
   // un match nul) et perdant (concession, Blitz).
   winner: { type: String, default: null },
   loser: { type: String, default: null },
+  // Fin du dernier tour, quand le module déclare ses paliers : 'strategic' |
+  // 'tactical' (`null` : match nul, ou pas de palier).
+  level: { type: String, default: null },
+  // Résultat aux points (cf. HexMap.vue::victoryOutcome) : `{ of, to,
+  // pointsOf, pointsTo, ratio, winner, level }`, ou `null` si le module n'en
+  // déclare pas.
+  outcome: { type: Object, default: null },
   // Camps du tableau, dans l'ordre du module : `[{ key, label }]`.
   sides: { type: Array, default: () => [] },
   // Points par tour : `[{ turn, points: { [camp]: n } }]` (cf. `byTurn`).
@@ -37,6 +51,8 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'confirm'])
 
+const { t, locale } = useI18n()
+
 function onKey(event) {
   if (event.key === 'Escape') emit('close')
   else if (event.key === 'Enter' && !props.confirmSide) emit('close')
@@ -46,6 +62,34 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 /** Phrase sous le titre : comment la partie s'est terminée. */
 const reasonKey = computed(() => ({ concede: 'gameEnd.byConcession', blitz: 'gameEnd.byTime' }[props.reason] ?? 'gameEnd.byTurns'))
+
+/** Phrase de félicitations : victoire stratégique ou tactique quand le
+ *  module en déclare les paliers (fin du dernier tour), sinon la victoire
+ *  simple, ou le match nul. */
+const bravo = computed(() => {
+  if (!props.winner) return t(props.outcome && props.reason === 'end' ? 'gameEnd.drawOnRatio' : 'gameEnd.draw')
+  if (props.reason === 'end' && props.level) return t(`gameEnd.bravoLevel.${props.level}`, { side: props.winner })
+  return t('gameEnd.bravo', { side: props.winner })
+})
+
+/** Ligne « résultat aux points » (cf. `outcome`) : totaux comparés, rapport
+ *  « N contre 1 » au centième, et ce qu'il donne. */
+const outcomeLine = computed(() => {
+  const outcome = props.outcome
+  if (!outcome) return null
+  const result = outcome.winner
+    ? t(`gameEnd.resultLevel.${outcome.level ?? 'strategic'}`, { side: outcome.winner })
+    : t('gameEnd.resultDraw')
+  if (outcome.ratio == null) return t('gameEnd.pointsNone', { result })
+  const ratio = outcome.ratio === Infinity
+    ? '∞'
+    : outcome.ratio.toLocaleString(locale.value, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return t('gameEnd.pointsRatio', { of: outcome.of, pointsOf: outcome.pointsOf, to: outcome.to, pointsTo: outcome.pointsTo, ratio, result })
+})
+
+/** Partie arrêtée avant son terme (concession, Blitz) : le résultat aux
+ *  points n'est qu'indicatif. */
+const outcomeIndicative = computed(() => !!props.confirmSide || props.reason !== 'end')
 </script>
 
 <template>
@@ -54,6 +98,7 @@ const reasonKey = computed(() => ({ concede: 'gameEnd.byConcession', blitz: 'gam
       <template v-if="confirmSide">
         <h3 id="ge-title">{{ $t('gameEnd.confirmTitle') }}</h3>
         <p>{{ $t('gameEnd.confirmMessage', { side: confirmSide }) }}</p>
+        <p v-if="outcomeLine" class="ge-outcome">{{ $t('gameEnd.indicative') }} {{ outcomeLine }}</p>
         <footer class="ge-foot">
           <button type="button" class="ge-cancel" @click="emit('close')">{{ $t('common.cancel') }}</button>
           <button type="button" class="ge-ok" @click="emit('confirm')">{{ $t('gameEnd.concede') }}</button>
@@ -61,8 +106,9 @@ const reasonKey = computed(() => ({ concede: 'gameEnd.byConcession', blitz: 'gam
       </template>
       <template v-else>
         <h3 id="ge-title">{{ $t('gameEnd.title') }}</h3>
-        <p class="ge-bravo">{{ winner ? $t('gameEnd.bravo', { side: winner }) : $t('gameEnd.draw') }}</p>
+        <p class="ge-bravo">{{ bravo }}</p>
         <p class="ge-reason">{{ $t(reasonKey, { side: loser ?? '' }) }}</p>
+        <p v-if="outcomeLine" class="ge-outcome">{{ outcomeIndicative ? $t('gameEnd.indicative') + ' ' : '' }}{{ outcomeLine }}</p>
         <table v-if="sides.length" class="ge-table">
           <thead>
             <tr>
@@ -139,6 +185,12 @@ const reasonKey = computed(() => ({ concede: 'gameEnd.byConcession', blitz: 'gam
 
 .ge-reason {
   color: var(--panel-text-muted);
+}
+
+.ge-outcome {
+  padding: 6px 10px;
+  border-radius: var(--radius-8);
+  background: var(--white-a06);
 }
 
 .ge-table {
